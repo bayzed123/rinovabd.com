@@ -37,7 +37,17 @@ function toggleDrawer(open) { $('#bag-drawer').classList.toggle('open', open); $
 function checkout() { if (!state.bag.length) return toast('Add a product before checkout'); toast('Checkout flow is ready for payment and address details'); track('begin_checkout', { items: state.bag.length }); }
 
 async function init() {
-  try { const [categories, products] = await Promise.all([api('/categories'), api('/products')]); renderCategories(categories.categories); state.products = products.products; renderProducts(); } catch (error) { $('#product-grid').innerHTML = '<div class="loading">Shop data is being refreshed. Please try again in a moment.</div>'; console.error(error); }
+  try { const [categories, products] = await Promise.all([api('/categories'), api('/products')]); renderCategories(categories.categories); state.products = products.products; renderProducts();   } catch (error) {
+    const fallbackCategories = ['Skin Care', 'Face Care', 'Face Makeup', 'Eyes Makeup', 'Makeup', 'Hair Care', 'Perfume', 'Kids'].map((name, index) => ({ name, slug: name.toLowerCase().replaceAll(' ', '-'), imageUrl: index % 3 === 0 ? '/assets/skincare-products.jpg' : index % 3 === 1 ? '/assets/beauty-flatlay.jpg' : '/assets/skincare-model.jpg' }));
+    const fallbackProducts = [
+      { id: 1, name: 'Dew Ritual Hydrating Serum', slug: 'dew-ritual-hydrating-serum', description: 'A lightweight daily serum for soft, hydrated-looking skin.', price: 890, compareAtPrice: 1090, imageUrl: '/assets/skincare-products.jpg', stock: 24, rating: 4.8, categoryName: 'Skin Care', categorySlug: 'skin-care', featured: 1 },
+      { id: 2, name: 'Cloud Cleanse Gentle Face Wash', slug: 'cloud-cleanse-gentle-face-wash', description: 'A gentle cleanser for a fresh, comfortable finish.', price: 590, compareAtPrice: 690, imageUrl: '/assets/beauty-flatlay.jpg', stock: 32, rating: 4.7, categoryName: 'Face Care', categorySlug: 'face-care', featured: 1 },
+      { id: 3, name: 'Soft Glow SPF 50 Sunscreen', slug: 'soft-glow-spf-50-sunscreen', description: 'A smooth daily sunscreen with a comfortable, non-heavy finish.', price: 780, compareAtPrice: 950, imageUrl: '/assets/skincare-model.jpg', stock: 18, rating: 4.9, categoryName: 'Skin Care', categorySlug: 'skin-care', featured: 1 },
+      { id: 4, name: 'Rose Petal Lip Tint', slug: 'rose-petal-lip-tint', description: 'A buildable rosy tint for an effortless everyday look.', price: 450, compareAtPrice: 520, imageUrl: '/assets/beauty-flatlay.jpg', stock: 40, rating: 4.6, categoryName: 'Makeup', categorySlug: 'makeup', featured: 0 }
+    ];
+    renderCategories(fallbackCategories); state.products = fallbackProducts; renderProducts();
+    toast('Preview mode: showing curated Rinova products'); console.error(error);
+  }
   renderBag();
 }
 

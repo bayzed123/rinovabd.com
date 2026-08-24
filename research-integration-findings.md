@@ -25,3 +25,7 @@ The available Steadfast integration documentation describes parcel placement, st
 ## Steadfast implementation details
 
 A public Steadfast integration source identifies the default API base URL as `https://portal.packzy.com/api/v1`, order creation as `POST /create_order`, bulk creation as `POST /create_order/bulk-order`, status lookups as `GET /status_by_cid/{id}`, `GET /status_by_invoice/{invoice}`, and `GET /status_by_trackingcode/{trackingCode}`, return creation as `POST /create_return_request`, and webhook authentication via a bearer token. Its base adapter sends `Api-Key` and `Secret-Key` headers. These values are treated as implementation references only; the merchant must provide current credentials and confirm the active endpoint with Steadfast before production activation. Source inspected: https://github.com/nayemuf/steadfast-courier
+
+## Visual smoke test
+
+The local storefront preview renders the hero, brand imagery, navigation, CTA, and tracking link correctly. The homepage shows a product-data refresh message in an API-less static preview because the product grid intentionally reads from `/api/products`; the production Worker must serve or proxy that route, or the Pages deployment must set the API base URL. The customer tracking page renders a clean Order ID/mobile lookup form and responsive status-result container.
