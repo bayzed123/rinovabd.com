@@ -4,7 +4,7 @@ Rinova BD is a mobile-first beauty and personal-care storefront built for Bangla
 
 ## Current build
 
-The current build includes a responsive storefront with local image assets, category navigation, product filtering, product cards, bag drawer, WhatsApp CTA, newsletter CTA, analytics-ready events, and conversion-focused hero/product layouts. The Worker API includes product and category reads, searchable district/upazila locations, automatic delivery fees, order creation, order lookup, order status history, and internal customer trust scoring.
+The current build includes a responsive storefront with local image assets, category navigation, product filtering, product cards, bag drawer, visible **Add to Cart** and **Shop Now** CTAs, WhatsApp CTA, newsletter CTA, analytics-ready events, and conversion-focused hero/product layouts. The catalog now includes the user-provided makeup, skincare, blush, serum, and gift-set images as seeded products with barcodes and package weights. The Worker API includes product and category reads, searchable district/upazila locations, automatic delivery fees, order creation, order lookup, order status history, and internal customer trust scoring.
 
 Courier fees are not customer-selectable. The API automatically applies **৳90 inside Dhaka** and **৳150 outside Dhaka** after district/upazila selection. Emergency delivery is configured as **৳250** but is deliberately not exposed as a customer selection; it is reserved for authorised admin workflow.
 
