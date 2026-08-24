@@ -41,12 +41,31 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | GET | `/api/orders/:orderCode` | Retrieve order summary and items |
 | PATCH | `/api/orders/:orderCode/status` | Update order status and history |
 | GET | `/api/customers/:phone/trust` | Internal order success/cancel profile |
+| GET | `/api/customer-tracking?orderId=...` or `?phone=...` | Customer-safe delivery status message |
+| POST | `/api/admin/orders/:orderCode/steadfast/book` | Admin-only parcel booking |
+| GET | `/api/admin/orders/:orderCode/steadfast/status` | Admin-only Steadfast status lookup |
+| POST | `/api/webhooks/steadfast` | Bearer-protected delivery/return status webhook |
 
 ## Cloudflare status
 
 The GitHub repository is `bayzed123/rinovabd.com`. The Cloudflare D1 database `rinovabd-db` and KV namespace `rinovabd-cache` have been provisioned and seeded for this build. The Hono Worker `rinovabd-worker` is deployed with D1, KV, and Workers AI bindings. The existing Cloudflare Pages project `rinovabd-api` was detected during inspection. R2 is not attached to the first deployment because the account currently reports that R2 must first be enabled from the Cloudflare Dashboard; until that is enabled, the repository's local image assets continue to support the storefront.
 
 Before production deployment, replace any environment-specific payment numbers, courier credentials, domain settings, and admin authentication secrets. Do not commit secrets to this repository.
+
+### Steadfast activation
+
+The Worker is already coded and deployed with credential-safe Steadfast adapter routes. Add the merchant credentials only as Cloudflare Worker secrets:
+
+```bash
+wrangler secret put STEADFAST_API_KEY
+wrangler secret put STEADFAST_SECRET_KEY
+wrangler secret put STEADFAST_WEBHOOK_TOKEN
+wrangler secret put ADMIN_API_TOKEN
+```
+
+The optional base URL defaults to `https://portal.packzy.com/api/v1`; set `STEADFAST_BASE_URL` as a non-secret variable only after confirming the active endpoint with the merchant account. Configure the courier callback to `POST https://<your-worker-host>/api/webhooks/steadfast` with `Authorization: Bearer <STEADFAST_WEBHOOK_TOKEN>`. The public customer endpoint is `/api/customer-tracking`, while booking and manual status lookup require the admin bearer token.
+
+The courier adapter uses the documented order creation and status lookup paths and records consignment ID, tracking code, last status, last update time, package weight, and status history. It does not send any live request until the merchant secrets are present.
 
 ## Verification
 
