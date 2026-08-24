@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUD_FLARE_API }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUD_FLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ACCOUNT_ID: 46bf056399139631a967566fdb0413fa
       CLOUDFLARE_WORKER_NAME: rinovabd-worker
       API_DOMAIN: ${{ vars.API_DOMAIN }}
 

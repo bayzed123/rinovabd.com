@@ -70,9 +70,9 @@ jobs:
         id: deploy-gate
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: 46bf056399139631a967566fdb0413fa
         run: |
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "Cloudflare deployment is enabled."
           else
@@ -85,7 +85,7 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: 46bf056399139631a967566fdb0413fa
           workingDirectory: worker
           command: deploy
 

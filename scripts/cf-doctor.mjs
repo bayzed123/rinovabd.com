@@ -17,9 +17,9 @@
 import { client } from './lib/cf.mjs';
 
 const cf = client();
-const D1_NAME = process.env.D1_NAME ?? 'rinovabd-worker';
-const KV_TITLE = process.env.KV_TITLE ?? 'rinovabd-worker-cache';
-const SITE_DOMAIN = (process.env.API_DOMAIN ?? '').replace(/^api\./, '') || 'rinovabd-worker.abdussalam8480.workers.dev';
+const D1_NAME = process.env.D1_NAME ?? 'rinovabd-db';
+const KV_TITLE = process.env.KV_TITLE ?? 'rinovabd-cache';
+const SITE_DOMAIN = (process.env.API_DOMAIN ?? '').replace(/^api\./, '');
 
 /** Each entry records one capability so the summary can name the fix. */
 const results = [];
@@ -120,7 +120,7 @@ await probe('D1 writes allowed', 'D1: Edit', async () => {
   if (!databaseId) throw new Error('skipped — no database resolved above');
   await cf.call(`/d1/database/${databaseId}/query`, {
     method: 'POST',
-    body: { sql: "UPDATE settings SET value = value WHERE key = '__doctor_write_probe__'" },
+      body: { sql: "UPDATE products SET price = price WHERE id = (SELECT id FROM products LIMIT 1)" },
   });
   const tables = await cf.call(`/d1/database/${databaseId}/query`, {
     method: 'POST',
@@ -181,13 +181,20 @@ await probe('workers.dev subdomain', 'Workers Scripts: Edit', async () => {
 
 /* ── R2 and zones ────────────────────────────────────────────────────── */
 
-await probe('R2 enabled', 'Workers R2 Storage: Edit', async () => {
-  const list = await cf.call('/r2/buckets');
-  const names = (list?.buckets ?? []).map((b) => b.name);
-  return names.length ? names.join(', ') : 'enabled, no buckets yet';
+await probe('R2 enabled (optional)', 'Workers R2 Storage: Edit', async () => {
+  try {
+    const list = await cf.call('/r2/buckets');
+    const names = (list?.buckets ?? []).map((b) => b.name);
+    return names.length ? names.join(', ') : 'enabled, no buckets yet';
+  } catch (err) {
+    const detail = (err.errors ?? []).map((e) => `${e.code} ${e.message}`).join('; ');
+    if (/enable R2|10042/i.test(detail)) return 'optional — not enabled in this account; local assets remain active';
+    throw err;
+  }
 });
 
-await probe(`Zone for ${SITE_DOMAIN}`, 'Zone: Read', async () => {
+await probe('Custom domain (optional)', 'Zone: Read', async () => {
+  if (!SITE_DOMAIN) return 'not configured — workers.dev is used';
   const zones = await cf.callRoot(`/zones?account.id=${cf.accountId}&per_page=50`);
   if (!Array.isArray(zones)) throw new Error('zone list refused — token has no Zone:Read, or none exist');
   const match = zones.find((z) => z.name === SITE_DOMAIN);
@@ -217,8 +224,8 @@ if (missing.length) {
   console.log('    Cloudflare dashboard → My Profile → API Tokens → your token → Edit');
   console.log('    Add these permissions, all of type Account:\n');
   for (const permission of missing) console.log(`      • ${permission}`);
-  console.log('\n    Then Continue → Save, and update the CLOUD_FLARE_API repository secret');
-  console.log('    if the token value changed.\n');
+    console.log('\n    Then Continue → Save, and update the Cloudflare API repository secret');
+    console.log('    if the token value changed.\n');
   console.log('    Faster alternative: create a fresh token from the "Edit Cloudflare');
   console.log('    Workers" template — it grants Workers, KV, D1 and R2 in one click —');
   console.log('    and paste it into the CLOUD_FLARE_API secret.\n');
