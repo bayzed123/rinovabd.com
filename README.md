@@ -44,7 +44,7 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 
 ## Cloudflare status
 
-The GitHub repository is `bayzed123/rinovabd.com`. The Cloudflare D1 database `rinovabd-db` and KV namespace `rinovabd-cache` have been provisioned and seeded for this build. The existing Cloudflare Pages project `rinovabd-api` was detected during inspection. R2 is referenced in the Worker configuration but the account currently reports that R2 must first be enabled from the Cloudflare Dashboard; until that is enabled, the repository's local image assets continue to support the storefront.
+The GitHub repository is `bayzed123/rinovabd.com`. The Cloudflare D1 database `rinovabd-db` and KV namespace `rinovabd-cache` have been provisioned and seeded for this build. The Hono Worker `rinovabd-worker` is deployed with D1, KV, and Workers AI bindings. The existing Cloudflare Pages project `rinovabd-api` was detected during inspection. R2 is not attached to the first deployment because the account currently reports that R2 must first be enabled from the Cloudflare Dashboard; until that is enabled, the repository's local image assets continue to support the storefront.
 
 Before production deployment, replace any environment-specific payment numbers, courier credentials, domain settings, and admin authentication secrets. Do not commit secrets to this repository.
 

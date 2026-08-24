@@ -6,7 +6,7 @@ interface Bindings {
   PRODUCT_IMAGES: R2Bucket;
   CACHE: KVNamespace;
   AI: Ai;
-  ASSETS: Fetcher;
+  ASSETS?: Fetcher;
   SHOP_NAME: string;
   SHOP_PHONE: string;
   SHOP_ADDRESS: string;
@@ -137,7 +137,8 @@ app.get('/api/orders/:orderCode', async (c) => {
 
 app.all('*', async (c) => {
   if (c.req.path.startsWith('/api/')) return json(c, { error: 'Not found.' }, 404);
-  return c.env.ASSETS.fetch(c.req.raw);
+  if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
+  return c.text('Rinova BD API is live. Storefront assets are deployed separately.', 404);
 });
 
 export default app;
