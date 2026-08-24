@@ -14,13 +14,14 @@ jobs:
     name: Check the account and token
     runs-on: ubuntu-latest
     env:
-      CLOUD_FLARE_API: ${{ secrets.CLOUD_FLARE_API }}
-      CLOUD_FLARE_ACCOUNT_ID: ${{ secrets.CLOUD_FLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUD_FLARE_API }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUD_FLARE_ACCOUNT_ID }}
+      CLOUDFLARE_WORKER_NAME: rinovabd-worker
       API_DOMAIN: ${{ vars.API_DOMAIN }}
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: node scripts/cf-doctor.mjs
