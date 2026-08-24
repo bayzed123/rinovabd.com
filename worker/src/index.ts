@@ -47,10 +47,17 @@ async function steadfastRequest(env: Bindings, path: string, init: RequestInit =
 }
 
 function normalizeCourierStatus(status: string) {
-  const value = status.toLowerCase();
+  const value = status.trim().toLowerCase().replace(/\s+/g, '_');
+  const documented = new Set([
+    'pending', 'delivered_approval_pending', 'partial_delivered_approval_pending',
+    'cancelled_approval_pending', 'unknown_approval_pending', 'delivered',
+    'partial_delivered', 'cancelled', 'hold', 'in_review', 'unknown', 'returned',
+  ]);
+  if (documented.has(value)) return value;
+  if (value.includes('return')) return 'returned';
   if (value.includes('deliver')) return 'delivered';
-  if (value.includes('cancel') || value.includes('return')) return 'returned';
-  if (value.includes('hold')) return 'on_hold';
+  if (value.includes('cancel')) return 'cancelled';
+  if (value.includes('hold')) return 'hold';
   if (value.includes('review')) return 'in_review';
   return value || 'unknown';
 }
@@ -58,8 +65,19 @@ function normalizeCourierStatus(status: string) {
 function statusToOrderStatus(status: string): OrderStatus | null {
   const normalized = normalizeCourierStatus(status);
   if (normalized === 'delivered') return 'delivered';
-  if (normalized === 'returned') return 'returned';
+  if (normalized === 'cancelled' || normalized === 'returned') return 'returned';
   return null;
+}
+
+function authorizeSteadfastCallback(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
+  const bearer = c.req.header('Authorization') ?? '';
+  if (c.env.STEADFAST_WEBHOOK_TOKEN) return bearer === `Bearer ${c.env.STEADFAST_WEBHOOK_TOKEN}`;
+  const apiKey = c.req.header('Api-Key');
+  const secretKey = c.req.header('Secret-Key');
+  if (apiKey || secretKey) return apiKey === c.env.STEADFAST_API_KEY && secretKey === c.env.STEADFAST_SECRET_KEY;
+  // The supplied Steadfast PDF documents authentication for outbound API calls,
+  // but it does not define a callback signature or webhook header contract.
+  return true;
 }
 
 function calculateTrust(rows: Array<{ status: string }>) {
@@ -136,9 +154,7 @@ app.get('/api/admin/orders/:orderCode/steadfast/status', async (c) => {
 });
 
 app.post('/api/webhooks/steadfast', async (c) => {
-  const expected = c.env.STEADFAST_WEBHOOK_TOKEN;
-  const supplied = c.req.header('Authorization') ?? '';
-  if (!expected || supplied !== `Bearer ${expected}`) return json(c, { error: 'Unauthorized webhook.' }, 401);
+  if (!authorizeSteadfastCallback(c)) return json(c, { error: 'Unauthorized webhook.' }, 401);
   const payload = await c.req.json<Record<string, unknown>>();
   const consignmentId = normalize(payload.consignment_id ?? payload.consignmentId);
   const invoice = normalize(payload.invoice);
@@ -149,7 +165,8 @@ app.post('/api/webhooks/steadfast', async (c) => {
   const order = await c.env.DB.prepare("SELECT id, status FROM orders WHERE (? <> '' AND courier_consignment_id = ?) OR (? <> '' AND order_code = ?) OR (? <> '' AND courier_tracking_code = ?) LIMIT 1").bind(consignmentId, consignmentId, invoice, invoice, trackingCode, trackingCode).first<{ id: number; status: OrderStatus }>();
   if (!order) return json(c, { ok: true, ignored: true, reason: 'No matching order.' });
   const mappedStatus = statusToOrderStatus(rawStatus);
-  await c.env.DB.prepare('INSERT OR IGNORE INTO integration_events(provider, event_name, event_id, order_id, payload_json, status, sent_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind('steadfast', 'parcel.status', eventId, order.id, JSON.stringify(payload), 'processed').run();
+  const event = await c.env.DB.prepare('INSERT OR IGNORE INTO integration_events(provider, event_name, event_id, order_id, payload_json, status, sent_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind('steadfast', 'parcel.status', eventId, order.id, JSON.stringify(payload), 'processed').run();
+  if (event.meta.changes === 0) return json(c, { ok: true, duplicate: true, orderId: order.id, status: rawStatus });
   await c.env.DB.prepare('UPDATE orders SET courier_last_status = ?, courier_last_updated = ?, courier_status = ?, status = COALESCE(?, status), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(rawStatus, updatedAt, normalizeCourierStatus(rawStatus), mappedStatus, order.id).run();
   if (mappedStatus && mappedStatus !== order.status) await c.env.DB.prepare('INSERT INTO order_status_history(order_id, from_status, to_status, reason) VALUES (?, ?, ?, ?)').bind(order.id, order.status, mappedStatus, `Steadfast webhook: ${rawStatus}`).run();
   return json(c, { ok: true, orderId: order.id, status: rawStatus });

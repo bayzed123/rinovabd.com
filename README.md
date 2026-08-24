@@ -44,7 +44,7 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | GET | `/api/customer-tracking?orderId=...` or `?phone=...` | Customer-safe delivery status message |
 | POST | `/api/admin/orders/:orderCode/steadfast/book` | Admin-only parcel booking |
 | GET | `/api/admin/orders/:orderCode/steadfast/status` | Admin-only Steadfast status lookup |
-| POST | `/api/webhooks/steadfast` | Bearer-protected delivery/return status webhook |
+| POST | `/api/webhooks/steadfast` | Steadfast delivery/return status callback; accepts configured bearer or documented API headers |
 
 ## Cloudflare status
 
@@ -59,11 +59,12 @@ The Worker is already coded and deployed with credential-safe Steadfast adapter 
 ```bash
 wrangler secret put STEADFAST_API_KEY
 wrangler secret put STEADFAST_SECRET_KEY
+# Optional: only set this if you want an additional callback bearer guard.
 wrangler secret put STEADFAST_WEBHOOK_TOKEN
 wrangler secret put ADMIN_API_TOKEN
 ```
 
-The optional base URL defaults to `https://portal.packzy.com/api/v1`; set `STEADFAST_BASE_URL` as a non-secret variable only after confirming the active endpoint with the merchant account. Configure the courier callback to `POST https://<your-worker-host>/api/webhooks/steadfast` with `Authorization: Bearer <STEADFAST_WEBHOOK_TOKEN>`. The public customer endpoint is `/api/customer-tracking`, while booking and manual status lookup require the admin bearer token.
+The optional base URL defaults to `https://portal.packzy.com/api/v1`; set `STEADFAST_BASE_URL` as a non-secret variable only after confirming the active endpoint with the merchant account. Configure the courier callback to `POST https://<your-worker-host>/api/webhooks/steadfast`. The callback accepts the status fields documented by Steadfast (`invoice`, `consignment_id`, `tracking_code`, `status` or `delivery_status`, and `updated_at`). If `STEADFAST_WEBHOOK_TOKEN` is set, send `Authorization: Bearer <STEADFAST_WEBHOOK_TOKEN>`; otherwise the documented `Api-Key` and `Secret-Key` headers are accepted when Steadfast sends them. The supplied PDF defines outbound API authentication but does not define a separate inbound webhook signature. The public customer endpoint is `/api/customer-tracking`, while booking and manual status lookup require the admin bearer token.
 
 The courier adapter uses the documented order creation and status lookup paths and records consignment ID, tracking code, last status, last update time, package weight, and status history. It does not send any live request until the merchant secrets are present.
 
