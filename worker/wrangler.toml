@@ -1,0 +1,35 @@
+name = "rinovabd-worker"
+main = "src/index.ts"
+compatibility_date = "2026-08-25"
+workers_dev = true
+
+[vars]
+SHOP_NAME = "Rinova BD"
+SHOP_PHONE = "01522105710"
+SHOP_ADDRESS = "Rajshahi Malopara Police Fhari, Rajshahi, Bangladesh - 6100"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rinovabd-db"
+database_id = "300aea86-ac31-46b9-aec4-2314f1a78b01"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "PRODUCT_IMAGES"
+bucket_name = "rinovabd-product-images"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "6386fcba4d63483c9766bef527a65593"
+
+[ai]
+binding = "AI"
+
+[assets]
+directory = "../web"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[observability]
+enabled = true
+

@@ -1,0 +1,21 @@
+{
+  "name": "@rinova/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "hono": "^4.6.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240821.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0"
+  }
+}
+
