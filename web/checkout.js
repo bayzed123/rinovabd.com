@@ -3,8 +3,78 @@ const bag = JSON.parse(localStorage.getItem('rinova-bag') || '[]');
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
 const state = { deliveryFee: 0, zone: '' };
-function renderItems() { $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="summary-line"><span>${item.name} × ${item.quantity}</span><strong>${money(item.price * item.quantity)}</strong></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>'; $('#subtotal').textContent = money(bag.reduce((sum, item) => sum + item.price * item.quantity, 0)); $('#total').textContent = money(bag.reduce((sum, item) => sum + item.price * item.quantity, 0) + state.deliveryFee); }
-async function loadLocations(query) { if (!query) return; const response = await fetch(`${API_BASE}/locations?q=${encodeURIComponent(query)}`); const data = await response.json(); $('#district-list').innerHTML = [...new Set((data.locations || []).map((item) => item.district))].map((value) => `<option value="${value}">`).join(''); $('#upazila-list').innerHTML = (data.locations || []).map((item) => `<option value="${item.upazila}">${item.district}</option>`).join(''); }
-async function updateDelivery() { const form = $('#checkout-form'); const district = form.elements.namedItem('district').value.trim(); const upazila = form.elements.namedItem('upazila').value.trim(); if (!district || !upazila) return; const response = await fetch(`${API_BASE}/delivery-fee?district=${encodeURIComponent(district)}&upazila=${encodeURIComponent(upazila)}`); const data = await response.json(); if (!response.ok) return; state.deliveryFee = data.fee; state.zone = data.zone; $('#delivery').textContent = `${money(data.fee)} · ${data.label}`; renderItems(); }
-async function submitOrder(event) { event.preventDefault(); if (!bag.length) return $('#checkout-error').textContent = 'Your bag is empty.'; const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.items = bag.map((item) => ({ productId: item.id, quantity: item.quantity })); $('#checkout-error').textContent = ''; try { const response = await fetch(`${API_BASE}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error || 'Could not place order.'); localStorage.removeItem('rinova-bag'); $('#checkout-grid').hidden = true; $('#success').hidden = false; $('#success').innerHTML = `<strong>অর্ডার সফল হয়েছে।</strong><br>Order ID: <strong>${payload.order.orderCode}</strong><br>Total: ${money(payload.order.total)}<br><a class="button" href="/invoice.html?order=${encodeURIComponent(payload.order.orderCode)}">View printable invoice</a> <a class="button" href="/track.html?orderId=${encodeURIComponent(payload.order.orderCode)}">Track order</a>`; } catch (error) { $('#checkout-error').textContent = error.message; } }
-$('#checkout-form').addEventListener('submit', submitOrder); $('#checkout-form').elements.namedItem('district').addEventListener('input', (event) => loadLocations(event.target.value)); $('#checkout-form').elements.namedItem('upazila').addEventListener('input', updateDelivery); $('#checkout-form').elements.namedItem('district').addEventListener('change', updateDelivery); renderItems();
+
+function saveBag() {
+  localStorage.setItem('rinova-bag', JSON.stringify(bag));
+}
+
+function changeQuantity(productId, direction) {
+  const item = bag.find((entry) => Number(entry.id) === Number(productId));
+  if (!item) return;
+  const minimum = Math.max(1, Number(item.minOrderQty || 1));
+  const maximum = Number(item.stock || 0);
+  const next = Number(item.quantity || minimum) + direction;
+  if (next < minimum) {
+    bag.splice(bag.indexOf(item), 1);
+  } else {
+    item.quantity = maximum ? Math.min(maximum, next) : next;
+  }
+  saveBag();
+  renderItems();
+}
+
+function renderItems() {
+  $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="checkout-item"><div><strong>${item.name}</strong><small>${money(item.price)} each</small></div><div class="checkout-item-actions"><div class="quantity-stepper"><button type="button" data-checkout-qty="${item.id}" data-direction="-1" aria-label="Decrease ${item.name}">−</button><span>${Number(item.quantity || 0)}</span><button type="button" data-checkout-qty="${item.id}" data-direction="1" aria-label="Increase ${item.name}">+</button></div><strong>${money(Number(item.price || 0) * Number(item.quantity || 0))}</strong></div></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>';
+  const subtotal = bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
+  $('#subtotal').textContent = money(subtotal);
+  $('#total').textContent = money(subtotal + state.deliveryFee);
+  document.querySelectorAll('[data-checkout-qty]').forEach((button) => button.addEventListener('click', () => changeQuantity(Number(button.dataset.checkoutQty), Number(button.dataset.direction))));
+}
+
+async function loadLocations(query) {
+  if (!query) return;
+  const response = await fetch(`${API_BASE}/locations?q=${encodeURIComponent(query)}`);
+  const data = await response.json();
+  $('#district-list').innerHTML = [...new Set((data.locations || []).map((item) => item.district))].map((value) => `<option value="${value}">`).join('');
+  $('#upazila-list').innerHTML = (data.locations || []).map((item) => `<option value="${item.upazila}">${item.district}</option>`).join('');
+}
+
+async function updateDelivery() {
+  const form = $('#checkout-form');
+  const district = form.elements.namedItem('district').value.trim();
+  const upazila = form.elements.namedItem('upazila').value.trim();
+  if (!district || !upazila) return;
+  const response = await fetch(`${API_BASE}/delivery-fee?district=${encodeURIComponent(district)}&upazila=${encodeURIComponent(upazila)}`);
+  const data = await response.json();
+  if (!response.ok) return;
+  state.deliveryFee = data.fee;
+  state.zone = data.zone;
+  $('#delivery').textContent = `${money(data.fee)} · ${data.label}`;
+  renderItems();
+}
+
+async function submitOrder(event) {
+  event.preventDefault();
+  if (!bag.length) return $('#checkout-error').textContent = 'Your bag is empty.';
+  const form = event.target;
+  const data = Object.fromEntries(new FormData(form).entries());
+  data.items = bag.map((item) => ({ productId: item.id, quantity: item.quantity }));
+  $('#checkout-error').textContent = '';
+  try {
+    const response = await fetch(`${API_BASE}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Could not place order.');
+    localStorage.removeItem('rinova-bag');
+    $('#checkout-grid').hidden = true;
+    $('#success').hidden = false;
+    $('#success').innerHTML = `<strong>অর্ডার সফল হয়েছে।</strong><br>Order ID: <strong>${payload.order.orderCode}</strong><br>Invoice: <strong>${payload.order.invoiceNumber || '—'}</strong><br>Total: ${money(payload.order.total)}<br><a class="button" href="/invoice.html?order=${encodeURIComponent(payload.order.orderCode)}">View printable invoice</a> <a class="button" href="/track.html?orderId=${encodeURIComponent(payload.order.orderCode)}&invoiceNumber=${encodeURIComponent(payload.order.invoiceNumber || '')}">Track order</a>`;
+  } catch (error) {
+    $('#checkout-error').textContent = error.message;
+  }
+}
+
+$('#checkout-form').addEventListener('submit', submitOrder);
+$('#checkout-form').elements.namedItem('district').addEventListener('input', (event) => loadLocations(event.target.value));
+$('#checkout-form').elements.namedItem('upazila').addEventListener('input', updateDelivery);
+$('#checkout-form').elements.namedItem('district').addEventListener('change', updateDelivery);
+renderItems();
