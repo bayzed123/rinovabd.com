@@ -43,7 +43,7 @@
     <main class="main-panel">
       <header class="topbar">
         <div><p class="eyebrow">RINOVA OPERATIONS</p><h2 id="view-title">Dashboard</h2></div>
-        <div class="top-actions"><span id="signed-in-user" class="user-chip"></span><button id="assistant-quick" class="assistant-quick" type="button" aria-label="Open SmartGen assistant"><span class="smartgen-quick-mark">✦</span><span>SmartGen</span></button><button id="mobile-menu" class="menu-button">☰</button></div>
+        <div class="top-actions"><div class="workspace-mode" aria-label="Workspace mode"><span>Workspace</span><button type="button" data-admin-mode="view">View Mode</button><button type="button" data-admin-mode="edit">Edit Mode</button></div><a class="view-store-link" href="/" target="_blank" rel="noopener">View storefront ↗</a><span id="signed-in-user" class="user-chip"></span><button id="assistant-quick" class="assistant-quick" type="button" aria-label="Open SmartGen assistant"><span class="smartgen-quick-mark">✦</span><span>SmartGen</span></button><button id="mobile-menu" class="menu-button">☰</button></div>
       </header>
 
       <section id="view-overview" class="view">
@@ -56,7 +56,7 @@
       </section>
 
       <section id="view-products" class="view hidden">
-        <div class="section-toolbar"><div><p class="muted">Manage your catalogue, margin, stock and visibility.</p></div><button id="new-product" class="button button-dark">+ New product</button></div>
+        <div class="section-toolbar"><div><p class="muted">Manage your catalogue, margin, stock and visibility.</p><p id="mode-hint" class="mode-hint"></p></div><button id="new-product" class="button button-dark">+ New product</button></div>
         <div id="product-editor" class="panel hidden"><div class="panel-heading"><div><p class="eyebrow">PRODUCT EDITOR</p><h3 id="editor-heading">Create a product</h3></div><button class="close-editor" data-close-editor>×</button></div><form id="product-form" class="form-grid">
           <label>Product name<input name="name" required /></label><label>SKU<input name="sku" placeholder="Auto-generated if blank" /></label>
           <label>Brand<input name="brand" /></label><label>Category ID<input name="categoryId" type="number" /></label>
@@ -65,7 +65,7 @@
           <label>Compare-at price<input name="compareAtPrice" type="number" min="0" /></label><label>Opening stock<input name="stock" type="number" min="0" value="0" /></label>
           <label>Low-stock threshold<input name="lowStockThreshold" type="number" min="0" value="5" /></label><label>Minimum order qty<input name="minOrderQty" type="number" min="1" value="1" /></label><label class="wide">Volume tiers JSON<input name="volumeTiers" placeholder='[{"minQty":3,"price":250},{"minQty":10,"price":220}]' /></label>
           <label>Weight (grams)<input name="weightGrams" type="number" min="0" value="0" /></label><label>Barcode<input name="barcode" /></label>
-          <label class="wide">Image URL<input name="imageUrl" placeholder="https://... or /assets/..." /><img id="image-preview" class="image-preview hidden" alt="Product preview" /></label>
+          <label class="wide">Primary image URL<input name="imageUrl" placeholder="https://... or /assets/..." /><img id="image-preview" class="image-preview hidden" alt="Product preview" /></label><label class="wide media-editor-field">Additional images and videos<textarea name="mediaJson" rows="5" placeholder='[{"type":"image","url":"/assets/second-photo.jpg","alt":"Side view"},{"type":"video","url":"https://example.com/demo.mp4"}]'></textarea><small>Use only HTTPS URLs or repository assets under /assets/. The primary image is included automatically.</small><div id="media-preview" class="media-preview"></div></label>
           <label>Status<select name="status"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select></label><label class="check-label"><input name="featured" type="checkbox" /> Feature on homepage</label>
           <div class="wide form-actions"><button id="product-submit" class="button button-dark" type="submit">Create product <span>→</span></button><button class="button" type="button" data-close-editor>Cancel</button></div>
           <p id="product-form-message" class="form-message wide"></p>

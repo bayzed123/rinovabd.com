@@ -186,6 +186,39 @@ function extractAiText(result: unknown) {
   return typeof content === 'string' ? content : '';
 }
 
+type ShopProductLink = { slug: string; name: string; price: number; stock: number; imageUrl: string | null; categoryName: string | null };
+
+function parseProductMedia(value: unknown): Array<{ type: 'image' | 'video'; url: string; alt?: string }> {
+  let items: unknown[] = [];
+  if (Array.isArray(value)) items = value;
+  else if (typeof value === 'string') {
+    try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) items = parsed; } catch {}
+  }
+  return items.map((item) => {
+    if (typeof item === 'string') return { type: 'image' as const, url: normalizeMediaUrl(item) };
+    const media = item as Record<string, unknown>;
+    return { type: media.type === 'video' ? 'video' as const : 'image' as const, url: normalizeMediaUrl(media.url), alt: normalize(media.alt) || undefined };
+  }).filter((item) => Boolean(item.url));
+}
+
+function normalizeMediaUrl(value: unknown) {
+  const url = normalize(value);
+  return /^(https:\/\/|\/assets\/)/i.test(url) ? url : '';
+}
+
+async function findRelevantProducts(env: Bindings, question: string): Promise<ShopProductLink[]> {
+  const products = await env.DB.prepare('SELECT p.slug, p.name, p.price, p.stock, p.image_url AS imageUrl, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 ORDER BY p.featured DESC, p.created_at DESC LIMIT 40').all<ShopProductLink & { categorySlug: string | null }>();
+  const stopWords = new Set(['the','and','for','with','about','please','show','give','link','product','products','price','details','দাও','দেখাও','লিংক','প্রোডাক্ট','দাম']);
+  const terms = normalize(question).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((term) => term.length > 1 && !stopWords.has(term));
+  const ranked = products.results.map((product) => {
+    const haystack = `${product.name} ${product.categoryName || ''}`.toLowerCase();
+    const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 2 : 0), 0);
+    return { product, score };
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
+  const selected = (ranked.length ? ranked.map((item) => item.product) : products.results).slice(0, 4);
+  return selected.map((product) => ({ slug: product.slug, name: product.name, price: Number(product.price || 0), stock: Number(product.stock || 0), imageUrl: product.imageUrl, categoryName: product.categoryName }));
+}
+
 function shopOnlyInstruction(scope: 'customer' | 'staff') {
   return scope === 'customer'
     ? 'You are Rinova BD customer support. Answer only questions about Rinova products, prices, stock, skincare/makeup usage, delivery fees, orders, returns, payments, and store policies. Never invent product facts, never reveal private customer/admin data, and politely refuse unrelated topics. Respond in the user language, preferably concise Bangla when the user writes Bangla.'
@@ -193,7 +226,7 @@ function shopOnlyInstruction(scope: 'customer' | 'staff') {
 }
 
 async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
-  const products = await env.DB.prepare('SELECT name, price, stock, status, description, weight_grams AS weightGrams FROM products WHERE active = 1 ORDER BY featured DESC, created_at DESC LIMIT 40').all();
+  const products = await env.DB.prepare('SELECT p.name, p.slug, p.price, p.stock, p.status, p.description, p.weight_grams AS weightGrams, p.image_url AS imageUrl, p.media_json AS mediaJson, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 ORDER BY p.featured DESC, p.created_at DESC LIMIT 40').all();
   const categories = await env.DB.prepare('SELECT name, slug FROM categories WHERE active = 1 ORDER BY sort_order ASC').all();
   const settings = await env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('store_name','tagline','delivery_inside_dhaka','delivery_outside_dhaka','free_delivery_over','support_phone','order_whatsapp_number')").all();
   const offers = await env.DB.prepare("SELECT title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 10").all();
@@ -217,7 +250,7 @@ async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
       recentOrders: (await env.DB.prepare("SELECT order_code AS orderCode, status, subtotal, delivery_fee AS deliveryFee, created_at AS createdAt FROM orders ORDER BY created_at DESC LIMIT 10").all()).results,
     };
   }
-  return JSON.stringify({ store: Object.fromEntries(settings.results.map((item) => [item.key, item.value])), categories: categories.results, products: products.results, offers: offers.results, staffData });
+  return JSON.stringify({ store: Object.fromEntries(settings.results.map((item) => [item.key, item.value])), categories: categories.results, products: products.results.map((product) => ({ ...product, productUrl: `/product.html?slug=${encodeURIComponent(String(product.slug))}` })), offers: offers.results, staffData });
 }
 
 async function runShopAssistant(env: Bindings, scope: 'customer' | 'staff', messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
@@ -478,8 +511,9 @@ app.post('/api/chat/customer', async (c) => {
   if (!conversation) return json(c, { error: 'Could not start chat.' }, 500);
   await c.env.DB.prepare("INSERT INTO chat_messages(conversation_id, sender, content, provider) VALUES (?, 'user', ?, 'browser')").bind(conversation.id, messages.at(-1)!.content).run();
   const answer = await runShopAssistant(c.env, 'customer', messages);
+  const productLinks = await findRelevantProducts(c.env, messages.at(-1)!.content);
   await c.env.DB.prepare("INSERT INTO chat_messages(conversation_id, sender, content, provider) VALUES (?, 'assistant', ?, ?)").bind(conversation.id, answer.text, answer.provider).run();
-  return json(c, { ok: true, reply: answer.text, provider: answer.provider, visitorKey });
+  return json(c, { ok: true, reply: answer.text, products: productLinks, provider: answer.provider, visitorKey });
 });
 
 app.post('/api/admin/chat', async (c) => {
@@ -529,7 +563,7 @@ app.get('/api/admin/products', async (c) => {
   const values: string[] = [];
   if (query) { condition.push('(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
   if (status) { condition.push('p.status = ?'); values.push(status); }
-  const result = await c.env.DB.prepare(`SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${condition.join(' AND ')} ORDER BY p.updated_at DESC, p.created_at DESC`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${condition.join(' AND ')} ORDER BY p.updated_at DESC, p.created_at DESC`).bind(...values).all();
   return json(c, { products: result.results });
 });
 
@@ -542,7 +576,7 @@ app.get('/api/admin/categories', async (c) => {
 app.get('/api/admin/products/:id', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const id = Number(c.req.param('id'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?').bind(id).first();
+  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?').bind(id).first();
   return product ? json(c, { product }) : json(c, { error: 'Product not found.' }, 404);
 });
 
@@ -576,7 +610,9 @@ app.post('/api/admin/products', async (c) => {
   const active = status === 'active' ? 1 : 0;
   const categoryId = Number(body.categoryId) || null;
   const volumeTiers = parseVolumeTiers(body.volumeTiers);
-  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, price, compare_at_price, cost_price, image_url, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, normalize(body.imageUrl) || null, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), body.featured ? 1 : 0, active).first();
+  const mediaJson = JSON.stringify(parseProductMedia(body.mediaJson));
+  const primaryImage = normalizeMediaUrl(body.imageUrl) || null;
+  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, price, compare_at_price, cost_price, image_url, media_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), body.featured ? 1 : 0, active).first();
   if (!result) return json(c, { error: 'Could not create product.' }, 500);
   return json(c, { ok: true, product: result, createdBy: username }, 201);
 });
@@ -589,7 +625,8 @@ app.patch('/api/admin/products/:id', async (c) => {
   const status = ['active', 'draft', 'archived'].includes(normalize(body.status)) ? normalize(body.status) : null;
   const active = status === null ? null : status === 'active' ? 1 : 0;
   const volumeTiers = body.volumeTiers === undefined ? null : JSON.stringify(parseVolumeTiers(body.volumeTiers));
-  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : normalize(body.imageUrl), body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, id).run();
+  const mediaJson = body.mediaJson === undefined ? null : JSON.stringify(parseProductMedia(body.mediaJson));
+  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, id).run();
   return json(c, { ok: result.meta.changes > 0, productId: id, updatedBy: username });
 });
 
@@ -690,6 +727,16 @@ app.post('/api/webhooks/steadfast', async (c) => {
   return json(c, { ok: true, orderId: order.id, status: rawStatus });
 });
 
+app.get('/sitemap.xml', async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const products = await c.env.DB.prepare('SELECT slug FROM products WHERE active = 1 ORDER BY updated_at DESC, created_at DESC').all<{ slug: string }>();
+  const staticUrls = ['/', '/product.html', '/checkout.html', '/account.html'].map((path) => `${origin}${path}`);
+  const productUrls = products.results.map((product) => `${origin}/product.html?slug=${encodeURIComponent(product.slug)}`);
+  const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...[...staticUrls, ...productUrls].map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`), '</urlset>'].join('');
+  return new Response(body, { headers: { 'Content-Type': 'application/xml; charset=UTF-8', 'Cache-Control': 'public, max-age=300' } });
+});
+
 app.get('/api/categories', async (c) => {
   const result = await c.env.DB.prepare('SELECT id, name, slug, image_url AS imageUrl FROM categories WHERE active = 1 ORDER BY sort_order ASC').all();
   return json(c, { categories: result.results });
@@ -704,13 +751,13 @@ app.get('/api/products', async (c) => {
   if (query) { conditions.push('(p.name LIKE ? OR p.description LIKE ?)'); values.push(`%${query}%`, `%${query}%`); }
   if (category) { conditions.push('c.slug = ?'); values.push(category); }
   if (featured === 'true') conditions.push('p.featured = 1');
-  const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.description, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.description, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
   return json(c, { products: result.results });
 });
 
 app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR CAST(p.id AS TEXT) = ?) LIMIT 1').bind(slug, slug).first();
+  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR CAST(p.id AS TEXT) = ?) LIMIT 1').bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   return json(c, { product });
 });
