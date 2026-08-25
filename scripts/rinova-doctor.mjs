@@ -94,7 +94,7 @@ function checkWorkflowFiles() {
   const doctor = read('.github/workflows/doctor.yml');
   const deploy = read('.github/workflows/rinovabd-ci-cd.yml');
   const doctorMarkers = [
-    ['workflow_dispatch:', 'manual trigger'], ['github.workspace', 'root-aware workspace'], ['scripts/rinova-doctor.mjs', 'doctor script'],
+    ['workflow_dispatch:', 'manual trigger'], ['working-directory: .', 'root-aware workspace'], ['scripts/rinova-doctor.mjs', 'doctor script'],
     ['actions/upload-artifact@v4', 'redacted report artifact'], ['GITHUB_STEP_SUMMARY', 'job summary'], ['pnpm install --frozen-lockfile', 'locked dependency install'],
   ];
   const missingDoctor = doctorMarkers.filter(([marker]) => !doctor.includes(marker)).map(([, label]) => label);

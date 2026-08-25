@@ -24,7 +24,7 @@ concurrency:
 defaults:
   run:
     shell: bash
-    working-directory: ${{ github.workspace }}
+    working-directory: .
 
 jobs:
   doctor:
