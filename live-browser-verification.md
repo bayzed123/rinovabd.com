@@ -95,3 +95,9 @@ Todo 2 code commit `3db13a0`; CI/CD run `32875466547` completed successfully. A 
 Product detail now uses a plus/minus quantity stepper with minimum-order and available-stock bounds. The bag drawer now provides plus/minus controls and persists every change to localStorage. Checkout now shows the same stepper, recalculates subtotal and total after each change, and removes an item when quantity is reduced below its minimum. Existing manual number input remains available where appropriate, but the primary mobile interaction is now the stepper.
 
 Local product, storefront, and checkout JavaScript syntax checks, storefront build, Worker typecheck, and whitespace validation passed. Commit `0c41af6`; CI/CD run `32875957528` completed successfully. Todo 4 is complete; the next active task is verifying the Hot Product, In Stock, and New Product badge flow.
+
+## 2026-08-25 — Todo 3: bilingual plain-text product copy and Editor's Note
+
+D1 migration `0010-product-editor-note.sql` added `products.editor_note` as Unicode-capable TEXT with an empty-string default and was applied live before deployment. Admin product reads and writes, public product detail API, and the editor form now support `editorNote`. Description and Editor's Note are escaped as plain text; CSS preserves line breaks, so Bengali and English can be entered together without HTML formatting or text corruption.
+
+A temporary multiline Bengali/English value was saved through the authenticated admin editor, returned exactly by `/api/products/10`, and displayed on the public product detail page. The original description was restored and the temporary note cleared; the final API check returned the original description and `editorNote: ""`. Commit `48e0765`; CI/CD run `32879261790` completed successfully. Todo 3 is complete; the next active task is verifying the user's test order through public tracking.
