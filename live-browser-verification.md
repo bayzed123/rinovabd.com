@@ -65,3 +65,9 @@ Local JavaScript syntax checks, storefront build, Worker typechecking, and white
 - Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace checks, and live admin HTML/CSS asset checks passed.
 - Unauthenticated admin product API continued to return HTTP 401.
 - Commit `b64f2fe`; CI/CD run `32867874859` completed successfully.
+
+## 2026-08-25 — Persistent admin assistant and always-visible navigation
+
+The admin assistant launcher is now viewport-fixed instead of being positioned inside the Top Products card, so it remains available while the dashboard page scrolls. On mobile widths, the sidebar becomes a sticky multi-row navigation bar that exposes Dashboard, Products, Orders, Inventory, Settings, Returns, Reviews, POS & Barcodes, Content CMS, and Admin Assistant without requiring a hidden drawer. The logout control remains available at the navigation edge.
+
+Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace validation, and live admin HTML/CSS asset checks passed. Unauthenticated admin product access continued to return HTTP 401. Feature commit `b64f2fe` and documentation commit `dc86ed1` were pushed; CI/CD run `32867874859` completed successfully.
