@@ -17,6 +17,12 @@ interface Bindings {
   ADMIN_API_TOKEN?: string;
   ADMIN_USERNAME?: string;
   ADMIN_PASSWORD?: string;
+  AI_MODEL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_API_KEY_1?: string;
+  GEMINI_API_KEY_2?: string;
+  GEMINI_MODEL?: string;
+  WHATSAPP_NUMBER?: string;
 }
 
 type App = Hono<{ Bindings: Bindings }>;
@@ -71,6 +77,17 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function hashPassword(password: string) {
+  const salt = crypto.randomUUID();
+  return `${salt}:${await sha256(`${salt}:${password}`)}`;
+}
+
+async function verifyPassword(password: string, stored: string | null) {
+  if (!stored) return false;
+  const [salt, digest] = stored.split(':');
+  return Boolean(salt && digest && digest === await sha256(`${salt}:${password}`));
+}
+
 async function adminPrincipal(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
   const authorization = c.req.header('Authorization') ?? '';
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
@@ -85,6 +102,13 @@ async function createAdminSession(env: Bindings, username: string) {
   const token = `${crypto.randomUUID()}.${crypto.randomUUID()}`;
   const tokenHash = await sha256(token);
   await env.DB.prepare("INSERT INTO admin_sessions(token_hash, username, expires_at) VALUES (?, ?, datetime('now', '+12 hours'))").bind(tokenHash, username).run();
+  return token;
+}
+
+async function createCustomerSession(env: Bindings, customerId: number) {
+  const token = `${crypto.randomUUID()}.${crypto.randomUUID()}`;
+  const tokenHash = await sha256(token);
+  await env.DB.prepare("INSERT INTO customer_sessions(customer_id, token_hash, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").bind(customerId, tokenHash).run();
   return token;
 }
 
@@ -151,6 +175,75 @@ function calculateTrust(rows: Array<{ status: string }>) {
   return { totalPlaced, finalizedOrders: finalized.length, successfulOrders: success, cancelledOrders: cancellations, failedOrReturnedOrders: failed, successRate, cancelRate, rating };
 }
 
+function extractAiText(result: unknown) {
+  if (typeof result === 'string') return result;
+  const payload = result as Record<string, unknown>;
+  if (typeof payload.response === 'string') return payload.response;
+  if (typeof payload.output_text === 'string') return payload.output_text;
+  if (typeof (payload.result as Record<string, unknown> | undefined)?.response === 'string') return ((payload.result as Record<string, unknown>).response as string);
+  const choices = payload.choices as Array<Record<string, unknown>> | undefined;
+  const content = choices?.[0]?.message && (choices[0].message as Record<string, unknown>).content;
+  return typeof content === 'string' ? content : '';
+}
+
+function shopOnlyInstruction(scope: 'customer' | 'staff') {
+  return scope === 'customer'
+    ? 'You are Rinova BD customer support. Answer only questions about Rinova products, prices, stock, skincare/makeup usage, delivery fees, orders, returns, payments, and store policies. Never invent product facts, never reveal private customer/admin data, and politely refuse unrelated topics. Respond in the user language, preferably concise Bangla when the user writes Bangla.'
+    : 'You are the private Rinova BD staff, owner and admin assistance chatbot. You may summarize only Rinova shop data supplied in the context: products, stock, orders, returns, sales, settings and policies. Never reveal secrets, passwords, API keys or raw session tokens. Do not make irreversible changes; explain the required admin action. Answer operational questions clearly and in Bangla when appropriate.';
+}
+
+async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
+  const products = await env.DB.prepare('SELECT name, price, stock, status, description, weight_grams AS weightGrams FROM products WHERE active = 1 ORDER BY featured DESC, created_at DESC LIMIT 40').all();
+  const categories = await env.DB.prepare('SELECT name, slug FROM categories WHERE active = 1 ORDER BY sort_order ASC').all();
+  const settings = await env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('store_name','tagline','delivery_inside_dhaka','delivery_outside_dhaka','free_delivery_over','support_phone','order_whatsapp_number')").all();
+  const offers = await env.DB.prepare("SELECT title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 10").all();
+  const staffData = scope === 'staff' ? {
+    orders: (await env.DB.prepare("SELECT status, COUNT(*) AS count, COALESCE(SUM(subtotal + delivery_fee), 0) AS value FROM orders GROUP BY status").all()).results,
+    returns: (await env.DB.prepare("SELECT status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount FROM returns GROUP BY status").all()).results,
+    posSales: (await env.DB.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(subtotal - discount), 0) AS value FROM pos_sales WHERE status = 'completed'").all()).results,
+  } : undefined;
+  return JSON.stringify({ store: Object.fromEntries(settings.results.map((item) => [item.key, item.value])), categories: categories.results, products: products.results, offers: offers.results, staffData });
+}
+
+async function runShopAssistant(env: Bindings, scope: 'customer' | 'staff', messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
+  const context = await shopContext(env, scope);
+  const transcript = messages.slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.content}`).join('\n');
+  const prompt = `${shopOnlyInstruction(scope)}\nSHOP DATA JSON:\n${context}\nCONVERSATION:\n${transcript}\nASSISTANT:`;
+  const model = env.AI_MODEL ?? '@cf/openai/gpt-oss-20b';
+  try {
+    const response = await env.AI.run(model, { prompt, max_tokens: 600 });
+    const text = extractAiText(response);
+    if (text) return { text, provider: 'cloudflare-ai' };
+  } catch (error) {
+    console.warn('Cloudflare AI unavailable; trying Gemini fallback.', error);
+  }
+  const keys = [env.GEMINI_API_KEY_1, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY].filter(Boolean) as string[];
+  for (const key of keys) {
+    try {
+      const modelName = env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 600 } }) });
+      const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('').trim();
+      if (response.ok && text) return { text, provider: 'gemini' };
+    } catch (error) {
+      console.warn('Gemini fallback key failed.', error);
+    }
+  }
+  return { text: scope === 'customer' ? 'দুঃখিত, এই মুহূর্তে support assistant সংযোগ করা যাচ্ছে না। WhatsApp-এ যোগাযোগ করুন: +880 1738-745949' : 'AI assistant বর্তমানে unavailable। অনুগ্রহ করে dashboard-এর manual tools ব্যবহার করুন।', provider: 'fallback' };
+}
+
+function getBearer(c: { req: { header: (name: string) => string | undefined } }) {
+  const authorization = c.req.header('Authorization') ?? '';
+  return authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+}
+
+async function customerPrincipal(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
+  const token = getBearer(c);
+  if (!token) return null;
+  const tokenHash = await sha256(token);
+  return c.env.DB.prepare("SELECT customer_id AS customerId FROM customer_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1").bind(tokenHash).first<{ customerId: number }>();
+}
+
 app.post('/api/admin/login', async (c) => {
   const body = await c.req.json<{ username?: string; password?: string }>().catch((): { username?: string; password?: string } => ({}));
   const expectedUsername = c.env.ADMIN_USERNAME ?? 'admin';
@@ -169,6 +262,223 @@ app.post('/api/admin/logout', async (c) => {
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
   if (token) await c.env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(await sha256(token)).run();
   return json(c, { ok: true });
+});
+
+app.post('/api/account/register', async (c) => {
+  const body = await c.req.json<{ name?: string; phone?: string; email?: string; password?: string }>();
+  const name = normalize(body.name);
+  const phone = normalize(body.phone);
+  const password = normalize(body.password);
+  if (!name || !phone || password.length < 8) return json(c, { error: 'Name, phone, and a password of at least 8 characters are required.' }, 400);
+  const existing = await c.env.DB.prepare('SELECT id, password_hash AS passwordHash FROM customers WHERE phone = ?').bind(phone).first<{ id: number; passwordHash: string | null }>();
+  if (existing?.passwordHash) return json(c, { error: 'An account already exists for this mobile number.' }, 409);
+  const passwordHash = await hashPassword(password);
+  const customer = existing
+    ? await c.env.DB.prepare("UPDATE customers SET name = ?, email = ?, password_hash = ?, account_status = 'registered', updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING id").bind(name, body.email ?? null, passwordHash, existing.id).first<{ id: number }>()
+    : await c.env.DB.prepare("INSERT INTO customers(name, phone, email, password_hash, account_status) VALUES (?, ?, ?, ?, 'registered') RETURNING id").bind(name, phone, body.email ?? null, passwordHash).first<{ id: number }>();
+  if (!customer) return json(c, { error: 'Could not create account.' }, 500);
+  const token = await createCustomerSession(c.env, customer.id);
+  return json(c, { ok: true, token, customer: { id: customer.id, name, phone, email: body.email ?? null } }, 201);
+});
+
+app.post('/api/account/login', async (c) => {
+  const body = await c.req.json<{ phone?: string; password?: string }>();
+  const phone = normalize(body.phone);
+  const customer = await c.env.DB.prepare('SELECT id, name, phone, email, password_hash AS passwordHash FROM customers WHERE phone = ?').bind(phone).first<{ id: number; name: string; phone: string; email: string | null; passwordHash: string | null }>();
+  if (!customer || !(await verifyPassword(normalize(body.password), customer.passwordHash))) return json(c, { error: 'Invalid mobile number or password.' }, 401);
+  await c.env.DB.prepare('UPDATE customers SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').bind(customer.id).run();
+  const token = await createCustomerSession(c.env, customer.id);
+  return json(c, { ok: true, token, customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email } });
+});
+
+app.get('/api/account/me', async (c) => {
+  const session = await customerPrincipal(c);
+  if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
+  const customer = await c.env.DB.prepare('SELECT id, name, phone, email, district, upazila, address, account_status AS accountStatus FROM customers WHERE id = ?').bind(session.customerId).first();
+  return customer ? json(c, { customer }) : json(c, { error: 'Customer not found.' }, 404);
+});
+
+app.get('/api/account/orders', async (c) => {
+  const session = await customerPrincipal(c);
+  if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
+  const result = await c.env.DB.prepare('SELECT order_code AS orderCode, invoice_number AS invoiceNumber, subtotal, delivery_fee AS deliveryFee, status, payment_status AS paymentStatus, courier_status AS courierStatus, created_at AS createdAt FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50').bind(session.customerId).all();
+  return json(c, { orders: result.results });
+});
+
+app.post('/api/account/logout', async (c) => {
+  const token = getBearer(c);
+  if (token) await c.env.DB.prepare('DELETE FROM customer_sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+  return json(c, { ok: true });
+});
+
+app.post('/api/account/returns', async (c) => {
+  const session = await customerPrincipal(c);
+  if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
+  const body = await c.req.json<{ orderCode?: string; reason?: string; notes?: string }>();
+  const order = await c.env.DB.prepare("SELECT id, order_code AS orderCode, subtotal, status FROM orders WHERE order_code = ? AND customer_id = ?").bind(normalize(body.orderCode), session.customerId).first<{ id: number; orderCode: string; subtotal: number; status: OrderStatus }>();
+  if (!order) return json(c, { error: 'Order not found.' }, 404);
+  if (!['delivered', 'shipped'].includes(order.status)) return json(c, { error: 'A return can be requested after shipment or delivery.' }, 400);
+  const returnCode = `RET-${Date.now().toString(36).toUpperCase()}`;
+  const result = await c.env.DB.prepare("INSERT INTO returns(order_id, return_code, reason, amount, notes, created_by) VALUES (?, ?, ?, ?, ?, 'customer') RETURNING id, return_code AS returnCode, status").bind(order.id, returnCode, normalize(body.reason), order.subtotal, normalize(body.notes) || null).first();
+  await c.env.DB.prepare("UPDATE orders SET return_status = 'requested', return_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(normalize(body.reason), order.id).run();
+  return json(c, { ok: true, return: result }, 201);
+});
+
+app.get('/api/orders/:orderCode/invoice', async (c) => {
+  const admin = await adminPrincipal(c);
+  const customerSession = admin ? null : await customerPrincipal(c);
+  const order = await c.env.DB.prepare('SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(normalize(c.req.param('orderCode'))).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  if (!order || (!admin && (!customerSession || customerSession.customerId !== order.customerId))) return json(c, { error: 'Order not found.' }, 404);
+  const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
+  const computedWeight = items.results.reduce((sum, item) => sum + Number((item as { quantity: number; weightGrams: number }).quantity) * Number((item as { quantity: number; weightGrams: number }).weightGrams), 0);
+  return json(c, { invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: order.subtotal + order.deliveryFee }, items: items.results });
+});
+
+app.get('/api/admin/returns', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const status = normalize(c.req.query('status'));
+  const condition = status ? 'WHERE r.status = ?' : '';
+  const result = await c.env.DB.prepare(`SELECT r.id, r.return_code AS returnCode, r.status, r.reason, r.amount, r.notes, r.created_by AS createdBy, r.created_at AS createdAt, o.order_code AS orderCode, c.name, c.phone FROM returns r JOIN orders o ON o.id = r.order_id JOIN customers c ON c.id = o.customer_id ${condition} ORDER BY r.created_at DESC LIMIT 100`).bind(...(status ? [status] : [])).all();
+  return json(c, { returns: result.results });
+});
+
+app.patch('/api/admin/returns/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const body = await c.req.json<{ status?: string; notes?: string; refundAmount?: number }>();
+  const allowed = ['requested','approved','picked_up','received','refunded','rejected','cancelled'];
+  if (!allowed.includes(normalize(body.status))) return json(c, { error: 'Unsupported return status.' }, 400);
+  const current = await c.env.DB.prepare('SELECT id, order_id AS orderId, status FROM returns WHERE id = ?').bind(id).first<{ id: number; orderId: number; status: string }>();
+  if (!current) return json(c, { error: 'Return not found.' }, 404);
+  await c.env.DB.prepare('UPDATE returns SET status = ?, notes = COALESCE(?, notes), amount = COALESCE(?, amount), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalize(body.status), normalize(body.notes) || null, numberOrNull(body.refundAmount), id).run();
+  if (normalize(body.status) === 'received' && !['received','refunded'].includes(current.status)) await restoreOrderInventory(c.env, current.orderId, actor, 'return');
+  await c.env.DB.prepare("UPDATE orders SET return_status = ?, refund_status = CASE WHEN ? = 'refunded' THEN 'refunded' ELSE refund_status END, refund_amount = CASE WHEN ? = 'refunded' THEN COALESCE(?, refund_amount) ELSE refund_amount END, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(normalize(body.status), normalize(body.status), normalize(body.status), numberOrNull(body.refundAmount), current.orderId).run();
+  return json(c, { ok: true, returnId: id, status: normalize(body.status) });
+});
+
+app.get('/api/admin/pos/products', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const q = normalize(c.req.query('q'));
+  const result = await c.env.DB.prepare('SELECT id, name, sku, barcode, price, cost_price AS costPrice, stock FROM products WHERE active = 1 AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?) ORDER BY name ASC LIMIT 100').bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
+  return json(c, { products: result.results });
+});
+
+app.post('/api/admin/pos/sales', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ items?: Array<{ productId: number; quantity: number }>; paymentMethod?: 'cash'|'bkash'|'nagad'|'rocket'|'card'; discount?: number }>();
+  if (!body.items?.length || !body.paymentMethod) return json(c, { error: 'POS items and payment method are required.' }, 400);
+  const ids = body.items.map((item) => item.productId);
+  const products = await c.env.DB.prepare(`SELECT id, name, barcode, price, cost_price AS costPrice, stock FROM products WHERE active = 1 AND id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<{ id: number; name: string; barcode: string | null; price: number; costPrice: number; stock: number }>();
+  const byId = new Map(products.results.map((product) => [product.id, product]));
+  const items = body.items.map((item) => { const product = byId.get(item.productId); if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A POS product is unavailable or out of stock.'); return { ...item, product }; });
+  const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const discount = Math.max(0, Math.min(subtotal, Number(body.discount) || 0));
+  const receiptNumber = `POS-${Date.now().toString(36).toUpperCase()}`;
+  const sale = await c.env.DB.prepare('INSERT INTO pos_sales(receipt_number, subtotal, discount, payment_method, created_by) VALUES (?, ?, ?, ?, ?) RETURNING id, receipt_number AS receiptNumber').bind(receiptNumber, subtotal, discount, body.paymentMethod, actor).first<{ id: number; receiptNumber: string }>();
+  if (!sale) return json(c, { error: 'Could not create POS sale.' }, 500);
+  const statements: D1PreparedStatement[] = [];
+  for (const item of items) {
+    const next = item.product.stock - item.quantity;
+    statements.push(
+      c.env.DB.prepare('INSERT INTO pos_sale_items(sale_id, product_id, product_name, barcode, quantity, unit_price, unit_cost) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(sale.id, item.product.id, item.product.name, item.product.barcode, item.quantity, item.product.price, item.product.costPrice),
+      c.env.DB.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, item.product.id),
+      c.env.DB.prepare('INSERT INTO stock_movements(product_id, quantity_delta, quantity_after, reason, note, actor) VALUES (?, ?, ?, \'sale\', ?, ?)').bind(item.product.id, -item.quantity, next, `POS ${receiptNumber}`, actor),
+    );
+  }
+  await c.env.DB.batch(statements);
+  return json(c, { ok: true, sale: { ...sale, subtotal, discount, total: subtotal - discount, paymentMethod: body.paymentMethod } }, 201);
+});
+
+app.get('/api/content/home', async (c) => {
+  const content = await c.env.DB.prepare("SELECT content_key AS key, content_type AS type, title, body_json AS body FROM cms_content WHERE status = 'published' ORDER BY content_key").all();
+  const posts = await c.env.DB.prepare("SELECT slug, title, excerpt, body, image_url AS imageUrl, published_at AS publishedAt, author FROM blog_posts WHERE status = 'published' ORDER BY published_at DESC, created_at DESC LIMIT 12").all();
+  const offers = await c.env.DB.prepare("SELECT code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 20").all();
+  return json(c, { content: content.results, posts: posts.results, offers: offers.results });
+});
+
+app.get('/api/content/pages/:slug', async (c) => {
+  const page = await c.env.DB.prepare("SELECT slug, title, body, seo_title AS seoTitle, seo_description AS seoDescription FROM site_pages WHERE slug = ? AND status = 'published'").bind(normalize(c.req.param('slug'))).first();
+  return page ? json(c, { page }) : json(c, { error: 'Page not found.' }, 404);
+});
+
+app.get('/api/admin/content', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const [content, pages, posts, offers] = await Promise.all([
+    c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
+    c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, slug, title, excerpt, body, image_url AS imageUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active FROM offers ORDER BY updated_at DESC').all(),
+  ]);
+  return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results });
+});
+
+app.put('/api/admin/content/:key', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ type?: string; title?: string; body?: unknown; status?: string }>();
+  await c.env.DB.prepare('INSERT INTO cms_content(content_key, content_type, title, body_json, status, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(content_key) DO UPDATE SET content_type = excluded.content_type, title = excluded.title, body_json = excluded.body_json, status = excluded.status, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP').bind(normalize(c.req.param('key')), normalize(body.type) || 'text', normalize(body.title), JSON.stringify(body.body ?? {}), ['draft','published','archived'].includes(normalize(body.status)) ? normalize(body.status) : 'draft', actor).run();
+  return json(c, { ok: true, key: normalize(c.req.param('key')) });
+});
+
+app.post('/api/admin/pages', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ slug?: string; title?: string; body?: string; status?: string; seoTitle?: string; seoDescription?: string }>();
+  const slug = normalize(body.slug);
+  if (!slug || !normalize(body.title)) return json(c, { error: 'Page slug and title are required.' }, 400);
+  const status = ['draft','published','archived'].includes(normalize(body.status)) ? normalize(body.status) : 'draft';
+  await c.env.DB.prepare('INSERT INTO site_pages(slug, title, body, status, seo_title, seo_description, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(slug) DO UPDATE SET title = excluded.title, body = excluded.body, status = excluded.status, seo_title = excluded.seo_title, seo_description = excluded.seo_description, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP').bind(slug, normalize(body.title), normalize(body.body), status, normalize(body.seoTitle) || null, normalize(body.seoDescription) || null, actor).run();
+  return json(c, { ok: true, slug });
+});
+
+app.post('/api/admin/posts', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ slug?: string; title?: string; excerpt?: string; body?: string; imageUrl?: string; status?: string }>();
+  const slug = normalize(body.slug);
+  if (!slug || !normalize(body.title)) return json(c, { error: 'Post slug and title are required.' }, 400);
+  const status = ['draft','published','archived'].includes(normalize(body.status)) ? normalize(body.status) : 'draft';
+  const publishedAt = status === 'published' ? new Date().toISOString() : null;
+  await c.env.DB.prepare('INSERT INTO blog_posts(slug, title, excerpt, body, image_url, status, published_at, updated_by, author, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(slug) DO UPDATE SET title = excluded.title, excerpt = excluded.excerpt, body = excluded.body, image_url = excluded.image_url, status = excluded.status, published_at = excluded.published_at, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP').bind(slug, normalize(body.title), normalize(body.excerpt), normalize(body.body), normalize(body.imageUrl) || null, status, publishedAt, actor, 'Rinova BD').run();
+  return json(c, { ok: true, slug });
+});
+
+app.post('/api/admin/offers', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean }>();
+  if (!normalize(body.title)) return json(c, { error: 'Offer title is required.' }, 400);
+  const type = ['fixed','percentage','free_delivery'].includes(normalize(body.discountType)) ? normalize(body.discountType) : 'fixed';
+  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(normalize(body.code) || null, normalize(body.title), normalize(body.description), type, Math.max(0, Number(body.discountValue) || 0), Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, actor).run();
+  return json(c, { ok: true, title: normalize(body.title) }, 201);
+});
+
+app.post('/api/chat/customer', async (c) => {
+  const body = await c.req.json<{ visitorKey?: string; messages?: Array<{ role: 'user' | 'assistant'; content: string }> }>();
+  const messages = (body.messages ?? []).filter((message) => ['user','assistant'].includes(message.role) && normalize(message.content)).slice(-8);
+  if (!messages.length || messages.at(-1)?.role !== 'user') return json(c, { error: 'A user message is required.' }, 400);
+  const visitorKey = normalize(body.visitorKey).slice(0, 120) || `visitor-${crypto.randomUUID()}`;
+  const conversation = await c.env.DB.prepare("INSERT INTO chat_conversations(visitor_key, channel) VALUES (?, 'customer_ai') RETURNING id").bind(visitorKey).first<{ id: number }>();
+  if (!conversation) return json(c, { error: 'Could not start chat.' }, 500);
+  await c.env.DB.prepare("INSERT INTO chat_messages(conversation_id, sender, content, provider) VALUES (?, 'user', ?, 'browser')").bind(conversation.id, messages.at(-1)!.content).run();
+  const answer = await runShopAssistant(c.env, 'customer', messages);
+  await c.env.DB.prepare("INSERT INTO chat_messages(conversation_id, sender, content, provider) VALUES (?, 'assistant', ?, ?)").bind(conversation.id, answer.text, answer.provider).run();
+  return json(c, { ok: true, reply: answer.text, provider: answer.provider, visitorKey });
+});
+
+app.post('/api/admin/chat', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ messages?: Array<{ role: 'user' | 'assistant'; content: string }> }>();
+  const messages = (body.messages ?? []).filter((message) => ['user','assistant'].includes(message.role) && normalize(message.content)).slice(-8);
+  if (!messages.length || messages.at(-1)?.role !== 'user') return json(c, { error: 'A user message is required.' }, 400);
+  const conversation = await c.env.DB.prepare("INSERT INTO chat_conversations(visitor_key, channel, staff_scope) VALUES (?, 'staff_ai', ? ) RETURNING id").bind(`staff-${actor}`, actor).first<{ id: number }>();
+  if (!conversation) return json(c, { error: 'Could not start staff chat.' }, 500);
+  const answer = await runShopAssistant(c.env, 'staff', messages);
+  await c.env.DB.prepare("INSERT INTO chat_messages(conversation_id, sender, content, provider) VALUES (?, 'assistant', ?, ?)").bind(conversation.id, answer.text, answer.provider).run();
+  return json(c, { ok: true, reply: answer.text, provider: answer.provider });
 });
 
 app.get('/api/admin/overview', async (c) => {
@@ -434,9 +744,10 @@ app.post('/api/orders', async (c) => {
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
+  const invoiceNumber = `RNV-INV-${Date.now().toString(36).toUpperCase()}`;
   const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, body.district, body.upazila, body.address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
-  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode').bind(orderCode, customer.id, subtotal, deliveryFee, zone, body.paymentMethod, body.trxId ?? null).first<{ id: number; orderCode: string }>();
+  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoiceNumber, customer.id, subtotal, deliveryFee, zone, body.paymentMethod, body.trxId ?? null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
   for (const item of lineItems) {
     await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.product.name, item.quantity, item.unitPrice).run();

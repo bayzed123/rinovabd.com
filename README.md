@@ -14,9 +14,9 @@ Customer trust scoring distinguishes delivered, customer-cancelled, refused, del
 
 The private admin dashboard is available at `/admin` and is intentionally not linked from the customer navigation. It uses a 12-hour hashed D1 session rather than exposing credentials in frontend code. The dashboard currently includes overview metrics for revenue, gross profit, order pipeline, average order value, stock valuation, low-stock count, product catalogue search, product create/edit, SKU, cost/selling/compare-at prices, stock, MOQ, volume-tier JSON, image URL, status, featured flag, order status controls, stock adjustment ledger, and store settings. The Bengali operating guide is available at `/admin/guide`.
 
-The dashboard schema is in `worker/migrations/0004-admin-dashboard.sql`. It adds product management fields, `stock_movements`, `admin_sessions`, and `store_settings`. Apply it once to the production D1 database before deploying the Worker code; the live Rinova database has been verified with the migration applied and all 15 seeded products assigned SKUs.
+The dashboard schema is in `worker/migrations/0004-admin-dashboard.sql` and `worker/migrations/0005-commerce-support-expansion.sql`. The live Rinova database has been verified with both migrations applied, all 15 seeded products assigned SKUs, and the expansion tables present for returns, POS sales, CMS content, customer sessions, and chatbot conversations.
 
-Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` as Cloudflare Worker secrets. The GitHub Actions deployment workflow syncs those secrets when the corresponding repository secrets are available; secret values must never be committed or placed in client code. `ADMIN_API_TOKEN` remains supported for automation and legacy integrations.
+Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` as Cloudflare Worker secrets. The GitHub Actions deployment workflow syncs those secrets when the corresponding repository secrets are available; secret values must never be committed or placed in client code. `ADMIN_API_TOKEN` remains supported for automation and legacy integrations. Gemini fallback can use `GEMINI_API_KEY`, `GEMINI_API_KEY_1`, and `GEMINI_API_KEY_2`; Cloudflare Workers AI remains the default provider and keys are only read server-side.
 
 ## Structure
 
@@ -46,6 +46,12 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | GET | `/api/locations?q=` | Searchable district and upazila directory |
 | GET | `/api/delivery-fee` | Automatic zone and fee calculation |
 | POST | `/api/orders` | Create a COD or mobile-payment order |
+| GET | `/api/orders/:orderCode/invoice` | Secure invoice data for customer or admin print view |
+| POST | `/api/account/register` | Create a customer account |
+| POST | `/api/account/login` | Sign in a customer account |
+| GET | `/api/account/me` | Read the current customer profile |
+| GET | `/api/account/orders` | Read the current customer's order history |
+| POST | `/api/account/returns` | Submit a return request for an eligible order |
 | GET | `/api/orders/:orderCode` | Retrieve order summary and items |
 | PATCH | `/api/orders/:orderCode/status` | Update order status and history |
 | GET | `/api/customers/:phone/trust` | Internal order success/cancel profile |
@@ -60,6 +66,16 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | POST | `/api/admin/products/:id/stock` | Add a stock ledger movement |
 | GET | `/api/admin/products/:id/stock-movements` | Read product stock history |
 | GET | `/api/admin/orders` | Search and filter orders for admin |
+| GET/PATCH | `/api/admin/returns` and `/api/admin/returns/:id` | Review, receive and refund returns |
+| GET | `/api/admin/pos/products` | Search active products by name, SKU or barcode |
+| POST | `/api/admin/pos/sales` | Complete an in-store POS sale and stock movement |
+| GET | `/api/admin/content` | Read CMS blocks, pages, posts and offers |
+| PUT | `/api/admin/content/:key` | Publish a CMS block/banner |
+| POST | `/api/admin/pages` | Create or update a page |
+| POST | `/api/admin/posts` | Create or update a Journal post |
+| POST | `/api/admin/offers` | Create a promotional offer |
+| POST | `/api/admin/chat` | Private shop-only staff/owner/admin assistant |
+| POST | `/api/chat/customer` | Public shop-only customer support assistant |
 | GET | `/api/customer-tracking?orderId=...` or `?phone=...` | Customer-safe delivery status message |
 | POST | `/api/admin/orders/:orderCode/steadfast/book` | Admin-only parcel booking |
 | GET | `/api/admin/orders/:orderCode/steadfast/status` | Admin-only Steadfast status lookup |
@@ -89,10 +105,16 @@ The optional base URL defaults to `https://portal.packzy.com/api/v1`; set `STEAD
 
 The courier adapter uses the documented order creation and status lookup paths and records consignment ID, tracking code, last status, last update time, package weight, and status history. It does not send any live request until the merchant secrets are present.
 
+## Customer support and AI
+
+The storefront floating support launcher provides two dynamic choices: Cloudflare Workers AI-backed shop support and a WhatsApp redirect to `+880 1738-745949`. The customer assistant is limited to product, price, stock, usage, delivery, orders, returns, payments, and store policy. The private `/admin` assistant receives operational summaries for staff, owner, and administrator support, but it cannot execute irreversible mutations or reveal credentials. Cloudflare Workers AI is called through the bound `AI` service using configurable `AI_MODEL`; if it fails and Gemini secrets are configured, the Worker tries the configured Gemini keys in sequence.
+
+Customer-facing account, checkout, and printable invoice entry points are `/account.html`, `/checkout.html`, and `/invoice.html?order=...`. The hidden Clothing category is seeded as inactive so it remains prepared for a future sector without appearing in the current storefront. POS receipt printing is browser-based and uses the existing barcode/SKU data.
+
 ## Verification
 
 ```bash
 pnpm build
 ```
 
-The build command validates the storefront and typechecks the Worker. The current dashboard and D1 admin migration are implemented; remaining roadmap modules include printable invoice/returns views, content/CMS sections, POS and future clothing workflows, Meta/TikTok/Google server-side conversion adapters, customer accounts, and full production checkout/payment handling. R2 remains optional until it is enabled at the Cloudflare account level; local repository assets continue to serve the storefront.
+The build command validates the storefront and typechecks the Worker. The current dashboard, commerce-support expansion, invoice/return views, CMS, POS, customer accounts, hidden clothing foundation, and dual chatbot surfaces are implemented. Remaining hardening includes direct R2 uploads, payment-gateway settlement/refund automation, native barcode-label generation, inbound Messenger/WhatsApp order automation, and a full Playwright regression suite. R2 remains optional until it is enabled at the Cloudflare account level; local repository assets continue to serve the storefront.
