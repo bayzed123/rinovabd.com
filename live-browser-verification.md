@@ -89,3 +89,9 @@ Local account JavaScript syntax, storefront build, Worker typecheck, and whitesp
 The public tracking route now accepts `orderId`, `invoiceNumber`, or `phone`. A dedicated Invoice Number field was added to the tracking page, query-string prefill was added for account-originated tracking links, and the result now displays both order code and invoice number. The live endpoint accepted `invoiceNumber=RNV-INV-MT7YGCX0` and returned HTTP 404 because that identifier was not found in the current live order database; before deployment the same request returned HTTP 400 because the route did not recognize the invoice parameter. Empty tracking requests continue to return HTTP 400.
 
 Todo 2 code commit `3db13a0`; CI/CD run `32875466547` completed successfully. A real existing invoice number is still needed for a positive 200-response verification; the current screenshot identifier is not present in live D1.
+
+## 2026-08-25 — Todo 4: customer quantity steppers
+
+Product detail now uses a plus/minus quantity stepper with minimum-order and available-stock bounds. The bag drawer now provides plus/minus controls and persists every change to localStorage. Checkout now shows the same stepper, recalculates subtotal and total after each change, and removes an item when quantity is reduced below its minimum. Existing manual number input remains available where appropriate, but the primary mobile interaction is now the stepper.
+
+Local product, storefront, and checkout JavaScript syntax checks, storefront build, Worker typecheck, and whitespace validation passed. Commit `0c41af6`; CI/CD run `32875957528` completed successfully. Todo 4 is complete; the next active task is verifying the Hot Product, In Stock, and New Product badge flow.
