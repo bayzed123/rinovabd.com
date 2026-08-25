@@ -46,3 +46,13 @@ The admin product editor now includes a primary image file picker and a multiple
 The storefront preview now preserves the authenticated admin session in the same browser tab. Product cards and SmartGen product links opened from `/?admin_preview=1` carry the preview context, and product detail pages show an `Edit this product in Admin Dashboard` shortcut that returns to `/admin/?view=products&edit={id}`.
 
 Local JavaScript syntax checks, storefront build, Worker typechecking, and whitespace validation passed. CI/CD run `32860689016` completed successfully. Production checks returned HTTP 200 for the preview storefront and guide, HTTP 401 for unauthenticated product-media upload, and the product detail route responded with its normal redirect behavior. Cloudflare R2 listing currently returns error 10042 indicating that R2 has not yet been enabled for this account; therefore the upload controls are deployed and protected, but actual image transfer will begin after R2 is enabled and the `rinovabd-product-images` bucket is bound as `PRODUCT_IMAGES`.
+
+## 2026-08-25 — Premium merchandising badges and stock-status UX
+
+- Applied migration `0009-product-merchandising-badges.sql` to live D1; `products.badges_json` is now available for owner-selected `hot`, `instock`, and `new` badge values.
+- Production `/api/products` and `/api/products/himalaya-face-wash-collection` returned HTTP 200 with the `badgesJson` product contract.
+- Storefront product cards and product detail pages no longer show normal stock quantity or automatic In stock text. When stock reaches zero, `Stock out` is rendered automatically. Owner-selected badges remain optional.
+- Admin product editor contains the three badge checkboxes and the Bengali guide documents their use.
+- Unauthenticated `GET /api/admin/products` returned HTTP 401.
+- Local syntax checks, Worker typecheck, storefront build, and whitespace validation passed. Commit `eeaeaec`; CI/CD run `32867116870` completed successfully.
+- No production product badge was changed during smoke testing because that would be a live merchandising decision for the owner.
