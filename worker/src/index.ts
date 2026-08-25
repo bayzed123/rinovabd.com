@@ -955,13 +955,81 @@ app.post('/api/webhooks/steadfast', async (c) => {
   return json(c, { ok: true, orderId: order.id, status: rawStatus });
 });
 
+function escapeHtml(value: unknown) {
+  return normalize(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
+}
+
+function cleanProductUrl(origin: string, slug: string) {
+  return `${origin}/products/${encodeURIComponent(slug)}`;
+}
+
+function absolutePublicImage(origin: string, value: unknown) {
+  const image = normalize(value);
+  if (image.startsWith('/')) return `${origin}${image}`;
+  return /^https:\/\//i.test(image) ? image : '';
+}
+
+function applyProductSeo(html: string, origin: string, product: { name: string; slug: string; description?: string | null; shortDescription?: string | null; imageUrl?: string | null; price?: number; stock?: number; rating?: number; reviewCount?: number }) {
+  const title = `${normalize(product.name)} · Rinova BD`;
+  const description = normalize(product.shortDescription || product.description || `Shop ${product.name} from Rinova BD.`).slice(0, 158);
+  const canonical = cleanProductUrl(origin, product.slug);
+  const image = absolutePublicImage(origin, product.imageUrl);
+  const jsonLd = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: product.name,
+    description,
+    url: canonical,
+    ...(image ? { image: [image] } : {}),
+    offers: { '@type': 'Offer', url: canonical, priceCurrency: 'BDT', price: Number(product.price || 0), availability: Number(product.stock || 0) > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock', seller: { '@type': 'Organization', name: 'Rinova BD' } },
+    ...(Number(product.reviewCount || 0) > 0 && Number(product.rating || 0) > 0 ? { aggregateRating: { '@type': 'AggregateRating', ratingValue: Number(product.rating), reviewCount: Number(product.reviewCount) } } : {}),
+  }).replaceAll('<', '\\u003c');
+  const replacements: Array<[RegExp, string]> = [
+    [/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(title)}</title>`],
+    [/<meta name="description" content="[^"]*">/i, `<meta name="description" content="${escapeHtml(description)}">`],
+    [/<meta name="robots" content="[^"]*">/i, '<meta name="robots" content="index,follow">'],
+    [/<link rel="canonical" href="[^"]*">/i, `<link rel="canonical" href="${escapeHtml(canonical)}">`],
+    [/<meta property="og:title" content="[^"]*">/i, `<meta property="og:title" content="${escapeHtml(title)}">`],
+    [/<meta property="og:description" content="[^"]*">/i, `<meta property="og:description" content="${escapeHtml(description)}">`],
+    [/<meta property="og:image" content="[^"]*">/i, `<meta property="og:image" content="${escapeHtml(image)}">`],
+  ];
+  let output = html;
+  for (const [pattern, replacement] of replacements) output = output.replace(pattern, replacement);
+  const script = `<script id="product-jsonld" type="application/ld+json">${jsonLd}</script>`;
+  output = /<script id="product-jsonld" type="application\/ld\+json">[\s\S]*?<\/script>/i.test(output) ? output.replace(/<script id="product-jsonld" type="application\/ld\+json">[\s\S]*?<\/script>/i, script) : output.replace('</head>', `${script}</head>`);
+  return output;
+}
+
+app.get('/products/:slug', async (c) => {
+  const slug = normalize(c.req.param('slug'));
+  const product = await c.env.DB.prepare('SELECT name, slug, description, short_description AS shortDescription, image_url AS imageUrl, price, stock, rating, review_count AS reviewCount FROM products WHERE active = 1 AND slug = ? LIMIT 1').bind(slug).first<{ name: string; slug: string; description: string | null; shortDescription: string | null; imageUrl: string | null; price: number; stock: number; rating: number; reviewCount: number }>();
+  if (!product) return c.text('Product not found.', 404);
+  if (!c.env.ASSETS) return c.text('Storefront assets are unavailable.', 503);
+  const assetUrl = new URL('/product.html', c.req.url);
+  const assetResponse = await c.env.ASSETS.fetch(new Request(assetUrl, c.req.raw));
+  if (!assetResponse.ok) return assetResponse;
+  const headers = new Headers(assetResponse.headers);
+  headers.set('Content-Type', 'text/html; charset=UTF-8');
+  return new Response(applyProductSeo(await assetResponse.text(), new URL(c.req.url).origin, product), { status: assetResponse.status, headers });
+});
+
+app.get('/product.html', async (c) => {
+  const slug = normalize(c.req.query('slug'));
+  if (slug) {
+    const preview = c.req.query('admin_preview') === '1' ? '?admin_preview=1' : '';
+    return c.redirect(`${cleanProductUrl(new URL(c.req.url).origin, slug)}${preview}`, 301);
+  }
+  if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
+  return c.text('Storefront assets are unavailable.', 503);
+});
+
 app.get('/sitemap.xml', async (c) => {
   const origin = new URL(c.req.url).origin;
-  const products = await c.env.DB.prepare('SELECT slug FROM products WHERE active = 1 ORDER BY updated_at DESC, created_at DESC').all<{ slug: string }>();
-  const staticUrls = ['/', '/product.html', '/checkout.html', '/account.html'].map((path) => `${origin}${path}`);
-  const productUrls = products.results.map((product) => `${origin}/product.html?slug=${encodeURIComponent(product.slug)}`);
-  const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-  const body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...[...staticUrls, ...productUrls].map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`), '</urlset>'].join('');
+  const products = await c.env.DB.prepare('SELECT slug, updated_at AS updatedAt FROM products WHERE active = 1 AND slug IS NOT NULL AND slug <> \'\' ORDER BY updated_at DESC, created_at DESC').all<{ slug: string; updatedAt: string | null }>();
+  const staticUrls = [`${origin}/`];
+  const productEntries = Array.from(new Map(products.results.map((product) => [product.slug, { url: cleanProductUrl(origin, product.slug), updatedAt: product.updatedAt }])).values());
+  const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+  const body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...staticUrls.map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`), ...productEntries.map((entry) => `<url><loc>${xmlEscape(entry.url)}</loc>${entry.updatedAt ? `<lastmod>${xmlEscape(new Date(entry.updatedAt).toISOString())}</lastmod>` : ''}</url>`), '</urlset>'].join('');
   return new Response(body, { headers: { 'Content-Type': 'application/xml; charset=UTF-8', 'Cache-Control': 'public, max-age=300' } });
 });
 

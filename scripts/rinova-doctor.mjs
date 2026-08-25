@@ -32,7 +32,7 @@ function sourceLocation(area, extra = '') {
     'Live D1 schema': 'worker/migrations/:1; worker/src/index.ts:1-8', 'Cloudflare KV': 'worker/wrangler.toml:26-29; worker/src/index.ts:1-8',
     'Cloudflare Worker': 'worker/wrangler.toml:1-4', 'Optional R2': 'worker/wrangler.toml:27-34; worker/src/index.ts:1-8',
     'Live website': 'worker/src/index.ts:875-1085; deployed URL', 'Public endpoint': 'worker/src/index.ts:875-1085',
-    Sitemap: 'worker/src/index.ts:1010-1050; deployed /sitemap.xml', 'Sitemap link': 'worker/src/index.ts:1010-1050; URL from deployed /sitemap.xml',
+    Sitemap: 'worker/src/index.ts:1023-1031; deployed /sitemap.xml', 'Sitemap SEO': 'worker/src/index.ts:1023-1031; clean product URL generator', 'Sitemap link': 'worker/src/index.ts:1023-1031; URL from deployed /sitemap.xml',
     'API security': 'worker/src/index.ts:1-8; protected route',
   };
   return extra ? `${locations[area] || 'repository root'}; ${extra}` : (locations[area] || 'repository root');
@@ -176,11 +176,44 @@ async function checkCloudflareResources() {
 }
 
 function decodeXml(value) { return String(value || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'"); }
+function checkSitemapSeo(urls) {
+  const uniqueUrls = new Set(urls);
+  if (uniqueUrls.size !== urls.length) add('FAIL', 'Sitemap SEO', `Sitemap contains ${urls.length - uniqueUrls.size} duplicate URL(s)`, 'Deduplicate sitemap entries so every <loc> is a unique canonical URL.');
+  else add('PASS', 'Sitemap SEO', 'Sitemap URLs are unique');
+  const parsed = urls.map((url) => { try { return new URL(url); } catch { return null; } }).filter(Boolean);
+  const legacyProducts = parsed.filter((url) => url.pathname === '/product.html' && url.searchParams.has('slug'));
+  if (legacyProducts.length) add('FAIL', 'Sitemap SEO', `${legacyProducts.length} legacy product query URL(s) remain in the sitemap`, 'Use /products/<slug> in the sitemap and keep /product.html?slug=... only as a 301 compatibility redirect.');
+  else add('PASS', 'Sitemap SEO', 'No legacy product query URLs are present');
+  const productUrls = parsed.filter((url) => url.pathname.startsWith('/products/'));
+  const invalidProducts = productUrls.filter((url) => !/^\/products\/[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(url.pathname) || url.search || url.hash);
+  if (!productUrls.length) add('FAIL', 'Sitemap SEO', 'Sitemap contains no clean product URLs', 'Generate one unique /products/<readable-slug> URL for every active product.');
+  else if (invalidProducts.length) add('FAIL', 'Sitemap SEO', `${invalidProducts.length} product URL(s) are not clean readable slugs`, 'Use lowercase hyphen-separated product slugs without query strings or fragments.');
+  else add('PASS', 'Sitemap SEO', `${productUrls.length} product URL(s) use unique clean slugs without query strings`);
+}
+
+async function checkProductSeo(urls) {
+  for (const url of urls) {
+    let parsed;
+    try { parsed = new URL(url); } catch { continue; }
+    if (!parsed.pathname.startsWith('/products/')) continue;
+    const result = await request(url);
+    if (!(result.response.status >= 200 && result.response.status < 400)) continue;
+    const canonical = result.text.match(/<link rel="canonical" href="([^"]+)"/i)?.[1] || '';
+    const jsonLd = result.text.match(/<script id="product-jsonld" type="application\/ld\+json">([\s\S]*?)<\/script>/i)?.[1] || '';
+    let schemaUrl = '';
+    try { schemaUrl = JSON.parse(jsonLd).url || ''; } catch {}
+    if (canonical !== url || schemaUrl !== url) add('FAIL', 'Product SEO', `${url} is missing a matching canonical or Product JSON-LD URL`, 'Keep the page canonical and structured-data URL equal to the exact sitemap URL.', sourceLocation('Sitemap SEO', url));
+    else add('PASS', 'Product SEO', `${url} has matching canonical and Product JSON-LD URLs`, '', sourceLocation('Sitemap SEO', url));
+  }
+}
+
 async function checkSitemap(sitemapResult) {
   if (!sitemapResult) return;
   const urls = [...String(sitemapResult.text || '').matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)].map((match) => decodeXml(match[1]).trim()).filter(Boolean);
   if (!urls.length) { add('FAIL', 'Sitemap', 'Live sitemap returned no <loc> URLs', 'Check the sitemap generator in worker/src/index.ts and ensure active product/blog routes are present.'); return; }
   add('PASS', 'Sitemap', `Live sitemap contains ${urls.length} URL(s); checking each link individually`);
+  checkSitemapSeo(urls);
+  await checkProductSeo(urls);
   const origin = new URL(TARGET_URL).origin;
   for (const url of urls) {
     let parsed;

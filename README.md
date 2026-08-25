@@ -81,6 +81,10 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | GET | `/api/admin/orders/:orderCode/steadfast/status` | Admin-only Steadfast status lookup |
 | POST | `/api/webhooks/steadfast` | Steadfast delivery/return status callback; accepts configured bearer or documented API headers |
 
+## SEO-friendly product pages
+
+Public product pages use unique readable paths such as `/products/blush-and-bloom-gift-set`. The sitemap contains the homepage and one clean canonical URL for every active product; checkout, account and other utility pages are intentionally excluded from search indexing. The previous `/product.html?slug=...` format remains compatible through a permanent redirect, including the admin preview flag. Product pages receive canonical, Open Graph, and Product JSON-LD metadata from the Worker and frontend.
+
 ## Cloudflare status
 
 The GitHub repository is `bayzed123/rinovabd.com`. The Cloudflare D1 database `rinovabd-db` and KV namespace `rinovabd-cache` have been provisioned and seeded for this build. The Hono Worker `rinovabd-worker` is deployed with D1, KV, and Workers AI bindings. The existing Cloudflare Pages project `rinovabd-api` was detected during inspection. R2 is not attached to the first deployment because the account currently reports that R2 must first be enabled from the Cloudflare Dashboard; until that is enabled, the repository's local image assets continue to support the storefront.
