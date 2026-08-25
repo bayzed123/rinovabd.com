@@ -404,8 +404,12 @@ app.get('/api/account/me', async (c) => {
 app.get('/api/account/orders', async (c) => {
   const session = await customerPrincipal(c);
   if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
-  const result = await c.env.DB.prepare('SELECT order_code AS orderCode, invoice_number AS invoiceNumber, subtotal, delivery_fee AS deliveryFee, status, payment_status AS paymentStatus, courier_status AS courierStatus, created_at AS createdAt FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50').bind(session.customerId).all();
-  return json(c, { orders: result.results });
+  const result = await c.env.DB.prepare('SELECT id, order_code AS orderCode, invoice_number AS invoiceNumber, subtotal, delivery_fee AS deliveryFee, status, payment_status AS paymentStatus, courier_status AS courierStatus, created_at AS createdAt FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50').bind(session.customerId).all<{ id: number; orderCode: string; invoiceNumber: string; subtotal: number; deliveryFee: number; status: string; paymentStatus: string | null; courierStatus: string | null; createdAt: string }>();
+  const orders = await Promise.all(result.results.map(async (order) => {
+    const items = await c.env.DB.prepare('SELECT product_id AS productId, product_name AS productName, quantity, unit_price AS unitPrice FROM order_items WHERE order_id = ? ORDER BY id').bind(order.id).all();
+    return { ...order, total: Number(order.subtotal || 0) + Number(order.deliveryFee || 0), items: items.results };
+  }));
+  return json(c, { orders });
 });
 
 app.post('/api/reviews', async (c) => {
