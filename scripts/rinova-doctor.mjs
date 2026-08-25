@@ -104,9 +104,9 @@ function checkRootAndFiles() {
 function checkWorkflowFiles() {
   const doctor = read('.github/workflows/doctor.yml');
   const deploy = read('.github/workflows/rinovabd-ci-cd.yml');
-  const doctorMarkers = [['workflow_dispatch:', 'manual trigger'], ['working-directory: .', 'root-aware workspace'], ['scripts/rinova-doctor.mjs', 'doctor script'], ['actions/upload-artifact@v4', 'redacted report artifact'], ['GITHUB_STEP_SUMMARY', 'job summary'], ['pnpm install --frozen-lockfile', 'locked dependency install'], ['Doctor-report/', 'per-run report directory']];
+  const doctorMarkers = [['workflow_dispatch:', 'manual trigger'], ['working-directory: .', 'root-aware workspace'], ['scripts/rinova-doctor.mjs', 'doctor script'], ['actions/upload-artifact@v4', 'redacted report artifact'], ['GITHUB_STEP_SUMMARY', 'job summary'], ['pnpm install --frozen-lockfile', 'locked dependency install'], ['Doctor-report/', 'per-run report directory'], ['DOCTOR_REPORT_DIR:', 'per-run report output'], ['contents: write', 'report commit permission'], ['Publish report files to Doctor-report', 'repository report publication'], ['git push origin', 'report push']];
   const missingDoctor = doctorMarkers.filter(([marker]) => !doctor.includes(marker)).map(([, label]) => label);
-  if (missingDoctor.length) add('FAIL', 'Workflow configuration', `doctor.yml is missing: ${missingDoctor.join(', ')}`, 'Keep manual trigger, repository-root execution, report artifact, job summary and Doctor-report output in the workflow.');
+  if (missingDoctor.length) add('FAIL', 'Workflow configuration', `doctor.yml is missing: ${missingDoctor.join(', ')}`, 'Keep manual trigger, repository-root execution, report artifact, job summary, report write permission and Doctor-report repository publication in the workflow.');
   else add('PASS', 'Workflow configuration', 'doctor.yml has manual trigger, rooted execution and per-run report artifact configuration');
   const deployMarkers = ['pull_request:', 'push:', 'workflow_dispatch:', 'pnpm install --frozen-lockfile', 'pnpm build', 'cloudflare/wrangler-action@v3', 'workingDirectory: worker'];
   const missingDeploy = deployMarkers.filter((marker) => !deploy.includes(marker));

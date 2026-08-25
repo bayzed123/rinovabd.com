@@ -15,7 +15,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: rinova-doctor-${{ github.ref }}
@@ -78,4 +78,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-# The diagnostic script writes a redacted table to GITHUB_STEP_SUMMARY.
+      - name: Publish report files to Doctor-report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -d "$DOCTOR_REPORT_DIR" ]; then
+            echo "No generated report directory was found; nothing to publish."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DOCTOR_REPORT_DIR"
+          if git diff --cached --quiet; then
+            echo "The generated report has no new file changes."
+            exit 0
+          fi
+          git commit -m "chore: publish doctor report run ${GITHUB_RUN_NUMBER}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+# The diagnostic script writes a redacted table to GITHUB_STEP_SUMMARY and publishes the same files under Doctor-report/runs/.

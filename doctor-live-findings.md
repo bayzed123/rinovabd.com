@@ -21,7 +21,7 @@ The workflow validated repository-relative root paths, required application and 
 | Optional integration | Steadfast webhook token is not set | Add only if the extra callback bearer guard is required |
 | Optional integration | Gemini fallback is not set | Add only if the fallback provider is intentionally activated |
 
-The default workflow uses `strict: false` so the full report stays visible. Use `strict: true` when a CI gate is desired; required `FAIL` findings will then fail the job. Generated `Doctor-report/runs/` folders are ignored by Git while the permanent guides remain tracked.
+The default workflow uses `strict: false` so the full report stays visible. Use `strict: true` when a CI gate is desired; required `FAIL` findings will then fail the job. The workflow now publishes each generated `Doctor-report/runs/` folder back to the current GitHub branch and also uploads it as an artifact; only the permanent guide files existed before this persistence fix.
 
 ## Per-run live and sitemap doctor verification — run 32907657032
 
