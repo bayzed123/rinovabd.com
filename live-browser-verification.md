@@ -37,3 +37,12 @@ The verified-review migration `0008-verified-product-reviews.sql` was applied su
 After deployment, the product API and approved-review endpoint for `himalaya-face-wash-collection` returned HTTP 200. The product detail page visibly rendered a five-star picker, rating summary, review count, buyer-verification explanation, Order Number and Invoice Number fields, phone field, review textarea, and Submit verified review action. With no verified purchase details, a review submission returned HTTP 403, confirming that an unverified visitor cannot publish a review.
 
 The protected admin surface contains a Reviews navigation item and moderation table. The owner can filter Pending/Approved/Rejected reviews, verify the product and order/invoice details, then approve or reject each review. Approved reviews update the product average rating and review count; products with approved rating 4.5 or higher become eligible for the storefront Top Collection automatically. The final CI/CD run `32854103086` completed successfully for the feature deployment.
+
+
+## 2026-08-25 — Direct product image upload and View Mode editing
+
+The admin product editor now includes a primary image file picker and a multiple-file gallery image picker. Upload requests are protected by the existing admin session, accept only JPG, PNG, WEBP, GIF and AVIF images up to 8 MB each, and store files in R2 under generated product keys. Product records continue to store only media URLs in D1. Product videos remain supported through safe HTTPS URLs in the media JSON editor.
+
+The storefront preview now preserves the authenticated admin session in the same browser tab. Product cards and SmartGen product links opened from `/?admin_preview=1` carry the preview context, and product detail pages show an `Edit this product in Admin Dashboard` shortcut that returns to `/admin/?view=products&edit={id}`.
+
+Local JavaScript syntax checks, storefront build, Worker typechecking, and whitespace validation passed. CI/CD run `32860689016` completed successfully. Production checks returned HTTP 200 for the preview storefront and guide, HTTP 401 for unauthenticated product-media upload, and the product detail route responded with its normal redirect behavior. Cloudflare R2 listing currently returns error 10042 indicating that R2 has not yet been enabled for this account; therefore the upload controls are deployed and protected, but actual image transfer will begin after R2 is enabled and the `rinovabd-product-images` bucket is bound as `PRODUCT_IMAGES`.
