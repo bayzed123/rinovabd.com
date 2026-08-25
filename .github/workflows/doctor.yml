@@ -34,6 +34,7 @@ jobs:
     env:
       TARGET_URL: ${{ inputs.target_url }}
       DOCTOR_STRICT: ${{ inputs.strict }}
+      DOCTOR_REPORT_DIR: Doctor-report/runs/run-${{ github.run_number }}-${{ github.run_id }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUD_FLARE_API: ${{ secrets.CLOUD_FLARE_API }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '46bf056399139631a967566fdb0413fa' }}
@@ -73,9 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rinova-doctor-report-${{ github.run_number }}
-          path: |
-            doctor-report.md
-            doctor-summary.json
+          path: Doctor-report/runs/run-${{ github.run_number }}-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 14
 
