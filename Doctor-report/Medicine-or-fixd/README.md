@@ -1,4 +1,4 @@
-# Medicine-or-Fix
+# Medicine-or-fixd
 
 This folder contains developer remediation instructions generated for an individual doctor run. The main `fix-report.md` records only non-pass findings. Every item includes:
 

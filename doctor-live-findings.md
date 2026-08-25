@@ -21,4 +21,10 @@ The workflow validated repository-relative root paths, required application and 
 | Optional integration | Steadfast webhook token is not set | Add only if the extra callback bearer guard is required |
 | Optional integration | Gemini fallback is not set | Add only if the fallback provider is intentionally activated |
 
-The default workflow uses `strict: false` so the full report stays visible. Use `strict: true` when a CI gate is desired; required `FAIL` findings will then fail the job. The doctor’s local generated `doctor-report.md` and `doctor-summary.json` files are ignored by Git.
+The default workflow uses `strict: false` so the full report stays visible. Use `strict: true` when a CI gate is desired; required `FAIL` findings will then fail the job. Generated `Doctor-report/runs/` folders are ignored by Git while the permanent guides remain tracked.
+
+## Per-run live and sitemap doctor verification — run 32907657032
+
+The updated manual-only doctor workflow completed successfully on commit `7e53dfe` with target `https://rinovabd-worker.abdussalam8480.workers.dev`. The generated artifact was stored at `Doctor-report/runs/run-3-32907657032/` and contained `audit-report.md`, `sitemap-links.md`, `summary.json`, and `Medicine-or-fixd/fix-report.md`.
+
+The redacted audit recorded **67 PASS, 5 WARN, and 0 FAIL**. The sitemap contained **26 URLs; all 26 were reachable with no sitemap links needing attention**. The five warnings were the already-known optional R2/account capability warning and optional missing-integration secret statuses; no secret values or business data were emitted. The run remained read-only and the artifact upload completed successfully.
