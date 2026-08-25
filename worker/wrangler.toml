@@ -16,8 +16,12 @@ database_name = "rinovabd-db"
 database_id = "300aea86-ac31-46b9-aec4-2314f1a78b01"
 migrations_dir = "migrations"
 
-# R2 is intentionally enabled later because this account currently requires R2 activation in Dashboard.
-# Local storefront assets keep the first deployment functional without this optional binding.
+# Enable R2 in the Cloudflare Dashboard, create the bucket named rinovabd-product-images,
+# then uncomment this binding before deploying direct product uploads.
+# [[r2_buckets]]
+# binding = "PRODUCT_IMAGES"
+# bucket_name = "rinovabd-product-images"
+# Local storefront assets remain functional until the optional binding is active.
 
 [[kv_namespaces]]
 binding = "CACHE"

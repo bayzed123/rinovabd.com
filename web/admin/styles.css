@@ -24,3 +24,6 @@
 
 /* Verified buyer review moderation */
 .review-stars{color:#d78a39;letter-spacing:.08em}.review-cell{white-space:normal;min-width:220px;max-width:340px;line-height:1.5}.review-cell small{display:block;color:var(--muted)}#reviews-table td{vertical-align:top}#reviews-table .review-status-select{min-width:110px}
+
+/* Direct product media uploads */
+.upload-line{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}.upload-line input[type=file]{flex:1;min-width:220px;padding:8px;background:#fff;border:1px dashed var(--line);border-radius:8px}.upload-line .icon-action{white-space:nowrap}.media-editor-field small{display:block;margin-top:7px;color:var(--muted);line-height:1.5}.media-editor-field .form-message{margin:8px 0}.admin-preview-edit{display:inline-flex;color:var(--accent);font-size:12px;font-weight:700;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:3px;margin-top:8px}.admin-preview-edit:hover{opacity:.75}@media(max-width:640px){.upload-line{align-items:stretch;flex-direction:column}.upload-line input[type=file],.upload-line .icon-action{width:100%}}

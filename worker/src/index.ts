@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 
 interface Bindings {
   DB: D1Database;
-  PRODUCT_IMAGES: R2Bucket;
+  PRODUCT_IMAGES?: R2Bucket;
   CACHE: KVNamespace;
   AI: Ai;
   ASSETS?: Fetcher;
@@ -304,6 +304,38 @@ async function findVerifiedPurchase(env: Bindings, body: { productId: number; or
   if (!phone || (!orderCode && !invoiceNumber)) return null;
   return env.DB.prepare("SELECT o.id, o.customer_id AS customerId, c.name AS customerName, o.status FROM orders o JOIN customers c ON c.id = o.customer_id JOIN order_items oi ON oi.order_id = o.id WHERE c.phone = ? AND oi.product_id = ? AND o.status IN ('shipped','delivered','returned') AND ((? <> '' AND o.order_code = ?) OR (? <> '' AND o.invoice_number = ?)) ORDER BY o.created_at DESC LIMIT 1").bind(phone, body.productId, orderCode, orderCode, invoiceNumber, invoiceNumber).first<{ id: number; customerId: number; customerName: string; status: string }>();
 }
+
+app.get('/media/*', async (c) => {
+  const bucket = c.env.PRODUCT_IMAGES;
+  if (!bucket) return c.text('Product media storage is not enabled.', 503);
+  const key = c.req.path.replace(/^\/media\//, '');
+  if (!key || !/^[a-zA-Z0-9/_-]+\.(?:jpg|jpeg|png|webp|gif|avif)$/i.test(key)) return c.text('Invalid media path.', 400);
+  const object = await bucket.get(key);
+  if (!object) return c.text('Media not found.', 404);
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  headers.set('cache-control', 'public, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
+});
+
+app.post('/api/admin/product-media', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const bucket = c.env.PRODUCT_IMAGES;
+  if (!bucket) return json(c, { error: 'Direct image upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  const form = await c.req.raw.formData().catch(() => null);
+  const fileValue = form?.get('file');
+  if (!fileValue || typeof fileValue === 'string') return json(c, { error: 'Choose an image file first.' }, 400);
+  const file = fileValue as File;
+  const allowedTypes: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
+  const extension = allowedTypes[file.type];
+  if (!extension) return json(c, { error: 'Only JPG, PNG, WEBP, GIF or AVIF images are supported.' }, 400);
+  if (!file.size || file.size > 8 * 1024 * 1024) return json(c, { error: 'Each image must be smaller than 8 MB.' }, 400);
+  const key = `products/${crypto.randomUUID()}.${extension}`;
+  await bucket.put(key, file.stream(), { httpMetadata: { contentType: file.type, cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: file.name.slice(0, 160), uploadedBy: actor } });
+  return json(c, { ok: true, media: { type: 'image', url: `/media/${key}`, alt: file.name.replace(/\.[^.]+$/, '').slice(0, 160) } }, 201);
+});
 
 app.post('/api/admin/login', async (c) => {
   const body = await c.req.json<{ username?: string; password?: string }>().catch((): { username?: string; password?: string } => ({}));
