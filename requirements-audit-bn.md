@@ -66,7 +66,7 @@ Customer SmartGen verified active catalogue থেকে clickable product cards
 
 ## মোট অবস্থার সারাংশ
 
-এই audit অনুযায়ী **মূল requirement-এর মধ্যে ৫টি পূর্ণ, ১৩টি আংশিক এবং ২টি মূল integration বাকি**। আংশিক feature-গুলোর অনেকগুলোর backend foundation তৈরি আছে; কিন্তু external channel automation এবং owner-facing finance screens ছাড়া সেগুলোকে সম্পূর্ণ বলা যাবে না। তাই website-কে এখন “core commerce ready” বলা যায়, কিন্তু “সব requirement ১০০% complete” বলা সঠিক হবে না।
+এই audit অনুযায়ী **১৭টি requirement মিলিয়ে ২টি পূর্ণ, ১৩টি আংশিক এবং ২টি মূল integration বাকি**। এর মধ্যে ১৫টি মূল website requirement-এর ২টি পূর্ণ, ১১টি আংশিক এবং ২টি বাকি; hidden হিসাবের ২টি requirement আংশিক প্রস্তুত। আংশিক feature-গুলোর অনেকগুলোর backend foundation তৈরি আছে; কিন্তু external channel automation এবং owner-facing finance screens ছাড়া সেগুলোকে সম্পূর্ণ বলা যাবে না। তাই website-কে এখন “core commerce ready” বলা যায়, কিন্তু “সব requirement ১০০% complete” বলা সঠিক হবে না।
 
 ## সবচেয়ে জরুরি পরবর্তী কাজের ক্রম
 
