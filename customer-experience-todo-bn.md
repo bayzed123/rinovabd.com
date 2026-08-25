@@ -51,3 +51,24 @@ Login method না বদলে user-provided hot-pink palette-কে primary a
 ## Verification rule
 
 প্রতিটি Todo শেষ হলে local syntax/typecheck, relevant API status, authenticated/unauthenticated boundary, mobile layout এবং CI/CD deployment verify করা হবে। Verification সফল না হওয়া পর্যন্ত পরের Todo শুরু করা হবে না।
+
+
+## Final completion status — 25 August 2026
+
+| Todo | ফলাফল | প্রমাণ |
+|---|---|---|
+| ১. Customer account profile ও order history | সম্পন্ন | Account profile, own order history, invoice/tracking links deployed; CI/CD `32875095758` |
+| ২. Invoice number tracking | সম্পন্ন | Invoice lookup deployed; live positive invoice and order-code tracking returned HTTP 200 |
+| ৩. Account থেকে order tracking | সম্পন্ন | Account-originated tracking links include order/invoice context; public tracking verified with live test order |
+| ৪. Plus/minus quantity controls | সম্পন্ন | Product detail, cart drawer এবং checkout stepper deployed; local build/typecheck passed; CI/CD `32875957528` |
+| ৫. Product merchandising badges | সম্পন্ন | Temporary all-three-badge save/render test passed, then product ID 10 reset to `badgesJson: []`; CI/CD `32878163406` |
+| ৬. Admin storefront preview ও edit | সম্পন্ন | Same authenticated session-এ preview → product detail → `/admin/?view=products&edit=10` verified |
+| ৭. Hot-pink theme rollout | সম্পন্ন | `#F267A8`, `#D94D8D`, `#FFF1F7` এবং charcoal text storefront, product, account, checkout, tracking ও admin-এ verified; CI/CD `32880989696` |
+
+### Final production smoke checks
+
+`GET /api/health`, `GET /api/products`, product detail এবং valid test-invoice tracking প্রত্যেকটি HTTP 200 দিয়েছে। Unauthenticated admin session, admin product list এবং account order history প্রত্যেকটি HTTP 401 দিয়েছে। Served admin HTML-এ Cloudflare/Gemini/provider/credit wording পাওয়া যায়নি। Final documentation workflow `32881410732` সফল এবং repository working tree clean।
+
+### Owner actions still pending
+
+R2 account enable করে `rinovabd-product-images` bucket এবং `PRODUCT_IMAGES` binding না হওয়া পর্যন্ত direct product-image upload বাস্তবে চালু হবে না; upload UI/API প্রস্তুত আছে, কিন্তু R2 activation ছাড়া production transfer দাবি করা যাবে না। Real product descriptions ও Editor's Notes এখন Admin → Products → Edit থেকে plain text হিসেবে Bengali বা English-এ বসানো যাবে।
