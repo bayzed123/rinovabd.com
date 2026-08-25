@@ -71,6 +71,8 @@
       <li>Primary image-এর জন্য file বাছাই করে <strong>Upload primary image</strong> চাপুন; চাইলে HTTPS বা <code>/assets/</code> URL-ও দিতে পারেন। অতিরিক্ত ছবি upload করতে এক বা একাধিক file বাছাই করে <strong>Upload gallery images</strong> চাপুন। Video-এর জন্য HTTPS URL দিন।</li>
       <li>Storefront-এ দেখাতে <strong>Status = Active</strong> দিন। Draft রাখলে customer product দেখতে পাবে না।</li>
       <li>Homepage-এ highlight করতে <strong>Feature on homepage</strong> tick দিন। সব product-এ এটি tick করার দরকার নেই।</li>
+      <li><strong>Customer-facing product badges</strong> অংশে প্রয়োজন অনুযায়ী <strong>Hot Product</strong>, <strong>In Stock</strong> অথবা <strong>New Product</strong> tick দিন। কোনো badge tick না করলে product card-এ আলাদা badge দেখাবে না।</li>
+      <li>Stock ০ হলে customer-এর কাছে <strong>Stock out</strong> automaticভাবে দেখাবে। Stock থাকলে normal stock quantity দেখাবে না; শুধু আপনি চাইলে In Stock badge tick করে দেখাতে পারবেন।</li>
       <li>সবশেষে <strong>Create product</strong> চাপুন এবং Products table-এ productটি দেখা যাচ্ছে কি না check করুন।</li>
     </ol>
     <table><thead><tr><th>Category ID</th><th>Category</th><th>কোন product এখানে যাবে</th></tr></thead><tbody>
@@ -85,7 +87,7 @@
     </tbody></table>
 
     <h2>৫. Product edit, দাম পরিবর্তন এবং ছবি/video যোগ করা</h2>
-    <p><strong>Products</strong> page-এ নাম, SKU বা barcode দিয়ে search করুন। Product-এর row-তে <strong>Edit</strong> চাপলে পুরনো তথ্য খুলবে। শুধু দাম পরিবর্তন করতে Selling price বদলান; পুরনো দাম দেখাতে Compare-at price রাখুন। তারপর <strong>Save changes</strong> চাপুন এবং storefront-এ View live দিয়ে যাচাই করুন।</p>
+    <p><strong>Products</strong> page-এ নাম, SKU বা barcode দিয়ে search করুন। Product-এর row-তে <strong>Edit</strong> চাপলে পুরনো তথ্য খুলবে। শুধু দাম পরিবর্তন করতে Selling price বদলান; পুরনো দাম দেখাতে Compare-at price রাখুন। একই editor-এ <strong>Hot Product</strong>, <strong>In Stock</strong> ও <strong>New Product</strong> badge-এর tick পরিবর্তন করতে পারবেন। Stock ০ করলে customer page-এ শুধু <strong>Stock out</strong> দেখা যাবে। তারপর <strong>Save changes</strong> চাপুন এবং storefront-এ View live দিয়ে যাচাই করুন।</p>
     <div class="guide-card"><h3>একাধিক ছবি ও video যোগ করার নিয়ম</h3><ol><li><strong>Primary image URL</strong>-এ প্রথম/প্রধান ছবি দিন, যেমন <code>/assets/product-front.jpg</code>।</li><li><strong>Additional images and videos</strong> box-এ নিচের মতো JSON array paste করুন।</li><li>ছবির জন্য <code>type</code> হবে <code>image</code> এবং video-র জন্য <code>video</code>।</li><li>ছবির URL অবশ্যই <code>/assets/</code> দিয়ে শুরু হওয়া repository asset অথবা <code>https://</code> URL হতে হবে।</li><li>Video হিসেবে সরাসরি playable HTTPS video URL ব্যবহার করুন, যেমন MP4/WebM link। Save করার পরে product detail page-এ thumbnail দেখা যাবে।</li></ol><pre>[{"type":"image","url":"/assets/product-side.jpg","alt":"Side view"},{"type":"image","url":"https://example.com/product-back.jpg","alt":"Back view"},{"type":"video","url":"https://example.com/product-demo.mp4"}]</pre><p class="muted-note"><strong>Direct upload:</strong> R2 storage binding active থাকলে dashboard-এর file picker দিয়ে JPG, PNG, WEBP, GIF বা AVIF image সরাসরি upload হবে। Upload শেষ হলে image URL automaticভাবে বসবে; product-এ দেখাতে অবশ্যই <strong>Save changes</strong> বা <strong>Create product</strong> চাপুন। R2 এখনও active না হলে button-এ setup message দেখাবে—তখন URL বা <code>/assets/</code> asset ব্যবহার করা যাবে।</p></div>
 
     <h2>৬. Stock কীভাবে বাড়াবেন বা কমাবেন</h2>
