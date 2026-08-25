@@ -83,3 +83,9 @@ Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace ch
 The authenticated account page now shows the customer's name and contact details after login or account creation. The account order history now receives invoice number, order status, payment/courier status, total, and purchased product summaries from the protected `/api/account/orders` route. Each order card includes Invoice and Track order actions, while unauthenticated account-me and account-orders requests continue to return HTTP 401.
 
 Local account JavaScript syntax, storefront build, Worker typecheck, and whitespace checks passed. Commit `868fe0a`; CI/CD run `32875095758` completed successfully. Todo 1 is complete; Todo 2 is the invoice-number tracking lookup fix.
+
+## 2026-08-25 — Todo 2: invoice-number tracking lookup
+
+The public tracking route now accepts `orderId`, `invoiceNumber`, or `phone`. A dedicated Invoice Number field was added to the tracking page, query-string prefill was added for account-originated tracking links, and the result now displays both order code and invoice number. The live endpoint accepted `invoiceNumber=RNV-INV-MT7YGCX0` and returned HTTP 404 because that identifier was not found in the current live order database; before deployment the same request returned HTTP 400 because the route did not recognize the invoice parameter. Empty tracking requests continue to return HTTP 400.
+
+Todo 2 code commit `3db13a0`; CI/CD run `32875466547` completed successfully. A real existing invoice number is still needed for a positive 200-response verification; the current screenshot identifier is not present in live D1.
