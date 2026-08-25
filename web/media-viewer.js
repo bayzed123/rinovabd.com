@@ -6,7 +6,7 @@
   let slides = [];
   let current = 0;
   let zoom = 1;
-  let scrollFrame;
+  let scrollTimer;
 
   const safeUrl = (value) => {
     const url = String(value ?? '').trim();
@@ -33,8 +33,8 @@
       if (event.target.closest('.media-viewer-next')) move(1);
     });
     track.addEventListener('scroll', () => {
-      cancelAnimationFrame(scrollFrame);
-      scrollFrame = requestAnimationFrame(() => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
         const width = track.clientWidth || 1;
         const next = Math.max(0, Math.min(slides.length - 1, Math.round(track.scrollLeft / width)));
         if (next !== current) {
@@ -42,7 +42,7 @@
           setZoom(1, false);
           updateControls();
         }
-      });
+      }, 120);
     });
     document.addEventListener('keydown', (event) => {
       if (viewer.hidden) return;
