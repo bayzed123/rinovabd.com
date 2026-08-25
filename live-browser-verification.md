@@ -28,3 +28,12 @@ Final admin assistant layout verification: deployed HTML contains one in-header 
 - The protected `/admin/` surface correctly showed the sign-in screen in an unauthenticated browser session. Admin View Mode/Edit Mode controls and media editor changes are shipped behind the existing authenticated admin session; no unauthenticated mutation was attempted.
 - D1 migration `0007-product-media-and-links.sql` was applied successfully. It added `products.media_json` and backfilled 22 existing primary images into the new gallery collection.
 - Note: GitHub Actions emits the existing Node.js 20 deprecation annotation for third-party actions, but the workflow result is successful.
+
+
+## 2026-08-25 — Verified buyer ratings and reviews
+
+The verified-review migration `0008-verified-product-reviews.sql` was applied successfully to live D1. It created the product review table and indexes with a 1–5 rating constraint, pending/approved/rejected moderation states, purchase linkage, and duplicate-review protection per product/order/customer.
+
+After deployment, the product API and approved-review endpoint for `himalaya-face-wash-collection` returned HTTP 200. The product detail page visibly rendered a five-star picker, rating summary, review count, buyer-verification explanation, Order Number and Invoice Number fields, phone field, review textarea, and Submit verified review action. With no verified purchase details, a review submission returned HTTP 403, confirming that an unverified visitor cannot publish a review.
+
+The protected admin surface contains a Reviews navigation item and moderation table. The owner can filter Pending/Approved/Rejected reviews, verify the product and order/invoice details, then approve or reject each review. Approved reviews update the product average rating and review count; products with approved rating 4.5 or higher become eligible for the storefront Top Collection automatically. The final CI/CD run `32854103086` completed successfully for the feature deployment.
