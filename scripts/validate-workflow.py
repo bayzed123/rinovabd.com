@@ -1,7 +1,8 @@
 from pathlib import Path
 import sys
 
-path = Path('/home/ubuntu/rinovabd.com/.github/workflows/rinovabd-ci-cd.yml')
+root = Path(__file__).resolve().parents[1]
+path = root / '.github' / 'workflows' / 'rinovabd-ci-cd.yml'
 text = path.read_text()
 required = [
     'name: Rinova BD CI/CD',
