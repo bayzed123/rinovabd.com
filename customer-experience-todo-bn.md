@@ -72,3 +72,12 @@ Login method না বদলে user-provided hot-pink palette-কে primary a
 ### Owner actions still pending
 
 R2 account enable করে `rinovabd-product-images` bucket এবং `PRODUCT_IMAGES` binding না হওয়া পর্যন্ত direct product-image upload বাস্তবে চালু হবে না; upload UI/API প্রস্তুত আছে, কিন্তু R2 activation ছাড়া production transfer দাবি করা যাবে না। Real product descriptions ও Editor's Notes এখন Admin → Products → Edit থেকে plain text হিসেবে Bengali বা English-এ বসানো যাবে।
+
+
+## Additional Todo — Storefront image viewer
+
+Product image click এখন fullscreen popup খুলে; zoom in/out/reset, close/Escape, keyboard arrows, previous/next navigation এবং mobile right-to-left swipe/scroll যুক্ত হয়েছে। Product card এবং product detail—দুই জায়গার image viewer verify করা হয়েছে। Multiple image product-এর জন্য Admin-এর `mediaJson` gallery contract প্রস্তুত; live catalog-এ real multiple-image data যোগ হলে একই viewer-এ automatically দেখাবে। Commit `104c650`; CI/CD `32883043565` সফল।
+
+### New product intake
+
+নতুন products যোগ করার জন্য প্রতিটি product-এর নাম, category, selling price, compare-at price, stock, minimum order quantity, weight, description/editor note এবং কোন image primary/gallery হবে—এই তথ্যগুলো প্রয়োজন। শুধু supplied image দেখে price বা product details অনুমান করে live catalog তৈরি করা হয়নি।
