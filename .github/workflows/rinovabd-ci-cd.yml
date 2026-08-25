@@ -93,6 +93,7 @@ jobs:
         if: steps.deploy-gate.outputs.enabled == 'true'
         working-directory: worker
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           STEADFAST_API_KEY: ${{ secrets.STEADFAST_API_KEY }}
           STEADFAST_SECRET_KEY: ${{ secrets.STEADFAST_SECRET_KEY }}
           STEADFAST_WEBHOOK_TOKEN: ${{ secrets.STEADFAST_WEBHOOK_TOKEN }}
