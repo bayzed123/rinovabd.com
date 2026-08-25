@@ -189,7 +189,7 @@ function extractAiText(result: unknown) {
 function shopOnlyInstruction(scope: 'customer' | 'staff') {
   return scope === 'customer'
     ? 'You are Rinova BD customer support. Answer only questions about Rinova products, prices, stock, skincare/makeup usage, delivery fees, orders, returns, payments, and store policies. Never invent product facts, never reveal private customer/admin data, and politely refuse unrelated topics. Respond in the user language, preferably concise Bangla when the user writes Bangla.'
-    : 'You are the private Rinova BD staff, owner and admin assistance chatbot. You may summarize only Rinova shop data supplied in the context: products, stock, orders, returns, sales, settings and policies. Never reveal secrets, passwords, API keys or raw session tokens. Do not make irreversible changes; explain the required admin action. Answer operational questions clearly and in Bangla when appropriate.';
+    : 'You are the private Rinova BD staff, owner and admin assistance chatbot. You may summarize only Rinova shop data supplied in the context: products, stock, orders, returns, sales, settings and policies. Use the staffData numbers directly when answering: state exact counts and amounts for total products, stock on hand, ecommerce sales, POS sales, combined sales, order status, returns, low stock, and product-wise units/revenue. When asked what sold, list the productSales entries with units and revenue. Never reveal secrets, passwords, API keys or raw session tokens. Do not make irreversible changes; explain the required admin action. Answer operational questions clearly and in Bangla when appropriate.';
 }
 
 async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
@@ -197,11 +197,26 @@ async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
   const categories = await env.DB.prepare('SELECT name, slug FROM categories WHERE active = 1 ORDER BY sort_order ASC').all();
   const settings = await env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('store_name','tagline','delivery_inside_dhaka','delivery_outside_dhaka','free_delivery_over','support_phone','order_whatsapp_number')").all();
   const offers = await env.DB.prepare("SELECT title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 10").all();
-  const staffData = scope === 'staff' ? {
-    orders: (await env.DB.prepare("SELECT status, COUNT(*) AS count, COALESCE(SUM(subtotal + delivery_fee), 0) AS value FROM orders GROUP BY status").all()).results,
-    returns: (await env.DB.prepare("SELECT status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount FROM returns GROUP BY status").all()).results,
-    posSales: (await env.DB.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(subtotal - discount), 0) AS value FROM pos_sales WHERE status = 'completed'").all()).results,
-  } : undefined;
+  let staffData: Record<string, unknown> | undefined;
+  if (scope === 'staff') {
+    const catalogue = await env.DB.prepare("SELECT COUNT(*) AS productCount, COALESCE(SUM(stock), 0) AS unitsOnHand, COALESCE(SUM(stock * price), 0) AS retailValue, COALESCE(SUM(stock * COALESCE(cost_price, 0)), 0) AS costValue, COALESCE(SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END), 0) AS lowStockProducts FROM products WHERE active = 1").first();
+    const ecommerceSales = await env.DB.prepare("SELECT COUNT(*) AS orderCount, COALESCE(SUM(subtotal + delivery_fee), 0) AS revenue FROM orders WHERE status IN ('confirmed','processing','shipped','delivered')").first();
+    const posSales = await env.DB.prepare("SELECT COUNT(*) AS saleCount, COALESCE(SUM(subtotal - discount), 0) AS revenue FROM pos_sales WHERE status = 'completed'").first();
+    const orderStatus = await env.DB.prepare("SELECT status, COUNT(*) AS count, COALESCE(SUM(subtotal + delivery_fee), 0) AS value FROM orders GROUP BY status ORDER BY count DESC").all();
+    const returns = await env.DB.prepare("SELECT status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount FROM returns GROUP BY status ORDER BY count DESC").all();
+    const ecommerceProductSales = await env.DB.prepare("SELECT oi.product_name AS productName, COALESCE(SUM(oi.quantity), 0) AS units, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS revenue FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status IN ('confirmed','processing','shipped','delivered') GROUP BY oi.product_name ORDER BY revenue DESC LIMIT 20").all<{ productName: string; units: number; revenue: number }>();
+    const posProductSales = await env.DB.prepare("SELECT product_name AS productName, COALESCE(SUM(quantity), 0) AS units, COALESCE(SUM(quantity * unit_price), 0) AS revenue FROM pos_sale_items psi JOIN pos_sales ps ON ps.id = psi.sale_id WHERE ps.status = 'completed' GROUP BY product_name ORDER BY revenue DESC LIMIT 20").all<{ productName: string; units: number; revenue: number }>();
+    const salesByProduct = new Map<string, { productName: string; units: number; revenue: number }>();
+    for (const sale of [...ecommerceProductSales.results, ...posProductSales.results]) { const current = salesByProduct.get(sale.productName) ?? { productName: sale.productName, units: 0, revenue: 0 }; current.units += Number(sale.units || 0); current.revenue += Number(sale.revenue || 0); salesByProduct.set(sale.productName, current); }
+    staffData = {
+      catalogue,
+      salesSummary: { ecommerce: ecommerceSales, pos: posSales, combinedRevenue: Number(ecommerceSales?.revenue || 0) + Number(posSales?.revenue || 0), combinedTransactions: Number(ecommerceSales?.orderCount || 0) + Number(posSales?.saleCount || 0) },
+      productSales: [...salesByProduct.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 20),
+      orders: orderStatus.results,
+      returns: returns.results,
+      recentOrders: (await env.DB.prepare("SELECT order_code AS orderCode, status, subtotal, delivery_fee AS deliveryFee, created_at AS createdAt FROM orders ORDER BY created_at DESC LIMIT 10").all()).results,
+    };
+  }
   return JSON.stringify({ store: Object.fromEntries(settings.results.map((item) => [item.key, item.value])), categories: categories.results, products: products.results, offers: offers.results, staffData });
 }
 
