@@ -71,3 +71,9 @@ Local JavaScript syntax checks, storefront build, Worker typechecking, and white
 The admin assistant launcher is now viewport-fixed instead of being positioned inside the Top Products card, so it remains available while the dashboard page scrolls. On mobile widths, the sidebar becomes a sticky multi-row navigation bar that exposes Dashboard, Products, Orders, Inventory, Settings, Returns, Reviews, POS & Barcodes, Content CMS, and Admin Assistant without requiring a hidden drawer. The logout control remains available at the navigation edge.
 
 Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace validation, and live admin HTML/CSS asset checks passed. Unauthenticated admin product access continued to return HTTP 401. Feature commit `b64f2fe` and documentation commit `dc86ed1` were pushed; CI/CD run `32867874859` completed successfully.
+
+## 2026-08-25 — Final scroll-safe admin navigation layout
+
+The admin layout now uses a fixed desktop sidebar with its own scroll area, so all navigation remains available while the main dashboard content scrolls. On mobile, the navigation is fixed at the top, all menu buttons remain reachable in a three-column multi-row layout, and the main content is offset below it rather than being covered. The SmartGen assistant launcher is explicitly viewport-fixed with a higher stacking level than the navigation and content, so it remains visible during scrolling and remains clickable.
+
+Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace checks, and deployment completed successfully. Commit `4854700`; CI/CD run `32873631559` completed successfully.
