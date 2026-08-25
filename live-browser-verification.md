@@ -105,3 +105,9 @@ A temporary multiline Bengali/English value was saved through the authenticated 
 ## 2026-08-25 — Todo 4: public test-order tracking
 
 A read-only live D1 check found two recent pending test orders. For the selected test order `RNV-MT7YGCXO`, public `/api/customer-tracking` returned HTTP 200 for both `invoiceNumber=RNV-INV-MT7YGCXO` and `orderId=RNV-MT7YGCXO`. The front-side tracking page opened with the invoice number prefilled, and after Check status displayed the order code, invoice number, `pending` status, pending courier status, and the Bangla preparation message. This confirms the user's test order can be tracked from the storefront by invoice number; no code change was required for this positive case.
+
+## 2026-08-25 — Todo 5: authenticated preview-to-edit and hot-pink theme
+
+The authenticated storefront preview at `/?admin_preview=1` rendered product links carrying preview context. The Blush & Bloom product detail page displayed `Edit this product in Admin Dashboard →`; following it opened `/admin/?view=products&edit=10` and loaded the correct Products workspace. This confirms the storefront-to-editor path in the same authenticated session.
+
+The approved palette was applied without changing login: hot-pink `#F267A8`, deep hover `#D94D8D`, soft pink `#FFF1F7`, and charcoal text. Shared tokens now cover home, product detail, account, checkout, and tracking; admin tokens and assistant accents were aligned while fixed navigation and the assistant launcher were preserved. Production checks confirmed the palette on storefront, admin, account, checkout, and tracking pages. Phone/password login remains the only account login method, and checkout still uses automatic delivery pricing. Commit `bc7dba7`; CI/CD run `32880989696` completed successfully. Todo 5 is complete.
