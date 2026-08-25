@@ -1005,7 +1005,7 @@ app.get('/products/:slug', async (c) => {
   const product = await c.env.DB.prepare('SELECT name, slug, description, short_description AS shortDescription, image_url AS imageUrl, price, stock, rating, review_count AS reviewCount FROM products WHERE active = 1 AND slug = ? LIMIT 1').bind(slug).first<{ name: string; slug: string; description: string | null; shortDescription: string | null; imageUrl: string | null; price: number; stock: number; rating: number; reviewCount: number }>();
   if (!product) return c.text('Product not found.', 404);
   if (!c.env.ASSETS) return c.text('Storefront assets are unavailable.', 503);
-  const assetUrl = new URL('/product.html', c.req.url);
+  const assetUrl = new URL('/product', c.req.url);
   const assetResponse = await c.env.ASSETS.fetch(new Request(assetUrl, c.req.raw));
   if (!assetResponse.ok) return assetResponse;
   const headers = new Headers(assetResponse.headers);
