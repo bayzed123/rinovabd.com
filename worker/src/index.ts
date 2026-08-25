@@ -477,7 +477,7 @@ app.post('/api/admin/chat', async (c) => {
   if (!conversation) return json(c, { error: 'Could not start staff chat.' }, 500);
   const answer = await runShopAssistant(c.env, 'staff', messages);
   await c.env.DB.prepare("INSERT INTO chat_messages(conversation_id, sender, content, provider) VALUES (?, 'assistant', ?, ?)").bind(conversation.id, answer.text, answer.provider).run();
-  return json(c, { ok: true, reply: answer.text, provider: answer.provider });
+  return json(c, { ok: true, reply: answer.text });
 });
 
 app.get('/api/admin/overview', async (c) => {
@@ -691,6 +691,13 @@ app.get('/api/products', async (c) => {
   if (featured === 'true') conditions.push('p.featured = 1');
   const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.description, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.skin_type AS skinType, p.concern, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
   return json(c, { products: result.results });
+});
+
+app.get('/api/products/:slug', async (c) => {
+  const slug = normalize(c.req.param('slug'));
+  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR CAST(p.id AS TEXT) = ?) LIMIT 1').bind(slug, slug).first();
+  if (!product) return json(c, { error: 'Product not found.' }, 404);
+  return json(c, { product });
 });
 
 app.get('/api/locations', async (c) => {
