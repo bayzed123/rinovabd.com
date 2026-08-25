@@ -97,6 +97,8 @@ jobs:
           STEADFAST_SECRET_KEY: ${{ secrets.STEADFAST_SECRET_KEY }}
           STEADFAST_WEBHOOK_TOKEN: ${{ secrets.STEADFAST_WEBHOOK_TOKEN }}
           ADMIN_API_TOKEN: ${{ secrets.ADMIN_API_TOKEN }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
           sync_secret() {
@@ -110,3 +112,5 @@ jobs:
           sync_secret STEADFAST_SECRET_KEY "$STEADFAST_SECRET_KEY"
           sync_secret STEADFAST_WEBHOOK_TOKEN "$STEADFAST_WEBHOOK_TOKEN"
           sync_secret ADMIN_API_TOKEN "$ADMIN_API_TOKEN"
+          sync_secret ADMIN_USERNAME "$ADMIN_USERNAME"
+          sync_secret ADMIN_PASSWORD "$ADMIN_PASSWORD"

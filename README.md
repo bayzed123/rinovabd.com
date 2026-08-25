@@ -10,6 +10,14 @@ Courier fees are not customer-selectable. The API automatically applies **৳90 
 
 Customer trust scoring distinguishes delivered, customer-cancelled, refused, delivery-failed, returned, and admin-cancelled orders. Admin-facing trust data can be consumed from `GET /api/customers/:phone/trust` and includes success rate, cancel rate, recent orders, and a `trusted`, `regular`, `review-required`, or `high-risk` rating.
 
+## Custom admin dashboard
+
+The private admin dashboard is available at `/admin` and is intentionally not linked from the customer navigation. It uses a 12-hour hashed D1 session rather than exposing credentials in frontend code. The dashboard currently includes overview metrics for revenue, gross profit, order pipeline, average order value, stock valuation, low-stock count, product catalogue search, product create/edit, SKU, cost/selling/compare-at prices, stock, MOQ, volume-tier JSON, image URL, status, featured flag, order status controls, stock adjustment ledger, and store settings. The Bengali operating guide is available at `/admin/guide`.
+
+The dashboard schema is in `worker/migrations/0004-admin-dashboard.sql`. It adds product management fields, `stock_movements`, `admin_sessions`, and `store_settings`. Apply it once to the production D1 database before deploying the Worker code; the live Rinova database has been verified with the migration applied and all 15 seeded products assigned SKUs.
+
+Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` as Cloudflare Worker secrets. The GitHub Actions deployment workflow syncs those secrets when the corresponding repository secrets are available; secret values must never be committed or placed in client code. `ADMIN_API_TOKEN` remains supported for automation and legacy integrations.
+
 ## Structure
 
 ```text
@@ -41,6 +49,17 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | GET | `/api/orders/:orderCode` | Retrieve order summary and items |
 | PATCH | `/api/orders/:orderCode/status` | Update order status and history |
 | GET | `/api/customers/:phone/trust` | Internal order success/cancel profile |
+| POST | `/api/admin/login` | Create a 12-hour admin session |
+| GET | `/api/admin/session` | Validate the current admin session |
+| POST | `/api/admin/logout` | Revoke the current admin session |
+| GET | `/api/admin/overview?days=30` | Dashboard revenue, profit, stock and pipeline metrics |
+| GET/PUT | `/api/admin/settings` | Read or update store settings |
+| GET | `/api/admin/categories` | Admin category list |
+| GET/POST | `/api/admin/products` | Search or create products |
+| GET/PATCH | `/api/admin/products/:id` | Read or edit a product |
+| POST | `/api/admin/products/:id/stock` | Add a stock ledger movement |
+| GET | `/api/admin/products/:id/stock-movements` | Read product stock history |
+| GET | `/api/admin/orders` | Search and filter orders for admin |
 | GET | `/api/customer-tracking?orderId=...` or `?phone=...` | Customer-safe delivery status message |
 | POST | `/api/admin/orders/:orderCode/steadfast/book` | Admin-only parcel booking |
 | GET | `/api/admin/orders/:orderCode/steadfast/status` | Admin-only Steadfast status lookup |
@@ -62,6 +81,8 @@ wrangler secret put STEADFAST_SECRET_KEY
 # Optional: only set this if you want an additional callback bearer guard.
 wrangler secret put STEADFAST_WEBHOOK_TOKEN
 wrangler secret put ADMIN_API_TOKEN
+wrangler secret put ADMIN_USERNAME
+wrangler secret put ADMIN_PASSWORD
 ```
 
 The optional base URL defaults to `https://portal.packzy.com/api/v1`; set `STEADFAST_BASE_URL` as a non-secret variable only after confirming the active endpoint with the merchant account. Configure the courier callback to `POST https://<your-worker-host>/api/webhooks/steadfast`. The callback accepts the status fields documented by Steadfast (`invoice`, `consignment_id`, `tracking_code`, `status` or `delivery_status`, and `updated_at`). If `STEADFAST_WEBHOOK_TOKEN` is set, send `Authorization: Bearer <STEADFAST_WEBHOOK_TOKEN>`; otherwise the documented `Api-Key` and `Secret-Key` headers are accepted when Steadfast sends them. The supplied PDF defines outbound API authentication but does not define a separate inbound webhook signature. The public customer endpoint is `/api/customer-tracking`, while booking and manual status lookup require the admin bearer token.
@@ -74,4 +95,4 @@ The courier adapter uses the documented order creation and status lookup paths a
 pnpm build
 ```
 
-The build command validates the storefront and typechecks the Worker. The next production steps are to enable R2, configure real payment/courier values, connect the production domain, and complete mobile checkout testing with real business data.
+The build command validates the storefront and typechecks the Worker. The current dashboard and D1 admin migration are implemented; remaining roadmap modules include printable invoice/returns views, content/CMS sections, POS and future clothing workflows, Meta/TikTok/Google server-side conversion adapters, customer accounts, and full production checkout/payment handling. R2 remains optional until it is enabled at the Cloudflare account level; local repository assets continue to serve the storefront.

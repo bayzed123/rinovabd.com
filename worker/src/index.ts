@@ -15,18 +15,77 @@ interface Bindings {
   STEADFAST_SECRET_KEY?: string;
   STEADFAST_WEBHOOK_TOKEN?: string;
   ADMIN_API_TOKEN?: string;
+  ADMIN_USERNAME?: string;
+  ADMIN_PASSWORD?: string;
 }
 
 type App = Hono<{ Bindings: Bindings }>;
 type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'customer_cancelled' | 'refused' | 'delivery_failed' | 'returned' | 'admin_cancelled';
 
 const app: App = new Hono();
-app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'http://localhost:5173'], allowHeaders: ['Content-Type'], allowMethods: ['GET', 'POST', 'PATCH'] }));
+app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS'] }));
 
 const json = (c: { json: (body: unknown, status?: number) => Response }, body: unknown, status = 200) => c.json(body, status);
 
 function normalize(value: unknown) {
   return String(value ?? '').trim();
+}
+
+function numberOrNull(value: unknown) {
+  if (value === undefined || value === null || normalize(value) === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseVolumeTiers(value: unknown) {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { parsed = []; }
+  }
+  if (!Array.isArray(parsed)) return [] as Array<{ minQty: number; price: number }>;
+  return parsed.map((tier) => {
+    const item = tier as Record<string, unknown>;
+    return { minQty: Math.floor(Number(item.minQty ?? item.min_quantity ?? item.minOrderQty)), price: Number(item.price) };
+  }).filter((tier) => Number.isFinite(tier.minQty) && tier.minQty > 0 && Number.isFinite(tier.price) && tier.price >= 0).sort((a, b) => a.minQty - b.minQty);
+}
+
+const restockOnStatuses = new Set<OrderStatus>(['customer_cancelled', 'refused', 'delivery_failed', 'returned', 'admin_cancelled']);
+
+async function restoreOrderInventory(env: Bindings, orderId: number, actor: string, reason: 'return' | 'cancellation') {
+  const items = await env.DB.prepare('SELECT product_id AS productId, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL').bind(orderId).all<{ productId: number; quantity: number }>();
+  const statements: D1PreparedStatement[] = [];
+  for (const item of items.results) {
+    const product = await env.DB.prepare('SELECT stock FROM products WHERE id = ?').bind(item.productId).first<{ stock: number }>();
+    if (!product) continue;
+    const next = product.stock + item.quantity;
+    statements.push(
+      env.DB.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, item.productId),
+      env.DB.prepare('INSERT INTO stock_movements(product_id, quantity_delta, quantity_after, reason, note, actor) VALUES (?, ?, ?, ?, ?, ?)').bind(item.productId, item.quantity, next, reason, `Order ${orderId} inventory restoration`, actor),
+    );
+  }
+  if (statements.length) await env.DB.batch(statements);
+}
+
+async function sha256(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function adminPrincipal(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
+  const authorization = c.req.header('Authorization') ?? '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!token) return null;
+  if (c.env.ADMIN_API_TOKEN && token === c.env.ADMIN_API_TOKEN) return 'api-admin';
+  const tokenHash = await sha256(token);
+  const session = await c.env.DB.prepare("SELECT username, expires_at AS expiresAt FROM admin_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1").bind(tokenHash).first<{ username: string; expiresAt: string }>();
+  return session?.username ?? null;
+}
+
+async function createAdminSession(env: Bindings, username: string) {
+  const token = `${crypto.randomUUID()}.${crypto.randomUUID()}`;
+  const tokenHash = await sha256(token);
+  await env.DB.prepare("INSERT INTO admin_sessions(token_hash, username, expires_at) VALUES (?, ?, datetime('now', '+12 hours'))").bind(tokenHash, username).run();
+  return token;
 }
 
 function steadfastConfigured(env: Bindings) {
@@ -92,6 +151,141 @@ function calculateTrust(rows: Array<{ status: string }>) {
   return { totalPlaced, finalizedOrders: finalized.length, successfulOrders: success, cancelledOrders: cancellations, failedOrReturnedOrders: failed, successRate, cancelRate, rating };
 }
 
+app.post('/api/admin/login', async (c) => {
+  const body = await c.req.json<{ username?: string; password?: string }>().catch((): { username?: string; password?: string } => ({}));
+  const expectedUsername = c.env.ADMIN_USERNAME ?? 'admin';
+  if (normalize(body.username).toLowerCase() !== expectedUsername.toLowerCase() || !c.env.ADMIN_PASSWORD || body.password !== c.env.ADMIN_PASSWORD) return json(c, { error: 'Invalid administrator credentials.' }, 401);
+  const token = await createAdminSession(c.env, expectedUsername);
+  return json(c, { ok: true, token, expiresInHours: 12, username: expectedUsername });
+});
+
+app.get('/api/admin/session', async (c) => {
+  const username = await adminPrincipal(c);
+  return username ? json(c, { authenticated: true, username }) : json(c, { authenticated: false }, 401);
+});
+
+app.post('/api/admin/logout', async (c) => {
+  const authorization = c.req.header('Authorization') ?? '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (token) await c.env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+  return json(c, { ok: true });
+});
+
+app.get('/api/admin/overview', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const period = Math.min(Math.max(Number(c.req.query('days') ?? 30) || 30, 7), 90);
+  const revenue = await c.env.DB.prepare("SELECT COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue, COUNT(*) AS orders FROM orders o WHERE o.created_at >= datetime('now', ?) AND o.status IN ('confirmed','processing','shipped','delivered')").bind(`-${period} days`).first<{ revenue: number; orders: number }>();
+  const profit = await c.env.DB.prepare("SELECT COALESCE(SUM((oi.unit_price - COALESCE(p.cost_price, 0)) * oi.quantity), 0) AS grossProfit FROM orders o JOIN order_items oi ON oi.order_id = o.id LEFT JOIN products p ON p.id = oi.product_id WHERE o.created_at >= datetime('now', ?) AND o.status IN ('confirmed','processing','shipped','delivered')").bind(`-${period} days`).first<{ grossProfit: number }>();
+  const stock = await c.env.DB.prepare('SELECT COALESCE(SUM(stock), 0) AS units, COALESCE(SUM(stock * COALESCE(cost_price, 0)), 0) AS costValue, COALESCE(SUM(stock * price), 0) AS retailValue, SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END) AS needsRestock, COUNT(*) AS catalogue FROM products WHERE active = 1').first<{ units: number; costValue: number; retailValue: number; needsRestock: number; catalogue: number }>();
+  const pipeline = await c.env.DB.prepare('SELECT status, COUNT(*) AS orders, COALESCE(SUM(subtotal + delivery_fee), 0) AS value FROM orders GROUP BY status ORDER BY orders DESC').all();
+  const topProducts = await c.env.DB.prepare("SELECT oi.product_name AS productName, SUM(oi.quantity) AS units, SUM(oi.quantity * oi.unit_price) AS revenue FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.created_at >= datetime('now', ?) AND o.status IN ('confirmed','processing','shipped','delivered') GROUP BY oi.product_id, oi.product_name ORDER BY revenue DESC LIMIT 8").bind(`-${period} days`).all();
+  return json(c, { periodDays: period, revenue: revenue ?? { revenue: 0, orders: 0 }, grossProfit: profit?.grossProfit ?? 0, stock: stock ?? { units: 0, costValue: 0, retailValue: 0, needsRestock: 0, catalogue: 0 }, pipeline: pipeline.results, topProducts: topProducts.results });
+});
+
+app.get('/api/admin/settings', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const result = await c.env.DB.prepare('SELECT setting_key AS key, setting_value AS value FROM store_settings ORDER BY setting_key').all<{ key: string; value: string }>();
+  return json(c, { settings: Object.fromEntries(result.results.map((item) => [item.key, item.value])) });
+});
+
+app.put('/api/admin/settings', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<Record<string, string>>();
+  const allowed = new Set(['store_name','tagline','support_phone','support_email','currency_code','currency_symbol','delivery_inside_dhaka','delivery_outside_dhaka','free_delivery_over','order_whatsapp_number','bkash_number','nagad_number','rocket_number','tax_percentage','site_description','site_logo_url','favicon_url']);
+  for (const [key, value] of Object.entries(body)) if (allowed.has(key)) await c.env.DB.prepare("INSERT INTO store_settings(setting_key, setting_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP").bind(key, normalize(value)).run();
+  return json(c, { ok: true, updatedBy: username });
+});
+
+app.get('/api/admin/products', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const query = normalize(c.req.query('q'));
+  const status = normalize(c.req.query('status'));
+  const condition = ['1 = 1'];
+  const values: string[] = [];
+  if (query) { condition.push('(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
+  if (status) { condition.push('p.status = ?'); values.push(status); }
+  const result = await c.env.DB.prepare(`SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, p.brand, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${condition.join(' AND ')} ORDER BY p.updated_at DESC, p.created_at DESC`).bind(...values).all();
+  return json(c, { products: result.results });
+});
+
+app.get('/api/admin/categories', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const result = await c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all();
+  return json(c, { categories: result.results });
+});
+
+app.get('/api/admin/products/:id', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, p.brand, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?').bind(id).first();
+  return product ? json(c, { product }) : json(c, { error: 'Product not found.' }, 404);
+});
+
+app.get('/api/admin/products/:id/stock-movements', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const result = await c.env.DB.prepare('SELECT id, quantity_delta AS quantityDelta, quantity_after AS quantityAfter, reason, note, actor, created_at AS createdAt FROM stock_movements WHERE product_id = ? ORDER BY created_at DESC, id DESC LIMIT 100').bind(id).all();
+  return json(c, { movements: result.results });
+});
+
+app.get('/api/admin/orders', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const status = normalize(c.req.query('status'));
+  const query = normalize(c.req.query('q'));
+  const condition = ['1 = 1'];
+  const values: string[] = [];
+  if (status) { condition.push('o.status = ?'); values.push(status); }
+  if (query) { condition.push('(o.order_code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
+  return json(c, { orders: result.results });
+});
+
+app.post('/api/admin/products', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<Record<string, unknown>>();
+  const name = normalize(body.name);
+  if (!name || body.price === undefined) return json(c, { error: 'Product name and price are required.' }, 400);
+  const slug = normalize(body.slug) || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const status = ['active', 'draft', 'archived'].includes(normalize(body.status)) ? normalize(body.status) : 'draft';
+  const active = status === 'active' ? 1 : 0;
+  const categoryId = Number(body.categoryId) || null;
+  const volumeTiers = parseVolumeTiers(body.volumeTiers);
+  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, brand, description, short_description, price, compare_at_price, cost_price, image_url, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.brand) || null, normalize(body.description), normalize(body.shortDescription), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, normalize(body.imageUrl) || null, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), body.featured ? 1 : 0, active).first();
+  if (!result) return json(c, { error: 'Could not create product.' }, 500);
+  return json(c, { ok: true, product: result, createdBy: username }, 201);
+});
+
+app.patch('/api/admin/products/:id', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const body = await c.req.json<Record<string, unknown>>();
+  const status = ['active', 'draft', 'archived'].includes(normalize(body.status)) ? normalize(body.status) : null;
+  const active = status === null ? null : status === 'active' ? 1 : 0;
+  const volumeTiers = body.volumeTiers === undefined ? null : JSON.stringify(parseVolumeTiers(body.volumeTiers));
+  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), brand = COALESCE(?, brand), description = COALESCE(?, description), short_description = COALESCE(?, short_description), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.brand === undefined ? null : normalize(body.brand), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : normalize(body.imageUrl), body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, id).run();
+  return json(c, { ok: result.meta.changes > 0, productId: id, updatedBy: username });
+});
+
+app.post('/api/admin/products/:id/stock', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const body = await c.req.json<{ mode?: 'delta' | 'set'; quantity?: number; reason?: string; note?: string }>();
+  const product = await c.env.DB.prepare('SELECT stock FROM products WHERE id = ?').bind(id).first<{ stock: number }>();
+  if (!product) return json(c, { error: 'Product not found.' }, 404);
+  const reason = ['restock','return','damage','adjustment','sale','cancellation'].includes(normalize(body.reason)) ? normalize(body.reason) : 'adjustment';
+  const next = body.mode === 'set' ? Number(body.quantity) : product.stock + Number(body.quantity);
+  if (!Number.isFinite(next) || next < 0) return json(c, { error: 'Stock cannot be negative.' }, 400);
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Math.floor(next), id),
+    c.env.DB.prepare('INSERT INTO stock_movements(product_id, quantity_delta, quantity_after, reason, note, actor) VALUES (?, ?, ?, ?, ?, ?)').bind(id, Math.floor(next - product.stock), Math.floor(next), reason, normalize(body.note) || null, username),
+  ]);
+  return json(c, { ok: true, productId: id, previousStock: product.stock, stock: Math.floor(next), quantityDelta: Math.floor(next - product.stock) });
+});
+
 app.get('/api/health', (c) => json(c, { ok: true, service: c.env.SHOP_NAME, timestamp: new Date().toISOString() }));
 
 app.get('/api/config', (c) => json(c, {
@@ -114,7 +308,7 @@ app.get('/api/customer-tracking', async (c) => {
 });
 
 app.post('/api/admin/orders/:orderCode/steadfast/book', async (c) => {
-  if (!c.env.ADMIN_API_TOKEN || c.req.header('Authorization') !== `Bearer ${c.env.ADMIN_API_TOKEN}`) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const orderCode = normalize(c.req.param('orderCode'));
   try {
     const order = await c.env.DB.prepare('SELECT o.id, o.order_code AS orderCode, o.subtotal, o.delivery_fee AS deliveryFee, o.package_weight_grams AS packageWeight, c.name, c.phone, c.address, c.district, c.upazila FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first<{ id: number; orderCode: string; subtotal: number; deliveryFee: number; packageWeight: number; name: string; phone: string; address: string; district: string; upazila: string }>();
@@ -136,7 +330,7 @@ app.post('/api/admin/orders/:orderCode/steadfast/book', async (c) => {
 });
 
 app.get('/api/admin/orders/:orderCode/steadfast/status', async (c) => {
-  if (!c.env.ADMIN_API_TOKEN || c.req.header('Authorization') !== `Bearer ${c.env.ADMIN_API_TOKEN}`) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const orderCode = normalize(c.req.param('orderCode'));
   try {
     const order = await c.env.DB.prepare('SELECT id, order_code AS orderCode, courier_consignment_id AS consignmentId, courier_tracking_code AS trackingCode FROM orders WHERE order_code = ?').bind(orderCode).first<{ id: number; orderCode: string; consignmentId: string | null; trackingCode: string | null }>();
@@ -227,17 +421,25 @@ app.post('/api/orders', async (c) => {
   const zone = location?.zone ?? (body.district.toLowerCase() === 'dhaka' ? 'dhaka' : 'outside-dhaka');
   const deliveryFee = zone === 'dhaka' ? 90 : 150;
   const productIds = body.items.map((item) => item.productId);
-  const products = await c.env.DB.prepare(`SELECT id, name, price, stock FROM products WHERE active = 1 AND id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ id: number; name: string; price: number; stock: number }>();
+  const products = await c.env.DB.prepare(`SELECT id, name, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ id: number; name: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
   const byId = new Map(products.results.map((product) => [product.id, product]));
-  const lineItems = body.items.map((item) => { const product = byId.get(item.productId); if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A selected product is unavailable or out of stock.'); return { ...item, product }; });
-  const subtotal = lineItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const lineItems = body.items.map((item) => {
+    const product = byId.get(item.productId);
+    if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A selected product is unavailable or out of stock.');
+    const minimum = Math.max(1, Number(product.minOrderQty || 1));
+    if (item.quantity < minimum) throw new Error(`${product.name} requires a minimum order quantity of ${minimum}.`);
+    const tiers = parseVolumeTiers(product.volumeTiersJson);
+    const tier = tiers.filter((entry) => item.quantity >= entry.minQty).at(-1);
+    return { ...item, product, unitPrice: tier?.price ?? product.price };
+  });
+  const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
   const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, body.district, body.upazila, body.address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
   const order = await c.env.DB.prepare('INSERT INTO orders(order_code, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode').bind(orderCode, customer.id, subtotal, deliveryFee, zone, body.paymentMethod, body.trxId ?? null).first<{ id: number; orderCode: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
   for (const item of lineItems) {
-    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.product.name, item.quantity, item.product.price).run();
+    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.product.name, item.quantity, item.unitPrice).run();
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
   }
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();
@@ -245,12 +447,17 @@ app.post('/api/orders', async (c) => {
 });
 
 app.patch('/api/orders/:orderCode/status', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const orderCode = normalize(c.req.param('orderCode'));
   const body = await c.req.json<{ status: OrderStatus; reason?: string; adminNote?: string }>();
-  if (!body.status) return json(c, { error: 'Status is required.' }, 400);
+  const allowedStatuses: OrderStatus[] = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'customer_cancelled', 'refused', 'delivery_failed', 'returned', 'admin_cancelled'];
+  if (!allowedStatuses.includes(body.status)) return json(c, { error: 'Unsupported order status.' }, 400);
   const order = await c.env.DB.prepare('SELECT id, status FROM orders WHERE order_code = ?').bind(orderCode).first<{ id: number; status: OrderStatus }>();
   if (!order) return json(c, { error: 'Order not found.' }, 404);
+  if (order.status === body.status) return json(c, { ok: true, orderCode, status: body.status, unchanged: true });
   await c.env.DB.prepare('UPDATE orders SET status = ?, admin_note = COALESCE(?, admin_note), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(body.status, body.adminNote ?? null, order.id).run();
+  if (restockOnStatuses.has(body.status) && !restockOnStatuses.has(order.status)) await restoreOrderInventory(c.env, order.id, actor, body.status === 'returned' ? 'return' : 'cancellation');
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, from_status, to_status, reason) VALUES (?, ?, ?, ?)').bind(order.id, order.status, body.status, body.reason ?? null).run();
   return json(c, { ok: true, orderCode, status: body.status });
 });

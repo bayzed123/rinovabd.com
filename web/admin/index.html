@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rinova BD Admin Dashboard</title>
+  <link rel="stylesheet" href="/admin/styles.css" />
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <p class="eyebrow">RINOVA BD · PRIVATE ADMIN</p>
+      <h1>Welcome back.</h1>
+      <p class="muted">Sign in to manage products, inventory, orders and store settings.</p>
+      <form id="login-form" class="stack-form">
+        <label>Username<input id="login-username" autocomplete="username" required /></label>
+        <label>Password<input id="login-password" type="password" autocomplete="current-password" required /></label>
+        <button class="button button-dark" type="submit">Sign in <span>→</span></button>
+        <p id="login-error" class="form-error" role="alert"></p>
+      </form>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="side-brand"><strong>rinova</strong><span>admin studio</span></div>
+      <nav id="side-nav" class="side-nav" aria-label="Admin navigation">
+        <button class="nav-item active" data-view="overview">⌂ <span>Dashboard</span></button>
+        <button class="nav-item" data-view="products">▦ <span>Products</span></button>
+        <button class="nav-item" data-view="orders">◌ <span>Orders</span></button>
+        <button class="nav-item" data-view="inventory">⌁ <span>Inventory</span></button>
+        <button class="nav-item" data-view="settings">⚙ <span>Settings</span></button>
+        <a class="nav-item" href="/admin/guide">📖 <span>বাংলা গাইড</span></a>
+        <a class="nav-item" href="/" target="_blank">↗ <span>Storefront</span></a>
+      </nav>
+      <button id="logout" class="logout-button">Sign out</button>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div><p class="eyebrow">RINOVA OPERATIONS</p><h2 id="view-title">Dashboard</h2></div>
+        <div class="top-actions"><span id="signed-in-user" class="user-chip"></span><button id="mobile-menu" class="menu-button">☰</button></div>
+      </header>
+
+      <section id="view-overview" class="view">
+        <div class="period-row"><div><p class="muted">A clear view of how the shop is moving.</p></div><div class="period-buttons"><button data-days="7">7d</button><button class="active" data-days="30">30d</button><button data-days="90">90d</button></div></div>
+        <div id="metric-grid" class="metric-grid"></div>
+        <div class="dashboard-grid">
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">ORDER PIPELINE</p><h3>Where orders are now</h3></div></div><div id="pipeline" class="pipeline"></div></article>
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">TOP PRODUCTS</p><h3>Best sellers by revenue</h3></div></div><div id="top-products" class="table-list"></div></article>
+        </div>
+      </section>
+
+      <section id="view-products" class="view hidden">
+        <div class="section-toolbar"><div><p class="muted">Manage your catalogue, margin, stock and visibility.</p></div><button id="new-product" class="button button-dark">+ New product</button></div>
+        <div id="product-editor" class="panel hidden"><div class="panel-heading"><div><p class="eyebrow">PRODUCT EDITOR</p><h3 id="editor-heading">Create a product</h3></div><button class="close-editor" data-close-editor>×</button></div><form id="product-form" class="form-grid">
+          <label>Product name<input name="name" required /></label><label>SKU<input name="sku" placeholder="Auto-generated if blank" /></label>
+          <label>Brand<input name="brand" /></label><label>Category ID<input name="categoryId" type="number" /></label>
+          <label class="wide">Short summary<input name="shortDescription" /></label><label class="wide">Description<textarea name="description" rows="3"></textarea></label>
+          <label>Cost price (৳)<input name="costPrice" type="number" min="0" required /></label><label>Selling price (৳)<input name="price" type="number" min="0" required /></label>
+          <label>Compare-at price<input name="compareAtPrice" type="number" min="0" /></label><label>Opening stock<input name="stock" type="number" min="0" value="0" /></label>
+          <label>Low-stock threshold<input name="lowStockThreshold" type="number" min="0" value="5" /></label><label>Minimum order qty<input name="minOrderQty" type="number" min="1" value="1" /></label><label class="wide">Volume tiers JSON<input name="volumeTiers" placeholder='[{"minQty":3,"price":250},{"minQty":10,"price":220}]' /></label>
+          <label>Weight (grams)<input name="weightGrams" type="number" min="0" value="0" /></label><label>Barcode<input name="barcode" /></label>
+          <label class="wide">Image URL<input name="imageUrl" placeholder="https://... or /assets/..." /><img id="image-preview" class="image-preview hidden" alt="Product preview" /></label>
+          <label>Status<select name="status"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select></label><label class="check-label"><input name="featured" type="checkbox" /> Feature on homepage</label>
+          <div class="wide form-actions"><button id="product-submit" class="button button-dark" type="submit">Create product <span>→</span></button><button class="button" type="button" data-close-editor>Cancel</button></div>
+          <p id="product-form-message" class="form-message wide"></p>
+        </form></div>
+        <div class="panel"><div class="table-toolbar"><input id="product-search" placeholder="Search name, SKU or barcode" /><select id="product-status"><option value="">All statuses</option><option value="active">Active</option><option value="draft">Draft</option><option value="archived">Archived</option></select></div><div class="table-scroll"><table><thead><tr><th>Product</th><th>SKU</th><th>Price</th><th>Cost</th><th>Margin</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody id="products-table"></tbody></table></div></div>
+      </section>
+
+      <section id="view-orders" class="view hidden"><div class="section-toolbar"><div><p class="muted">Review customer orders, payments, courier state and status.</p></div><div class="toolbar-inline"><input id="order-search" placeholder="Order, name or phone" /><select id="order-status"><option value="">All statuses</option><option>pending</option><option>confirmed</option><option>processing</option><option>shipped</option><option>delivered</option><option>returned</option><option>customer_cancelled</option></select></div></div><div class="panel"><div class="table-scroll"><table><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Payment</th><th>Courier</th><th>Status</th><th>Location</th></tr></thead><tbody id="orders-table"></tbody></table></div></div></section>
+
+      <section id="view-inventory" class="view hidden"><div class="section-toolbar"><div><p class="muted">Record every stock change with a reason and note.</p></div></div><div class="panel"><div class="table-scroll"><table><thead><tr><th>Product</th><th>Stock</th><th>Low stock at</th><th>Stock value</th><th>Action</th></tr></thead><tbody id="inventory-table"></tbody></table></div></div></section>
+
+      <section id="view-settings" class="view hidden"><div class="section-toolbar"><div><p class="muted">Changes apply to the next order and the public shop.</p></div></div><form id="settings-form" class="panel settings-grid"></form></section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/admin/app.js"></script>
+</body>
+</html>
