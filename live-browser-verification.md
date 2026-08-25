@@ -56,3 +56,12 @@ Local JavaScript syntax checks, storefront build, Worker typechecking, and white
 - Unauthenticated `GET /api/admin/products` returned HTTP 401.
 - Local syntax checks, Worker typecheck, storefront build, and whitespace validation passed. Commit `eeaeaec`; CI/CD run `32867116870` completed successfully.
 - No production product badge was changed during smoke testing because that would be a live merchandising decision for the owner.
+
+## 2026-08-25 — Persistent admin assistant and navigation
+
+- Changed the admin assistant FAB from an in-card position to a viewport-fixed launcher with a high z-index, so it remains available while the dashboard scrolls.
+- On mobile widths, changed the admin sidebar into a sticky multi-row navigation bar showing all dashboard sections without requiring a hamburger drawer. The logout control remains available at the navigation edge.
+- The assistant popup remains an authenticated admin surface; no API authorization change was made.
+- Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace checks, and live admin HTML/CSS asset checks passed.
+- Unauthenticated admin product API continued to return HTTP 401.
+- Commit `b64f2fe`; CI/CD run `32867874859` completed successfully.
