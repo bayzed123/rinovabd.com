@@ -28,3 +28,7 @@ The default workflow uses `strict: false` so the full report stays visible. Use 
 The updated manual-only doctor workflow completed successfully on commit `7e53dfe` with target `https://rinovabd-worker.abdussalam8480.workers.dev`. The generated artifact was stored at `Doctor-report/runs/run-3-32907657032/` and contained `audit-report.md`, `sitemap-links.md`, `summary.json`, and `Medicine-or-fixd/fix-report.md`.
 
 The redacted audit recorded **67 PASS, 5 WARN, and 0 FAIL**. The sitemap contained **26 URLs; all 26 were reachable with no sitemap links needing attention**. The five warnings were the already-known optional R2/account capability warning and optional missing-integration secret statuses; no secret values or business data were emitted. The run remained read-only and the artifact upload completed successfully.
+
+## Final secret-name-only verification — run 32908005148
+
+The final manual run on commit `d2b16d3` completed successfully. Its artifact is `Doctor-report/runs/run-5-32908005148/`. It has the same **67 PASS, 5 WARN, 0 FAIL** result and **26/26 reachable sitemap URLs**. The remediation report now explicitly names `ADMIN_API_TOKEN`, `STEADFAST_WEBHOOK_TOKEN`, and `GEMINI_API_KEY` variants while keeping values hidden; the independent safety scan found no secret values.
