@@ -77,3 +77,9 @@ Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace va
 The admin layout now uses a fixed desktop sidebar with its own scroll area, so all navigation remains available while the main dashboard content scrolls. On mobile, the navigation is fixed at the top, all menu buttons remain reachable in a three-column multi-row layout, and the main content is offset below it rather than being covered. The SmartGen assistant launcher is explicitly viewport-fixed with a higher stacking level than the navigation and content, so it remains visible during scrolling and remains clickable.
 
 Local admin JavaScript syntax, Worker typecheck, storefront build, whitespace checks, and deployment completed successfully. Commit `4854700`; CI/CD run `32873631559` completed successfully.
+
+## 2026-08-25 — Todo 1: customer profile and order history
+
+The authenticated account page now shows the customer's name and contact details after login or account creation. The account order history now receives invoice number, order status, payment/courier status, total, and purchased product summaries from the protected `/api/account/orders` route. Each order card includes Invoice and Track order actions, while unauthenticated account-me and account-orders requests continue to return HTTP 401.
+
+Local account JavaScript syntax, storefront build, Worker typecheck, and whitespace checks passed. Commit `868fe0a`; CI/CD run `32875095758` completed successfully. Todo 1 is complete; Todo 2 is the invoice-number tracking lookup fix.
