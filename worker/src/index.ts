@@ -207,11 +207,10 @@ async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
 
 async function runShopAssistant(env: Bindings, scope: 'customer' | 'staff', messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
   const context = await shopContext(env, scope);
-  const transcript = messages.slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.content}`).join('\n');
-  const prompt = `${shopOnlyInstruction(scope)}\nSHOP DATA JSON:\n${context}\nCONVERSATION:\n${transcript}\nASSISTANT:`;
+  const prompt = `${shopOnlyInstruction(scope)}\nSHOP DATA JSON:\n${context}`;
   const model = env.AI_MODEL ?? '@cf/openai/gpt-oss-20b';
   try {
-    const response = await env.AI.run(model, { prompt, max_tokens: 600 });
+    const response = await env.AI.run(model, { messages: [{ role: 'system', content: prompt }, ...messages.slice(-8)], max_tokens: 600 });
     const text = extractAiText(response);
     if (text) return { text, provider: 'cloudflare-ai' };
   } catch (error) {
