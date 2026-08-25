@@ -1,18 +1,178 @@
 <!doctype html>
 <html lang="bn">
-<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Rinova BD · বাংলা গাইড</title><link rel="stylesheet" href="/admin/styles.css" /><style>.guide{max-width:900px;margin:0 auto;padding:34px 20px 80px}.guide header{display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:28px}.guide h1,.guide h2{font-family:'Playfair Display',Georgia,serif;letter-spacing:-.04em}.guide h1{font-size:clamp(36px,6vw,65px);margin:0}.guide h2{font-size:27px;margin-top:38px;border-top:1px solid var(--line);padding-top:26px}.guide p,.guide li{color:var(--muted);line-height:1.8}.guide li{margin:8px 0}.guide .guide-card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px;margin:15px 0}.guide code{background:var(--cream);padding:3px 6px;border-radius:5px;color:var(--ink)}.guide a{color:var(--accent)}@media(max-width:600px){.guide header{align-items:flex-start;flex-direction:column}}</style></head>
-<body><main class="guide"><header><div><p class="eyebrow">RINOVA BD · ADMIN HELP</p><h1>বাংলা গাইড</h1></div><a class="button" href="/admin/">← Dashboard</a></header>
-<section class="guide-card"><h2 style="margin-top:0;border:0;padding:0">১. সাইন ইন</h2><p>সাইটের শেষে <code>/admin</code> যোগ করে dashboard খুলুন। GitHub Secrets-এ সংরক্ষিত administrator username ও password ব্যবহার করুন। সফল login-এর পর session ১২ ঘণ্টা active থাকবে। কাজ শেষে বাম পাশের <strong>Sign out</strong> চাপুন।</p></section>
-<h2>২. Dashboard</h2><p>Dashboard-এ ৭ দিন, ৩০ দিন অথবা ৯০ দিনের Revenue, Gross Profit, Orders, Average Order Value, Stock, Restock এবং Top Products দেখা যাবে। Revenue হিসাব confirmed বা পরবর্তী order থেকে গণনা হয়; pending ও cancelled order income হিসেবে ধরা হয় না।</p>
-<h2>৩. Product যোগ করা</h2><ol><li><strong>Products → + New product</strong> চাপুন।</li><li>Product name, SKU, Brand, Category ID, short summary, description, cost price, selling price, stock, low-stock threshold, weight ও barcode লিখুন।</li><li>Image URL ব্যবহার করুন; R2 চালু হলে পরবর্তীতে direct upload যুক্ত করা যাবে।</li><li>Status হিসেবে <strong>Active</strong> দিলে storefront-এ দেখা যাবে; Draft দিলে hidden থাকবে।</li><li><strong>Feature on homepage</strong> tick করলে Best Seller section-এর জন্য product চিহ্নিত হবে।</li></ol>
-<h2>৪. Stock পরিবর্তন</h2><p><strong>Inventory</strong> অথবা Products table থেকে <strong>Stock</strong> চাপুন। Positive number দিলে stock বাড়বে, negative number দিলে কমবে। Reason হিসেবে restock, return, damage, adjustment, sale অথবা cancellation দিন। প্রতিটি পরিবর্তন stock ledger-এ actor ও note সহ সংরক্ষিত হবে।</p>
-<h2>৫. Orders ও Invoice</h2><p><strong>Orders</strong> page-এ order code, customer, phone, total, payment method, courier status এবং current order status দেখা যাবে। Search box বা status filter দিয়ে order খুঁজুন। প্রতিটি order-এর <strong>Print invoice</strong> button থেকে printable invoice খুলবে। Invoice-এ product name, quantity, unit price, weight, package weight, payment method, order source এবং delivery fee থাকবে।</p>
-<h2>৬. Returns</h2><p><strong>Returns</strong> page-এ customer return request approve, pick-up, receive, refund বা reject করা যাবে। Received status দিলে order-এর stock একবার ledger-এ ফেরত যোগ হবে; একই return আবার update করলে stock double-count হবে না। Failed payment-এর refund status admin-কে যাচাই করে update করতে হবে।</p>
-<h2>৭. POS ও Barcode</h2><p><strong>POS &amp; Barcodes</strong> page-এ product name, SKU বা barcode scan/search করে in-store sale তৈরি করুন। Payment method নির্বাচন করে discount প্রয়োগ করা যাবে। <strong>Complete sale &amp; print receipt</strong> চাপলে stock কমবে, POS ledger তৈরি হবে এবং receipt print dialog খুলবে।</p>
-<h2>৮. Content CMS</h2><p><strong>Content CMS</strong> থেকে homepage topbar banner, delivery/about pages, Journal blog post এবং offer তৈরি বা update করা যাবে। Draft public site-এ প্রকাশ পাবে না; published content public homepage API-তে দেখা যাবে। Clothing category backend-এ তৈরি আছে কিন্তু active নয়, তাই customer storefront-এ hidden থাকবে।</p>
-<h2>৯. Customer account</h2><p>Customer <code>/account.html</code> থেকে mobile number ও password দিয়ে account খুলতে বা sign in করতে পারবে। Account থেকে order history, printable invoice এবং delivered/shipped order-এর return request করা যাবে। Password salted hash হিসেবে রাখা হয়; admin panel-এ password দেখা যায় না।</p>
-<h2>১০. Customer ও Admin AI Chatbot</h2><p>Storefront-এর নিচের <strong>Need help?</strong> button চাপলে popup-এ <strong>AI support</strong> এবং <strong>WhatsApp</strong> option দেখা যাবে। Customer assistant শুধু product, price, stock, usage, delivery, order, return, payment ও shop policy নিয়ে উত্তর দেবে। WhatsApp button সরাসরি <code>+880 1738-745949</code>-এ যাবে।</p><p>Admin-এর <strong>Admin Assistant</strong> private shop data—stock, orders, returns, POS sales এবং settings context—থেকে operational summary দেবে। এটি password, API key, raw token প্রকাশ করবে না এবং নিজে থেকে irreversible data change করবে না। SmartGen shop data থেকে স্বাভাবিক ও সহজ ভাষায় উত্তর দেবে; staff-facing interface-এ শুধু প্রয়োজনীয় shop assistance দেখা যাবে। আপনি সরাসরি জিজ্ঞাসা করতে পারেন: <em>“কতগুলো active product আছে?”</em>, <em>“মোট stock কত?”</em>, <em>“কত টাকার online ও POS sales হয়েছে?”</em>, <em>“কোন product কতটি বিক্রি হয়েছে?”</em>, <em>“কোন order status বেশি?”</em> বা <em>“কতগুলো return pending?”</em>। উত্তরগুলো live database snapshot দেখে দেওয়া হবে।</p>
-<h2>১১. Store Settings</h2><p><strong>Settings</strong> থেকে store name, tagline, support contact, currency, delivery fee, free-delivery threshold, payment numbers, WhatsApp number, tax এবং site description পরিবর্তন করা যাবে। Save করার পর settings পরবর্তী order ও public integration-এ ব্যবহারের জন্য database-এ সংরক্ষিত হবে।</p>
-<h2>১২. নিরাপত্তা ও গুরুত্বপূর্ণ নিয়ম</h2><ul><li>API token বা password কখনো public message, screenshot বা product description-এ রাখবেন না।</li><li>Product delete না করে archive করুন, যাতে পুরনো order history নষ্ট না হয়।</li><li>Customer password বা admin secret dashboard table-এ প্রদর্শিত হবে না।</li><li>Order return বা cancellation হলে stock manually দুইবার যোগ করবেন না।</li></ul>
-<h2>১৩. বর্তমানে প্রস্তুত ও পরবর্তী modules</h2><p>বর্তমানে secure login, overview metrics, product catalog, stock ledger, order operations, invoice print, returns, POS receipt, CMS content, customer accounts, hidden clothing category foundation, customer AI/WhatsApp popup এবং private admin assistant প্রস্তুত। Direct R2 image upload, automated payment gateway/refund settlement, full barcode label printer integration, Messenger/WhatsApp inbound order automation, and complete Playwright regression suite remain as later hardening modules.</p>
-</main></body></html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rinova BD · Admin ব্যবহারিক বাংলা গাইড</title>
+  <link rel="stylesheet" href="/admin/styles.css" />
+  <style>
+    .guide{max-width:980px;margin:0 auto;padding:34px 20px 90px}.guide header{display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:28px}.guide h1,.guide h2,.guide h3{font-family:'Playfair Display',Georgia,serif;letter-spacing:-.04em}.guide h1{font-size:clamp(36px,6vw,65px);margin:0}.guide h2{font-size:28px;margin:42px 0 12px;border-top:1px solid var(--line);padding-top:27px}.guide h3{font-size:21px;margin:0 0 8px}.guide p,.guide li{color:var(--muted);line-height:1.85}.guide ol,.guide ul{padding-left:23px}.guide li{margin:7px 0}.guide .guide-card{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:22px;margin:16px 0;box-shadow:0 7px 25px rgba(80,47,39,.025)}.guide .guide-card.important{background:linear-gradient(135deg,#fff7f2,#f9e5df)}.guide .guide-card h2{border:0;padding:0;margin:0 0 9px}.guide code{background:var(--cream);padding:3px 6px;border-radius:5px;color:var(--ink);font-size:.92em}.guide pre{overflow:auto;background:#292321;color:#fff;padding:16px;border-radius:10px;line-height:1.6;font-size:12px}.guide a{color:var(--accent)}.guide table{border-collapse:collapse;width:100%;margin:15px 0;background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}.guide th,.guide td{text-align:left;padding:12px;border-bottom:1px solid var(--line);font-size:12px;line-height:1.6;vertical-align:top}.guide th{background:var(--cream);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}.guide tr:last-child td{border-bottom:0}.guide .step-number{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;margin-right:6px}.guide .muted-note{font-size:12px;color:var(--muted)}@media(max-width:650px){.guide header{align-items:flex-start;flex-direction:column}.guide{padding:26px 15px 65px}.guide h2{font-size:25px}.guide table{display:block;overflow:auto;white-space:normal}.guide th,.guide td{min-width:135px}}
+  </style>
+</head>
+<body>
+  <main class="guide">
+    <header>
+      <div><p class="eyebrow">RINOVA BD · OWNER HELP</p><h1>অ্যাডমিন ড্যাশবোর্ড ব্যবহারিক বাংলা গাইড</h1><p>এই গাইডটি developer-এর জন্য নয়। আপনি owner হিসেবে কোথায় ক্লিক করবেন, কোন তথ্য দেখবেন এবং কীভাবে shop-এর live পরিবর্তন করবেন—সবকিছু সহজভাবে এখানে দেওয়া আছে।</p></div>
+      <a class="button" href="/admin/">← Dashboard</a>
+    </header>
+
+    <section class="guide-card important">
+      <h2>শুরু করার আগে</h2>
+      <p>শুধু এই লিংকে যান: <a href="/admin/"><strong>Rinova Admin Dashboard</strong></a>। আপনার administrator username ও password দিয়ে Sign in করুন। Login করার পর কাজের সময় dashboard খোলা রাখুন এবং কাজ শেষ হলে অবশ্যই বাম পাশের <strong>Sign out</strong> চাপুন। Password কাউকে chat, screenshot বা product description-এ পাঠাবেন না।</p>
+    </section>
+
+    <h2>১. Dashboard-এর প্রতিটি menu কী কাজে লাগে</h2>
+    <p>Login করার পর বাম পাশের menu থেকে প্রয়োজনীয় জায়গায় যান। মোবাইলে আগে <strong>☰</strong> চাপলে menu খুলবে।</p>
+    <table><thead><tr><th>Menu</th><th>কখন ব্যবহার করবেন</th><th>কী দেখতে বা করতে পারবেন</th></tr></thead><tbody>
+      <tr><td><strong>Dashboard</strong></td><td>প্রতিদিন shop-এর অবস্থা দেখতে</td><td>Sales, order, stock, restock এবং best-selling product-এর সারাংশ।</td></tr>
+      <tr><td><strong>Products</strong></td><td>Product যোগ, দাম বা তথ্য পরিবর্তন করতে</td><td>নাম, দাম, stock, ছবি, video, category, status এবং product detail edit।</td></tr>
+      <tr><td><strong>Orders</strong></td><td>Customer order process করতে</td><td>Customer, total, payment, courier status এবং order status update।</td></tr>
+      <tr><td><strong>Inventory</strong></td><td>Stock বাড়ানো বা কমানোর record রাখতে</td><td>বর্তমান stock, low-stock threshold এবং stock change ledger।</td></tr>
+      <tr><td><strong>Settings</strong></td><td>Shop-এর সাধারণ তথ্য পরিবর্তন করতে</td><td>Store name, phone, delivery fee, payment number, WhatsApp এবং site description।</td></tr>
+      <tr><td><strong>Returns</strong></td><td>Customer return request পরিচালনা করতে</td><td>Approve, pickup, receive, refund অথবা reject status।</td></tr>
+      <tr><td><strong>POS &amp; Barcodes</strong></td><td>দোকানের সরাসরি বিক্রি করতে</td><td>Barcode/search দিয়ে product যোগ, discount, payment এবং receipt print।</td></tr>
+      <tr><td><strong>Content CMS</strong></td><td>Homepage, page, blog ও offer পরিবর্তন করতে</td><td>Topbar notice, published page, journal post এবং offer।</td></tr>
+      <tr><td><strong>Admin Assistant</strong></td><td>Shop data সম্পর্কে দ্রুত প্রশ্ন করতে</td><td>Live stock, order, sales, return এবং product-wise summary।</td></tr>
+      <tr><td><strong>বাংলা গাইড</strong></td><td>এই নির্দেশনা আবার পড়তে</td><td>এই owner manual।</td></tr>
+    </tbody></table>
+
+    <h2>২. Dashboard-এ প্রতিদিন কীভাবে check করবেন</h2>
+    <ol>
+      <li><strong>Dashboard</strong> menu-তে যান।</li>
+      <li>উপরে <strong>7d</strong>, <strong>30d</strong> অথবা <strong>90d</strong> বেছে নিন। নতুন shop হলে 30d সবচেয়ে উপযোগী।</li>
+      <li><strong>Revenue</strong> দেখুন—নিশ্চিত/চলমান order থেকে মোট বিক্রি। Pending বা cancelled order এখানে বিক্রি হিসেবে ধরা হয় না।</li>
+      <li><strong>Orders</strong> দেখে বুঝুন কতগুলো order হয়েছে এবং <strong>Avg order value</strong> দেখে গড় order value জানুন।</li>
+      <li><strong>Stock on hand</strong>, <strong>Needs restocking</strong> এবং <strong>Top Products</strong> দেখে কোন product আগে refill করতে হবে ঠিক করুন।</li>
+    </ol>
+    <p class="muted-note">Dashboard-এর সংখ্যা দেখার জন্য; product বা order পরিবর্তনের জন্য Products, Orders অথবা Inventory menu ব্যবহার করতে হবে।</p>
+
+    <h2>৩. View Mode এবং Edit Mode কীভাবে ব্যবহার করবেন</h2>
+    <p>Dashboard-এর উপরের <strong>View Mode</strong> ও <strong>Edit Mode</strong> দিয়ে দেখার কাজ এবং পরিবর্তনের কাজ আলাদা রাখা হয়েছে। ভুল করে live price বা content বদলে ফেলা এড়াতে আগে View Mode-এ check করুন।</p>
+    <table><thead><tr><th>Mode</th><th>ব্যবহার</th><th>Product page-এ যে action দেখবেন</th></tr></thead><tbody>
+      <tr><td><strong>View Mode</strong></td><td>Live catalogue দেখে যাচাই করা</td><td><strong>View live</strong> দিয়ে customer-এর product page দেখুন; প্রয়োজন হলে <strong>Quick edit</strong> চাপুন।</td></tr>
+      <tr><td><strong>Edit Mode</strong></td><td>Live shop-এর product তথ্য পরিবর্তন করা</td><td><strong>Edit</strong> দিয়ে পুরো editor খুলুন এবং <strong>Stock</strong> দিয়ে stock adjustment করুন।</td></tr>
+    </tbody></table>
+    <ol>
+      <li>প্রথমে <strong>View Mode</strong>-এ product name, image, price ও stock দেখুন।</li>
+      <li>কোনো ভুল পেলে সেই row-এর <strong>Quick edit</strong> চাপুন। Dashboard নিজে থেকে Edit Mode-এ চলে যাবে।</li>
+      <li>পরিবর্তন করে <strong>Save changes</strong> চাপুন। Success message দেখা না পর্যন্ত page বন্ধ করবেন না।</li>
+      <li>তারপর <strong>View live</strong> খুলে customer page-এ পরিবর্তনটি ঠিক হয়েছে কি না দেখুন।</li>
+    </ol>
+
+    <h2>৪. নতুন Product কীভাবে যোগ করবেন</h2>
+    <ol>
+      <li><strong>Products → Edit Mode → + New product</strong> চাপুন।</li>
+      <li><strong>Product name</strong>-এ customer যে নাম দেখবে সেটি লিখুন।</li>
+      <li><strong>SKU</strong> নিজের internal code হলে লিখুন; না জানলে খালি রাখতে পারেন, system code তৈরি করবে।</li>
+      <li><strong>Category ID</strong>-তে নিচের table অনুযায়ী সংখ্যা দিন। Clothing এখন hidden, তাই customer-facing category হিসেবে ব্যবহার করবেন না।</li>
+      <li>Short summary ও Description-এ সহজ ভাষায় product কী, কত ml/g এবং কীভাবে ব্যবহার করতে হয় লিখুন।</li>
+      <li>Cost price, Selling price, stock, low-stock threshold, minimum order quantity, weight ও barcode লিখুন।</li>
+      <li>Primary image URL যোগ করুন এবং নিচের media নিয়মে অতিরিক্ত ছবি/video দিন।</li>
+      <li>Storefront-এ দেখাতে <strong>Status = Active</strong> দিন। Draft রাখলে customer product দেখতে পাবে না।</li>
+      <li>Homepage-এ highlight করতে <strong>Feature on homepage</strong> tick দিন। সব product-এ এটি tick করার দরকার নেই।</li>
+      <li>সবশেষে <strong>Create product</strong> চাপুন এবং Products table-এ productটি দেখা যাচ্ছে কি না check করুন।</li>
+    </ol>
+    <table><thead><tr><th>Category ID</th><th>Category</th><th>কোন product এখানে যাবে</th></tr></thead><tbody>
+      <tr><td>1</td><td>Skin Care</td><td>Serum, sunscreen, moisturiser ও skincare routine product।</td></tr>
+      <tr><td>2</td><td>Face Care</td><td>Face wash, cleanser এবং face-care item।</td></tr>
+      <tr><td>3</td><td>Face Makeup</td><td>Blush, foundation বা মুখের makeup item।</td></tr>
+      <tr><td>4</td><td>Eyes Makeup</td><td>Eyeliner, mascara, eyeshadow ইত্যাদি।</td></tr>
+      <tr><td>5</td><td>Makeup</td><td>General makeup set বা lip/makeup collection।</td></tr>
+      <tr><td>6</td><td>Hair Care</td><td>Shampoo, hair oil, conditioner ইত্যাদি।</td></tr>
+      <tr><td>7</td><td>Perfume</td><td>Perfume, body mist ও fragrance।</td></tr>
+      <tr><td>8</td><td>Kids</td><td>শিশুদের উপযোগী product।</td></tr>
+    </tbody></table>
+
+    <h2>৫. Product edit, দাম পরিবর্তন এবং ছবি/video যোগ করা</h2>
+    <p><strong>Products</strong> page-এ নাম, SKU বা barcode দিয়ে search করুন। Product-এর row-তে <strong>Edit</strong> চাপলে পুরনো তথ্য খুলবে। শুধু দাম পরিবর্তন করতে Selling price বদলান; পুরনো দাম দেখাতে Compare-at price রাখুন। তারপর <strong>Save changes</strong> চাপুন এবং storefront-এ View live দিয়ে যাচাই করুন।</p>
+    <div class="guide-card"><h3>একাধিক ছবি ও video যোগ করার নিয়ম</h3><ol><li><strong>Primary image URL</strong>-এ প্রথম/প্রধান ছবি দিন, যেমন <code>/assets/product-front.jpg</code>।</li><li><strong>Additional images and videos</strong> box-এ নিচের মতো JSON array paste করুন।</li><li>ছবির জন্য <code>type</code> হবে <code>image</code> এবং video-র জন্য <code>video</code>।</li><li>ছবির URL অবশ্যই <code>/assets/</code> দিয়ে শুরু হওয়া repository asset অথবা <code>https://</code> URL হতে হবে।</li><li>Video হিসেবে সরাসরি playable HTTPS video URL ব্যবহার করুন, যেমন MP4/WebM link। Save করার পরে product detail page-এ thumbnail দেখা যাবে।</li></ol><pre>[{"type":"image","url":"/assets/product-side.jpg","alt":"Side view"},{"type":"image","url":"https://example.com/product-back.jpg","alt":"Back view"},{"type":"video","url":"https://example.com/product-demo.mp4"}]</pre><p class="muted-note">এই version-এ dashboard-এর মধ্যে direct file-upload button নেই। তাই repository-এর <code>/assets/</code> path অথবা নিরাপদ HTTPS media URL ব্যবহার করুন।</p></div>
+
+    <h2>৬. Stock কীভাবে বাড়াবেন বা কমাবেন</h2>
+    <p>Stock পরিবর্তনের জন্য <strong>Inventory</strong> page অথবা Products table-এর <strong>Stock</strong> button ব্যবহার করুন। Button চাপলে প্রথমে quantity এবং পরে reason চাইবে।</p>
+    <table><thead><tr><th>যা করবেন</th><th>Quantity কীভাবে দেবেন</th><th>Reason</th></tr></thead><tbody>
+      <tr><td>নতুন মাল এসেছে</td><td>Positive number, যেমন <code>+20</code> বা <code>20</code></td><td>restock</td></tr>
+      <tr><td>Damage হয়েছে</td><td>Negative number, যেমন <code>-2</code></td><td>damage</td></tr>
+      <tr><td>Return পাওয়া গেছে</td><td>Positive number</td><td>return</td></tr>
+      <tr><td>ভুল count ঠিক করা</td><td>প্রয়োজন অনুযায়ী positive/negative</td><td>adjustment</td></tr>
+    </tbody></table>
+    <p>Reason-এর পরে ছোট note লিখুন, যেমন “Supplier delivery 25 August”। এতে পরে কে, কখন এবং কেন stock বদলেছে বোঝা যাবে। Order বা return থেকে system stock update করলে একই item আবার manually যোগ করবেন না।</p>
+
+    <h2>৭. Customer Order কীভাবে process করবেন</h2>
+    <ol><li><strong>Orders</strong> page খুলুন।</li><li>Order code, customer name অথবা phone দিয়ে search করুন। প্রয়োজনে status filter ব্যবহার করুন।</li><li>Customer-এর নাম, phone, district/upazila, product, total এবং payment status মিলিয়ে দেখুন।</li><li>Customer-এর payment যাচাই করে order status ধাপে ধাপে update করুন।</li><li>Courier booking বা shipment-এর পরে courier status check করুন।</li><li>Customer-কে update দেওয়ার আগে invoice print করে product, quantity, weight এবং delivery fee মিলিয়ে নিন।</li></ol>
+    <table><thead><tr><th>Status</th><th>কখন ব্যবহার করবেন</th></tr></thead><tbody>
+      <tr><td>pending</td><td>নতুন order এসেছে, এখনো যাচাই হয়নি।</td></tr>
+      <tr><td>confirmed</td><td>Customer/order/payment তথ্য যাচাই হয়েছে।</td></tr>
+      <tr><td>processing</td><td>Product pack বা order প্রস্তুত হচ্ছে।</td></tr>
+      <tr><td>shipped</td><td>Courier-এর কাছে দেওয়া হয়েছে।</td></tr>
+      <tr><td>delivered</td><td>Customer product গ্রহণ করেছে।</td></tr>
+      <tr><td>returned</td><td>Product ফেরত এসেছে বা return process সম্পন্ন হয়েছে।</td></tr>
+      <tr><td>customer_cancelled / admin_cancelled</td><td>Cancel হওয়ার প্রকৃত কারণ অনুযায়ী সঠিক status দিন।</td></tr>
+    </tbody></table>
+
+    <h2>৮. Invoice কীভাবে print করবেন</h2>
+    <p><strong>Orders</strong> page-এ যে order-এর invoice দরকার, তার পাশে <strong>Print invoice</strong> চাপুন। Print window খুললে product name, quantity, unit price, weight, total package weight, payment method, order source, delivery fee এবং customer address check করুন। তারপর printer নির্বাচন করে print করুন অথবা Save as PDF বেছে নিন। ভুল থাকলে print করার আগে order তথ্য ঠিক করুন।</p>
+
+    <h2>৯. Return কীভাবে পরিচালনা করবেন</h2>
+    <ol><li><strong>Returns</strong> page খুলুন। <strong>requested</strong> filter দিয়ে নতুন request দেখুন।</li><li>Order code, customer, phone, reason এবং amount মিলিয়ে নিন।</li><li>Return গ্রহণযোগ্য হলে <strong>approved</strong> দিন। Courier pickup হলে <strong>picked_up</strong> দিন।</li><li>Product হাতে পাওয়ার পরে condition check করে <strong>received</strong> দিন।</li><li>টাকা ফেরত দেওয়ার পর <strong>refunded</strong> দিন। গ্রহণযোগ্য না হলে <strong>rejected</strong> দিন।</li></ol>
+    <p class="muted-note">Received status-এর সময় system stock ledger-এ product ফেরত যোগ করে। একই return বারবার update করলে stock double-count হওয়ার কথা নয়; তবুও ledger দেখে নিশ্চিত হোন।</p>
+
+    <h2>১০. দোকানের POS sale ও barcode</h2>
+    <ol><li><strong>POS &amp; Barcodes</strong> page খুলুন।</li><li>Barcode scanner থাকলে cursor search box-এ রেখে barcode scan করুন; না হলে product name বা barcode লিখে <strong>Find</strong> চাপুন।</li><li>Product row-তে <strong>Add</strong> চাপুন। একাধিক item হলে প্রত্যেকটি যোগ করুন।</li><li>প্রয়োজনে discount দিন এবং Cash, bKash, Nagad, Rocket অথবা Card payment বেছে নিন।</li><li>Receipt preview-এ product ও total মিলিয়ে <strong>Complete sale &amp; print receipt</strong> চাপুন।</li></ol>
+    <p>POS sale complete হলে shop stock কমে এবং আলাদা POS হিসাব তৈরি হয়। ভুল sale হলে নিজে থেকে stock কম-বেশি না করে Inventory ledger-এ পরিষ্কার adjustment note দিন।</p>
+
+    <h2>১১. Homepage, page, blog ও offer পরিবর্তন</h2>
+    <p><strong>Content CMS</strong> page-এ চারটি কাজ আছে।</p>
+    <table><thead><tr><th>অংশ</th><th>কীভাবে ব্যবহার করবেন</th></tr></thead><tbody>
+      <tr><td>Topbar notice</td><td>উপরের announcement text লিখে <strong>Save banner</strong> চাপুন।</td></tr>
+      <tr><td>Create or update page</td><td>Slug, title, body লিখুন। Customer-কে দেখাতে Status = published দিন।</td></tr>
+      <tr><td>Create blog post</td><td>Journal-এর জন্য slug, title, excerpt, body লিখুন। Publish করার আগে বানান ও image link check করুন।</td></tr>
+      <tr><td>Create offer</td><td>Code, title, description, discount type, value এবং minimum subtotal দিন।</td></tr>
+    </tbody></table>
+    <p>Draft content public site-এ customer দেখতে পাবে না। Save করার পরে storefront refresh করে banner বা page দেখা যাচ্ছে কি না check করুন। Clothing category backend-এ প্রস্তুত আছে, কিন্তু এখন customer menu-তে hidden থাকবে।</p>
+
+    <h2>১২. Store Settings কীভাবে পরিবর্তন করবেন</h2>
+    <p><strong>Settings</strong> page-এ যে field পরিবর্তন করবেন সেটি লিখে নিচে <strong>Save settings</strong> চাপুন।</p>
+    <table><thead><tr><th>Field</th><th>কী লিখবেন</th></tr></thead><tbody>
+      <tr><td>Store name / Tagline</td><td>Customer-facing shop name ও ছোট পরিচিতি।</td></tr>
+      <tr><td>Support phone / email</td><td>Customer support-এর contact।</td></tr>
+      <tr><td>Delivery inside Dhaka</td><td>Dhaka delivery fee: বর্তমানে ৳90।</td></tr>
+      <tr><td>Delivery outside Dhaka</td><td>Dhaka-এর বাইরে delivery fee: বর্তমানে ৳150।</td></tr>
+      <tr><td>Free delivery over</td><td>যে amount-এর উপরে free delivery দিতে চান।</td></tr>
+      <tr><td>Order WhatsApp number</td><td>বর্তমান order support number: +880 1738-745949।</td></tr>
+      <tr><td>bKash / Nagad / Rocket number</td><td>Customer payment-এর জন্য ব্যবহার করা merchant/personal number।</td></tr>
+      <tr><td>Site description</td><td>Homepage ও search preview-এর জন্য ছোট shop description।</td></tr>
+    </tbody></table>
+    <p>Customer নিজে delivery fee বেছে নেবে না; location অনুযায়ী fee automatic থাকবে। Emergency fee ৳250 admin-side প্রয়োজন হলে ব্যবহার করবেন, customer checkout-এ selection option থাকবে না।</p>
+
+    <h2>১৩. Customer account, invoice ও tracking</h2>
+    <p>Customer <code>/account.html</code> থেকে account খুলে order history দেখতে, invoice খুলতে এবং eligible delivered/shipped order-এর return request করতে পারে। Owner হিসেবে customer-এর password দেখার প্রয়োজন নেই এবং password dashboard-এ দেখা যায় না। Customer order জানতে চাইলে order code বা phone দিয়ে tracking তথ্য check করে সহায়তা করুন।</p>
+
+    <h2>১৪. SmartGen দিয়ে দ্রুত shop data check</h2>
+    <p>Dashboard-এর উপরের SmartGen button অথবা Dashboard-এর Top Products card-এর গোল SmartGen button চাপুন। এটি private admin assistant; এখানে সরাসরি প্রশ্ন লিখলে live shop data অনুযায়ী summary পাওয়া যাবে।</p>
+    <table><thead><tr><th>আপনি লিখতে পারেন</th><th>যে তথ্য পাবেন</th></tr></thead><tbody>
+      <tr><td>“কতগুলো active product আছে?”</td><td>Active product count।</td></tr>
+      <tr><td>“মোট stock কত এবং কোনগুলো low stock?”</td><td>Stock units, value এবং restock দরকার এমন product।</td></tr>
+      <tr><td>“Online ও POS মিলিয়ে কত টাকার sale হয়েছে?”</td><td>Online sales, POS sales এবং combined sales summary।</td></tr>
+      <tr><td>“কোন product কতটি বিক্রি হয়েছে?”</td><td>Product-wise units ও revenue।</td></tr>
+      <tr><td>“কতগুলো return pending?”</td><td>Return status অনুযায়ী count।</td></tr>
+      <tr><td>“আজ কোন order আগে process করব?”</td><td>Recent order ও status দেখে operational suggestion।</td></tr>
+    </tbody></table>
+    <p>Customer-facing SmartGen product link চাইলে active catalogue থেকে verified colorful product card দেখায়। Admin assistant-কে password, payment secret, API key বা কোনো confidential credential লিখবেন না।</p>
+
+    <h2>১৫. প্রতিদিনের সহজ কাজের তালিকা</h2>
+    <div class="guide-card"><ol><li>Login করে Dashboard-এ 30d revenue, order এবং low-stock দেখুন।</li><li>Orders-এ pending order যাচাই করে confirmed/processing করুন।</li><li>যে product-এর stock threshold-এর নিচে, Inventory-তে restock note দিন।</li><li>দিনের দোকানের sale POS-এ complete করে receipt print করুন।</li><li>Return request থাকলে Returns page-এ status update করুন।</li><li>নতুন product বা price পরিবর্তন হলে View live দিয়ে customer page check করুন।</li><li>কাজ শেষ হলে Sign out করুন।</li></ol></div>
+
+    <h2>১৬. ভুল হলে কী করবেন</h2>
+    <table><thead><tr><th>সমস্যা</th><th>প্রথমে কী check করবেন</th></tr></thead><tbody>
+      <tr><td>Product storefront-এ দেখা যাচ্ছে না</td><td>Status Active কি না, stock ও category ঠিক আছে কি না দেখুন; তারপর page refresh করুন।</td></tr>
+      <tr><td>দাম বদলেছে কিন্তু customer page-এ পুরনো দাম</td><td>Save changes হয়েছে কি না দেখুন, তারপর View live খুলে hard refresh করুন।</td></tr>
+      <tr><td>ছবি দেখা যাচ্ছে না</td><td>URL <code>/assets/</code> বা <code>https://</code> দিয়ে শুরু হয়েছে কি না এবং spelling ঠিক আছে কি না দেখুন।</td></tr>
+      <tr><td>Stock ভুল দেখাচ্ছে</td><td>Inventory ledger-এর latest movement দেখুন; একই sale/return দ্বিতীয়বার manually যোগ করবেন না।</td></tr>
+      <tr><td>Order status নিয়ে সন্দেহ</td><td>Payment, courier status ও customer confirmation মিলিয়ে তারপর status পরিবর্তন করুন।</td></tr>
+      <tr><td>Dashboard খুলছে না</td><td>সঠিক admin link ব্যবহার করুন, session শেষ হলে আবার login করুন, এবং browser refresh করুন।</td></tr>
+    </tbody></table>
+
+    <section class="guide-card important"><h2>নিরাপত্তার শেষ কথা</h2><p>Admin dashboard-এর link ও credentials আলাদা রাখুন। Product archive করা ভালো; পুরনো order history নষ্ট করার মতো delete কাজ করবেন না। কোনো price, stock, return বা order status change করার আগে তথ্য মিলিয়ে নিন। সন্দেহ হলে আগে View Mode-এ check করুন, পরে Edit Mode-এ পরিবর্তন করুন।</p></section>
+  </main>
+</body>
+</html>
