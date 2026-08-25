@@ -291,6 +291,20 @@ async function customerPrincipal(c: { env: Bindings; req: { header: (name: strin
   return c.env.DB.prepare("SELECT customer_id AS customerId FROM customer_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1").bind(tokenHash).first<{ customerId: number }>();
 }
 
+async function refreshProductRating(env: Bindings, productId: number) {
+  const aggregate = await env.DB.prepare("SELECT COUNT(*) AS reviewCount, COALESCE(ROUND(AVG(rating), 1), 0) AS rating FROM product_reviews WHERE product_id = ? AND status = 'approved'").bind(productId).first<{ reviewCount: number; rating: number }>();
+  await env.DB.prepare('UPDATE products SET rating = ?, review_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Number(aggregate?.rating || 0), Number(aggregate?.reviewCount || 0), productId).run();
+}
+
+async function findVerifiedPurchase(env: Bindings, body: { productId: number; orderCode?: unknown; invoiceNumber?: unknown; phone?: unknown }, customerId?: number | null) {
+  const orderCode = normalize(body.orderCode);
+  const invoiceNumber = normalize(body.invoiceNumber);
+  const phone = normalize(body.phone);
+  if (customerId) return env.DB.prepare("SELECT o.id, o.customer_id AS customerId, c.name AS customerName, o.status FROM orders o JOIN customers c ON c.id = o.customer_id JOIN order_items oi ON oi.order_id = o.id WHERE o.customer_id = ? AND oi.product_id = ? AND o.status IN ('shipped','delivered','returned') AND (? = '' OR o.order_code = ?) AND (? = '' OR o.invoice_number = ?) ORDER BY o.created_at DESC LIMIT 1").bind(customerId, body.productId, orderCode, orderCode, invoiceNumber, invoiceNumber).first<{ id: number; customerId: number; customerName: string; status: string }>();
+  if (!phone || (!orderCode && !invoiceNumber)) return null;
+  return env.DB.prepare("SELECT o.id, o.customer_id AS customerId, c.name AS customerName, o.status FROM orders o JOIN customers c ON c.id = o.customer_id JOIN order_items oi ON oi.order_id = o.id WHERE c.phone = ? AND oi.product_id = ? AND o.status IN ('shipped','delivered','returned') AND ((? <> '' AND o.order_code = ?) OR (? <> '' AND o.invoice_number = ?)) ORDER BY o.created_at DESC LIMIT 1").bind(phone, body.productId, orderCode, orderCode, invoiceNumber, invoiceNumber).first<{ id: number; customerId: number; customerName: string; status: string }>();
+}
+
 app.post('/api/admin/login', async (c) => {
   const body = await c.req.json<{ username?: string; password?: string }>().catch((): { username?: string; password?: string } => ({}));
   const expectedUsername = c.env.ADMIN_USERNAME ?? 'admin';
@@ -352,6 +366,33 @@ app.get('/api/account/orders', async (c) => {
   return json(c, { orders: result.results });
 });
 
+app.post('/api/reviews', async (c) => {
+  const body = await c.req.json<{ productId?: number; productSlug?: string; rating?: number; reviewText?: string; reviewerName?: string; orderCode?: string; invoiceNumber?: string; phone?: string }>();
+  const productId = Number(body.productId || 0);
+  const product = productId ? await c.env.DB.prepare('SELECT id, name FROM products WHERE id = ? AND active = 1').bind(productId).first<{ id: number; name: string }>() : await c.env.DB.prepare('SELECT id, name FROM products WHERE slug = ? AND active = 1').bind(normalize(body.productSlug)).first<{ id: number; name: string }>();
+  const rating = Math.floor(Number(body.rating || 0));
+  const reviewText = normalize(body.reviewText).slice(0, 1200);
+  if (!product || rating < 1 || rating > 5 || reviewText.length < 3) return json(c, { error: 'Product, 1–5 star rating, and a review of at least 3 characters are required.' }, 400);
+  const session = await customerPrincipal(c);
+  const purchase = await findVerifiedPurchase(c.env, { productId: product.id, orderCode: body.orderCode, invoiceNumber: body.invoiceNumber, phone: body.phone }, session?.customerId);
+  if (!purchase) return json(c, { error: session ? 'We could not find a shipped or delivered purchase of this product in your account.' : 'Please provide the phone number and order or invoice number used for this purchase.' }, 403);
+  const reviewerName = session ? (await c.env.DB.prepare('SELECT name FROM customers WHERE id = ?').bind(purchase.customerId).first<{ name: string }>())?.name : normalize(body.reviewerName) || purchase.customerName;
+  try {
+    const result = await c.env.DB.prepare("INSERT INTO product_reviews(product_id, customer_id, order_id, reviewer_name, rating, review_text, status, verified_purchase) VALUES (?, ?, ?, ?, ?, ?, 'pending', 1) RETURNING id, rating, review_text AS reviewText, status").bind(product.id, session?.customerId || purchase.customerId, purchase.id, reviewerName || 'Verified buyer', rating, reviewText).first();
+    return json(c, { ok: true, review: result, message: 'Review submitted for admin approval.' }, 201);
+  } catch (error) {
+    if (String(error).toLowerCase().includes('unique')) return json(c, { error: 'You have already submitted a review for this product and order.' }, 409);
+    throw error;
+  }
+});
+
+app.get('/api/products/:slug/reviews', async (c) => {
+  const product = await c.env.DB.prepare('SELECT id, rating, review_count AS reviewCount FROM products WHERE slug = ? AND active = 1').bind(normalize(c.req.param('slug'))).first<{ id: number; rating: number; reviewCount: number }>();
+  if (!product) return json(c, { error: 'Product not found.' }, 404);
+  const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind(product.id).all();
+  return json(c, { ratingSummary: { average: Number(product.rating || 0), count: Number(product.reviewCount || 0) }, reviews: reviews.results });
+});
+
 app.post('/api/account/logout', async (c) => {
   const token = getBearer(c);
   if (token) await c.env.DB.prepare('DELETE FROM customer_sessions WHERE token_hash = ?').bind(await sha256(token)).run();
@@ -379,6 +420,28 @@ app.get('/api/orders/:orderCode/invoice', async (c) => {
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
   const computedWeight = items.results.reduce((sum, item) => sum + Number((item as { quantity: number; weightGrams: number }).quantity) * Number((item as { quantity: number; weightGrams: number }).weightGrams), 0);
   return json(c, { invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: order.subtotal + order.deliveryFee }, items: items.results });
+});
+
+app.get('/api/admin/reviews', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const status = normalize(c.req.query('status'));
+  const condition = status ? 'AND r.status = ?' : '';
+  const result = await c.env.DB.prepare(`SELECT r.id, r.status, r.reviewer_name AS reviewerName, r.rating, r.review_text AS reviewText, r.verified_purchase AS verifiedPurchase, r.created_at AS createdAt, p.id AS productId, p.name AS productName, o.order_code AS orderCode, o.invoice_number AS invoiceNumber FROM product_reviews r JOIN products p ON p.id = r.product_id JOIN orders o ON o.id = r.order_id WHERE 1 = 1 ${condition} ORDER BY r.created_at DESC LIMIT 100`).bind(...(status ? [status] : [])).all();
+  return json(c, { reviews: result.results });
+});
+
+app.patch('/api/admin/reviews/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const body = await c.req.json<{ status?: string }>();
+  const status = normalize(body.status);
+  if (!['pending','approved','rejected'].includes(status)) return json(c, { error: 'Unsupported review status.' }, 400);
+  const review = await c.env.DB.prepare('SELECT product_id AS productId FROM product_reviews WHERE id = ?').bind(id).first<{ productId: number }>();
+  if (!review) return json(c, { error: 'Review not found.' }, 404);
+  await c.env.DB.prepare('UPDATE product_reviews SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(status, id).run();
+  await refreshProductRating(c.env, review.productId);
+  return json(c, { ok: true, reviewId: id, status, updatedBy: actor });
 });
 
 app.get('/api/admin/returns', async (c) => {
@@ -759,7 +822,8 @@ app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
   const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR CAST(p.id AS TEXT) = ?) LIMIT 1').bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
-  return json(c, { product });
+  const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
+  return json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
 });
 
 app.get('/api/locations', async (c) => {

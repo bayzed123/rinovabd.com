@@ -30,6 +30,7 @@
       <tr><td><strong>Inventory</strong></td><td>Stock বাড়ানো বা কমানোর record রাখতে</td><td>বর্তমান stock, low-stock threshold এবং stock change ledger।</td></tr>
       <tr><td><strong>Settings</strong></td><td>Shop-এর সাধারণ তথ্য পরিবর্তন করতে</td><td>Store name, phone, delivery fee, payment number, WhatsApp এবং site description।</td></tr>
       <tr><td><strong>Returns</strong></td><td>Customer return request পরিচালনা করতে</td><td>Approve, pickup, receive, refund অথবা reject status।</td></tr>
+      <tr><td><strong>Reviews</strong></td><td>Buyer rating ও review যাচাই করতে</td><td>শুধু verified purchase review approve বা reject এবং product rating update।</td></tr>
       <tr><td><strong>POS &amp; Barcodes</strong></td><td>দোকানের সরাসরি বিক্রি করতে</td><td>Barcode/search দিয়ে product যোগ, discount, payment এবং receipt print।</td></tr>
       <tr><td><strong>Content CMS</strong></td><td>Homepage, page, blog ও offer পরিবর্তন করতে</td><td>Topbar notice, published page, journal post এবং offer।</td></tr>
       <tr><td><strong>Admin Assistant</strong></td><td>Shop data সম্পর্কে দ্রুত প্রশ্ন করতে</td><td>Live stock, order, sales, return এবং product-wise summary।</td></tr>
@@ -116,11 +117,16 @@
     <ol><li><strong>Returns</strong> page খুলুন। <strong>requested</strong> filter দিয়ে নতুন request দেখুন।</li><li>Order code, customer, phone, reason এবং amount মিলিয়ে নিন।</li><li>Return গ্রহণযোগ্য হলে <strong>approved</strong> দিন। Courier pickup হলে <strong>picked_up</strong> দিন।</li><li>Product হাতে পাওয়ার পরে condition check করে <strong>received</strong> দিন।</li><li>টাকা ফেরত দেওয়ার পর <strong>refunded</strong> দিন। গ্রহণযোগ্য না হলে <strong>rejected</strong> দিন।</li></ol>
     <p class="muted-note">Received status-এর সময় system stock ledger-এ product ফেরত যোগ করে। একই return বারবার update করলে stock double-count হওয়ার কথা নয়; তবুও ledger দেখে নিশ্চিত হোন।</p>
 
-    <h2>১০. দোকানের POS sale ও barcode</h2>
+    <h2>১০. Customer Rating ও Review approve করা</h2>
+    <p>Customer product page-এ ১ থেকে ৫ star rating এবং review দিতে পারবে। তবে review তখনই submit হবে যখন customer-এর purchase system-এ পাওয়া যাবে—account login থাকলে তার account-এর shipped/delivered order থেকে, আর login না থাকলে phone number-এর সঙ্গে Order Number অথবা Invoice Number মিলিয়ে। তাই fake buyer বা product না-কেনা visitor review submit করতে পারবে না।</p>
+    <ol><li>Admin menu থেকে <strong>Reviews</strong> খুলুন।</li><li><strong>Pending</strong> filter নির্বাচন করে নতুন review দেখুন। Product name, buyer name, star rating, review text, Order Number এবং Invoice Number মিলিয়ে নিন।</li><li>Review স্বাভাবিক এবং purchase তথ্য সঠিক হলে status <strong>Approved</strong> দিন অথবা <strong>Approve</strong> button চাপুন।</li><li>ভুল, অশালীন, অসম্পূর্ণ বা সন্দেহজনক review হলে status <strong>Rejected</strong> দিন। সন্দেহ হলে approve না করে আগে order ও invoice check করুন।</li><li>Approved review customer product page-এ প্রকাশ পাবে এবং product-এর average rating ও review count automatic update হবে।</li></ol>
+    <p class="muted-note">কোনো product-এর approved rating ৪.৫ বা তার বেশি হলে সেটি manual featured না হলেও Top Collection-এ automatic যোগ হওয়ার জন্য eligible হবে। Rating কমে গেলে বা review reject করলে Top Collection eligibility-ও update হবে।</p>
+
+    <h2>১১. দোকানের POS sale ও barcode</h2>
     <ol><li><strong>POS &amp; Barcodes</strong> page খুলুন।</li><li>Barcode scanner থাকলে cursor search box-এ রেখে barcode scan করুন; না হলে product name বা barcode লিখে <strong>Find</strong> চাপুন।</li><li>Product row-তে <strong>Add</strong> চাপুন। একাধিক item হলে প্রত্যেকটি যোগ করুন।</li><li>প্রয়োজনে discount দিন এবং Cash, bKash, Nagad, Rocket অথবা Card payment বেছে নিন।</li><li>Receipt preview-এ product ও total মিলিয়ে <strong>Complete sale &amp; print receipt</strong> চাপুন।</li></ol>
     <p>POS sale complete হলে shop stock কমে এবং আলাদা POS হিসাব তৈরি হয়। ভুল sale হলে নিজে থেকে stock কম-বেশি না করে Inventory ledger-এ পরিষ্কার adjustment note দিন।</p>
 
-    <h2>১১. Homepage, page, blog ও offer পরিবর্তন</h2>
+    <h2>১২. Homepage, page, blog ও offer পরিবর্তন</h2>
     <p><strong>Content CMS</strong> page-এ চারটি কাজ আছে।</p>
     <table><thead><tr><th>অংশ</th><th>কীভাবে ব্যবহার করবেন</th></tr></thead><tbody>
       <tr><td>Topbar notice</td><td>উপরের announcement text লিখে <strong>Save banner</strong> চাপুন।</td></tr>
@@ -130,7 +136,7 @@
     </tbody></table>
     <p>Draft content public site-এ customer দেখতে পাবে না। Save করার পরে storefront refresh করে banner বা page দেখা যাচ্ছে কি না check করুন। Clothing category backend-এ প্রস্তুত আছে, কিন্তু এখন customer menu-তে hidden থাকবে।</p>
 
-    <h2>১২. Store Settings কীভাবে পরিবর্তন করবেন</h2>
+    <h2>১৩. Store Settings কীভাবে পরিবর্তন করবেন</h2>
     <p><strong>Settings</strong> page-এ যে field পরিবর্তন করবেন সেটি লিখে নিচে <strong>Save settings</strong> চাপুন।</p>
     <table><thead><tr><th>Field</th><th>কী লিখবেন</th></tr></thead><tbody>
       <tr><td>Store name / Tagline</td><td>Customer-facing shop name ও ছোট পরিচিতি।</td></tr>
@@ -144,10 +150,10 @@
     </tbody></table>
     <p>Customer নিজে delivery fee বেছে নেবে না; location অনুযায়ী fee automatic থাকবে। Emergency fee ৳250 admin-side প্রয়োজন হলে ব্যবহার করবেন, customer checkout-এ selection option থাকবে না।</p>
 
-    <h2>১৩. Customer account, invoice ও tracking</h2>
+    <h2>১৪. Customer account, invoice ও tracking</h2>
     <p>Customer <code>/account.html</code> থেকে account খুলে order history দেখতে, invoice খুলতে এবং eligible delivered/shipped order-এর return request করতে পারে। Owner হিসেবে customer-এর password দেখার প্রয়োজন নেই এবং password dashboard-এ দেখা যায় না। Customer order জানতে চাইলে order code বা phone দিয়ে tracking তথ্য check করে সহায়তা করুন।</p>
 
-    <h2>১৪. SmartGen দিয়ে দ্রুত shop data check</h2>
+    <h2>১৫. SmartGen দিয়ে দ্রুত shop data check</h2>
     <p>Dashboard-এর উপরের SmartGen button অথবা Dashboard-এর Top Products card-এর গোল SmartGen button চাপুন। এটি private admin assistant; এখানে সরাসরি প্রশ্ন লিখলে live shop data অনুযায়ী summary পাওয়া যাবে।</p>
     <table><thead><tr><th>আপনি লিখতে পারেন</th><th>যে তথ্য পাবেন</th></tr></thead><tbody>
       <tr><td>“কতগুলো active product আছে?”</td><td>Active product count।</td></tr>
@@ -159,10 +165,10 @@
     </tbody></table>
     <p>Customer-facing SmartGen product link চাইলে active catalogue থেকে verified colorful product card দেখায়। Admin assistant-কে password, payment secret, API key বা কোনো confidential credential লিখবেন না।</p>
 
-    <h2>১৫. প্রতিদিন সকালের Shortcut Checklist</h2>
+    <h2>১৬. প্রতিদিন সকালের Shortcut Checklist</h2>
     <div class="guide-card important"><h3>Dashboard খুললেই “আজকের shop check” দেখবেন</h3><p>এই checklist Dashboard-এর মাঝখানে থাকবে। প্রতিটি কাজ শেষ হলে বাম পাশের ছোট box-এ click করে tick দিন। <strong>Open</strong> চাপলে সংশ্লিষ্ট Orders, Inventory, Returns, POS অথবা storefront page সরাসরি খুলবে। কাজ শেষ হলে তালিকাটি আজকের জন্য মনে থাকবে এবং পরদিন নতুন করে শুরু হবে।</p><table><thead><tr><th>ক্রম</th><th>সকালে কী check করবেন</th><th>কী করবেন</th></tr></thead><tbody><tr><td>১</td><td>Dashboard numbers</td><td>30d নির্বাচন করে Revenue, Orders, Stock on hand, Needs restocking এবং Top Products দেখুন।</td></tr><tr><td>২</td><td>Pending orders</td><td>Orders খুলে নতুন order, customer phone/address, payment status ও total মিলিয়ে confirmed বা processing করুন।</td></tr><tr><td>৩</td><td>Low stock</td><td>Inventory খুলে threshold-এর নিচের product লিখে রাখুন এবং মাল এলে restock reason দিয়ে stock update করুন।</td></tr><tr><td>৪</td><td>Return requests</td><td>Returns খুলে requested item review করুন; approved, picked_up, received, refunded বা rejected status সঠিকভাবে দিন।</td></tr><tr><td>৫</td><td>গতকালের POS sale</td><td>POS &amp; Barcodes খুলে গতকালের sale, receipt এবং payment মিলিয়ে নিন।</td></tr><tr><td>৬</td><td>Live storefront</td><td>View storefront খুলে প্রধান product-এর দাম, image, stock, Add to Cart এবং product detail ঠিক আছে কি না দেখুন।</td></tr></tbody></table><p class="muted-note"><strong>সবচেয়ে জরুরি ক্রম:</strong> আগে Orders, তারপর Low stock, তারপর Returns। সময় থাকলে POS এবং storefront check সম্পূর্ণ করুন।</p></div>
 
-    <h2>১৬. ভুল হলে কী করবেন</h2>
+    <h2>১৭. ভুল হলে কী করবেন</h2>
     <table><thead><tr><th>সমস্যা</th><th>প্রথমে কী check করবেন</th></tr></thead><tbody>
       <tr><td>Product storefront-এ দেখা যাচ্ছে না</td><td>Status Active কি না, stock ও category ঠিক আছে কি না দেখুন; তারপর page refresh করুন।</td></tr>
       <tr><td>দাম বদলেছে কিন্তু customer page-এ পুরনো দাম</td><td>Save changes হয়েছে কি না দেখুন, তারপর View live খুলে hard refresh করুন।</td></tr>
