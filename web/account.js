@@ -21,7 +21,7 @@ function formatDate(value) {
 function orderCard(order) {
   const itemSummary = (order.items || []).map((item) => `${escapeHtml(item.productName)} × ${Number(item.quantity || 0)}`).join(' · ') || 'Product details unavailable';
   const courierStatus = order.courierStatus ? ` · ${escapeHtml(order.courierStatus)}` : '';
-  return `<article class="order-row order-card"><div class="order-card-main"><strong>${escapeHtml(order.orderCode)}</strong><small>${formatDate(order.createdAt)} · ${escapeHtml(order.status || 'pending')}${courierStatus}</small><p>${itemSummary}</p></div><div class="order-card-side"><strong>${money(order.total)}</strong><small>${escapeHtml(order.invoiceNumber || 'Invoice pending')}</small><div class="order-card-actions"><a href="/invoice.html?order=${encodeURIComponent(order.orderCode)}">Invoice</a><a href="/track.html?orderId=${encodeURIComponent(order.orderCode)}">Track order</a></div></div></article>`;
+  return `<article class="order-row order-card"><div class="order-card-main"><strong>${escapeHtml(order.orderCode)}</strong><small>${formatDate(order.createdAt)} · ${escapeHtml(order.status || 'pending')}${courierStatus}</small><p>${itemSummary}</p></div><div class="order-card-side"><strong>${money(order.total)}</strong><small>${escapeHtml(order.invoiceNumber || 'Invoice pending')}</small><div class="order-card-actions"><a href="/invoice.html?order=${encodeURIComponent(order.orderCode)}">Invoice</a><a href="/track.html?orderId=${encodeURIComponent(order.orderCode)}&invoiceNumber=${encodeURIComponent(order.invoiceNumber || '')}">Track order</a></div></div></article>`;
 }
 
 function showApp(customer) {
