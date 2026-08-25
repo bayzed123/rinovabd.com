@@ -33,9 +33,21 @@ function showApp(customer) {
   loadOrders();
 }
 
+function setAuthMode(mode = 'login') {
+  const registerMode = mode === 'register';
+  $('#login-form').hidden = registerMode;
+  $('#register-form').hidden = !registerMode;
+  document.querySelectorAll('[data-tab]').forEach((button) => {
+    const active = button.dataset.tab === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+}
+
 function showAuth() {
   $('#account-auth').hidden = false;
   $('#account-app').hidden = true;
+  setAuthMode('login');
 }
 
 async function loadOrders() {
@@ -83,10 +95,7 @@ async function submitReturn(event) {
 }
 
 document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => {
-  document.querySelectorAll('[data-tab]').forEach((item) => item.classList.toggle('active', item === button));
-  const registerMode = button.dataset.tab === 'register';
-  $('#login-form').hidden = registerMode;
-  $('#register-form').hidden = !registerMode;
+  setAuthMode(button.dataset.tab);
   $('#auth-message').textContent = '';
 }));
 
