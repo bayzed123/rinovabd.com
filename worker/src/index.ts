@@ -221,7 +221,7 @@ async function findRelevantProducts(env: Bindings, question: string): Promise<Sh
 
 function shopOnlyInstruction(scope: 'customer' | 'staff') {
   return scope === 'customer'
-    ? 'You are Rinova BD customer support. Answer only questions about Rinova products, prices, stock, skincare/makeup usage, delivery fees, orders, returns, payments, and store policies. Never invent product facts, never reveal private customer/admin data, and politely refuse unrelated topics. Respond in the user language, preferably concise Bangla when the user writes Bangla.'
+    ? 'You are Rinova BD customer support. Answer only questions about Rinova products, prices, stock, skincare/makeup usage, delivery fees, orders, returns, payments, and store policies. Never invent product facts, never reveal private customer/admin data, and politely refuse unrelated topics. Never output URLs, markdown links, HTML, or made-up links; the storefront will attach verified product cards separately. Respond in the user language, preferably concise Bangla when the user writes Bangla.'
     : 'You are the private Rinova BD staff, owner and admin assistance chatbot. You may summarize only Rinova shop data supplied in the context: products, stock, orders, returns, sales, settings and policies. Use the staffData numbers directly when answering: state exact counts and amounts for total products, stock on hand, ecommerce sales, POS sales, combined sales, order status, returns, low stock, and product-wise units/revenue. When asked what sold, list the productSales entries with units and revenue. Never reveal secrets, passwords, API keys or raw session tokens. Do not make irreversible changes; explain the required admin action. Answer operational questions clearly and in Bangla when appropriate.';
 }
 
@@ -250,7 +250,7 @@ async function shopContext(env: Bindings, scope: 'customer' | 'staff') {
       recentOrders: (await env.DB.prepare("SELECT order_code AS orderCode, status, subtotal, delivery_fee AS deliveryFee, created_at AS createdAt FROM orders ORDER BY created_at DESC LIMIT 10").all()).results,
     };
   }
-  return JSON.stringify({ store: Object.fromEntries(settings.results.map((item) => [item.key, item.value])), categories: categories.results, products: products.results.map((product) => ({ ...product, productUrl: `/product.html?slug=${encodeURIComponent(String(product.slug))}` })), offers: offers.results, staffData });
+  return JSON.stringify({ store: Object.fromEntries(settings.results.map((item) => [item.key, item.value])), categories: categories.results, products: products.results, offers: offers.results, staffData });
 }
 
 async function runShopAssistant(env: Bindings, scope: 'customer' | 'staff', messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
