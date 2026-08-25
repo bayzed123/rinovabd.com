@@ -1,0 +1,16 @@
+ALTER TABLE blog_posts ADD COLUMN category TEXT NOT NULL DEFAULT '';
+ALTER TABLE blog_posts ADD COLUMN subcategory TEXT NOT NULL DEFAULT '';
+ALTER TABLE blog_posts ADD COLUMN content_type TEXT NOT NULL DEFAULT 'article';
+ALTER TABLE blog_posts ADD COLUMN media_url TEXT;
+ALTER TABLE blog_posts ADD COLUMN cover_image_url TEXT;
+ALTER TABLE blog_posts ADD COLUMN extra_file_url TEXT;
+ALTER TABLE blog_posts ADD COLUMN publish_date TEXT;
+ALTER TABLE blog_posts ADD COLUMN duration TEXT;
+ALTER TABLE blog_posts ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE blog_posts ADD COLUMN seo_title TEXT;
+ALTER TABLE blog_posts ADD COLUMN meta_description TEXT;
+ALTER TABLE blog_posts ADD COLUMN keywords TEXT;
+ALTER TABLE blog_posts ADD COLUMN allow_search_engines INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE blog_posts ADD COLUMN rights TEXT NOT NULL DEFAULT 'This is hosted here. The page will claim your copyright and link to your licence.';
+ALTER TABLE blog_posts ADD COLUMN license_url TEXT;
+CREATE INDEX IF NOT EXISTS idx_blog_priority_date ON blog_posts(status, priority DESC, published_at DESC);

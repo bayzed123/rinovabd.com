@@ -43,6 +43,29 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(number) ? number : null;
 }
 
+function calculateBlogSeo(input: { title?: unknown; seoTitle?: unknown; metaDescription?: unknown; coverImageUrl?: unknown; excerpt?: unknown; slug?: unknown; keywords?: unknown; body?: unknown }) {
+  const title = normalize(input.title);
+  const seoTitle = normalize(input.seoTitle);
+  const metaDescription = normalize(input.metaDescription);
+  const coverImageUrl = normalize(input.coverImageUrl);
+  const excerpt = normalize(input.excerpt);
+  const slug = normalize(input.slug);
+  const keywords = normalize(input.keywords);
+  const body = normalize(input.body);
+  const checks = [
+    { key: 'title', label: 'Title is 15–70 characters', pass: title.length >= 15 && title.length <= 70 },
+    { key: 'seoTitle', label: 'SEO title is 30–65 characters', pass: seoTitle.length >= 30 && seoTitle.length <= 65 },
+    { key: 'metaDescription', label: 'Meta description is 70–158 characters', pass: metaDescription.length >= 70 && metaDescription.length <= 158 },
+    { key: 'coverImage', label: 'A cover image is set', pass: /^(https:\/\/|\/assets\/|\/media\/)/i.test(coverImageUrl) },
+    { key: 'summary', label: 'A summary is written', pass: excerpt.length >= 40 },
+    { key: 'slug', label: 'URL slug is short and readable', pass: /^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u.test(slug) && slug.length >= 3 && slug.length <= 70 },
+    { key: 'keywords', label: 'Keywords added', pass: keywords.split(',').map((item) => item.trim()).filter(Boolean).length >= 2 },
+    { key: 'body', label: 'Article body has real depth (300+ characters)', pass: body.length >= 300 },
+  ];
+  const passed = checks.filter((check) => check.pass).length;
+  return { score: Math.round((passed / checks.length) * 100), passed, total: checks.length, ready: passed === checks.length, checks };
+}
+
 function parseVolumeTiers(value: unknown) {
   let parsed: unknown = value;
   if (typeof value === 'string') {
@@ -315,6 +338,71 @@ async function findVerifiedPurchase(env: Bindings, body: { productId: number; or
   return env.DB.prepare("SELECT o.id, o.customer_id AS customerId, c.name AS customerName, o.status FROM orders o JOIN customers c ON c.id = o.customer_id JOIN order_items oi ON oi.order_id = o.id WHERE c.phone = ? AND oi.product_id = ? AND o.status IN ('shipped','delivered','returned') AND ((? <> '' AND o.order_code = ?) OR (? <> '' AND o.invoice_number = ?)) ORDER BY o.created_at DESC LIMIT 1").bind(phone, body.productId, orderCode, orderCode, invoiceNumber, invoiceNumber).first<{ id: number; customerId: number; customerName: string; status: string }>();
 }
 
+const blogMediaTypes: Record<string, { extension: string; type: 'image' | 'video' }> = {
+  'image/jpeg': { extension: 'jpg', type: 'image' }, 'image/png': { extension: 'png', type: 'image' }, 'image/webp': { extension: 'webp', type: 'image' },
+  'video/mp4': { extension: 'mp4', type: 'video' }, 'video/webm': { extension: 'webm', type: 'video' }, 'video/quicktime': { extension: 'mov', type: 'video' },
+};
+function validBlogMediaKey(value: unknown) { return /^blog\/[a-zA-Z0-9/_-]+\.(?:jpg|png|webp|mp4|webm|mov)$/i.test(normalize(value)); }
+function blogMediaResult(key: string, type: 'image' | 'video', alt: string) { return { type, url: `/media/${key}`, alt: alt.replace(/\.[^.]+$/, '').slice(0, 160) }; }
+
+app.post('/api/admin/blog-media', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const bucket = c.env.PRODUCT_IMAGES;
+  if (!bucket) return json(c, { error: 'Direct blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  const form = await c.req.raw.formData().catch(() => null);
+  const fileValue = form?.get('file');
+  if (!fileValue || typeof fileValue === 'string') return json(c, { error: 'Choose an image or video file first.' }, 400);
+  const file = fileValue as File;
+  const mediaType = blogMediaTypes[file.type];
+  if (!mediaType) return json(c, { error: 'Only JPG, PNG, WEBP, MP4, WebM or MOV files are supported.' }, 400);
+  if (!file.size || file.size > 64 * 1024 * 1024) return json(c, { error: 'Files over 64 MB must use the chunked upload flow.' }, 400);
+  const key = `blog/${crypto.randomUUID()}.${mediaType.extension}`;
+  await bucket.put(key, file.stream(), { httpMetadata: { contentType: file.type, cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: file.name.slice(0, 160), uploadedBy: actor } });
+  return json(c, { ok: true, media: blogMediaResult(key, mediaType.type, file.name) }, 201);
+});
+app.post('/api/admin/blog-media/multipart/start', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const bucket = c.env.PRODUCT_IMAGES;
+  if (!bucket) return json(c, { error: 'Chunked blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  const body = await c.req.json<{ fileName?: string; contentType?: string; size?: number }>();
+  const mediaType = blogMediaTypes[normalize(body.contentType)];
+  if (!mediaType) return json(c, { error: 'Only JPG, PNG, WEBP, MP4, WebM or MOV files are supported.' }, 400);
+  if (!Number.isFinite(Number(body.size)) || Number(body.size) <= 0 || Number(body.size) > 512 * 1024 * 1024) return json(c, { error: 'File size must be between 1 byte and 512 MB.' }, 400);
+  const key = `blog/${crypto.randomUUID()}.${mediaType.extension}`;
+  const upload = await bucket.createMultipartUpload(key, { httpMetadata: { contentType: normalize(body.contentType), cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: normalize(body.fileName).slice(0, 160), uploadedBy: actor } });
+  return json(c, { ok: true, key, uploadId: upload.uploadId, type: mediaType.type, url: `/media/${key}` }, 201);
+});
+app.put('/api/admin/blog-media/multipart/part', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const bucket = c.env.PRODUCT_IMAGES;
+  if (!bucket) return json(c, { error: 'Chunked blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  const key = c.req.header('X-Upload-Key');
+  const uploadId = c.req.header('X-Upload-Id');
+  const partNumber = Number(c.req.header('X-Part-Number'));
+  if (!validBlogMediaKey(key) || !uploadId || !Number.isInteger(partNumber) || partNumber < 1) return json(c, { error: 'Invalid multipart upload headers.' }, 400);
+  const upload = bucket.resumeMultipartUpload(key!, uploadId);
+  const part = await upload.uploadPart(partNumber, await c.req.raw.arrayBuffer());
+  return json(c, { ok: true, part: { partNumber: part.partNumber, etag: part.etag } });
+});
+app.post('/api/admin/blog-media/multipart/complete', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const bucket = c.env.PRODUCT_IMAGES;
+  if (!bucket) return json(c, { error: 'Chunked blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  const key = c.req.header('X-Upload-Key');
+  const uploadId = c.req.header('X-Upload-Id');
+  if (!validBlogMediaKey(key) || !uploadId) return json(c, { error: 'Invalid multipart upload headers.' }, 400);
+  const body = await c.req.json<{ parts?: Array<{ partNumber?: number; etag?: string }>; fileName?: string; contentType?: string }>();
+  const parts = (body.parts || []).map((part) => ({ partNumber: Number(part.partNumber), etag: normalize(part.etag) })).filter((part) => Number.isInteger(part.partNumber) && part.partNumber > 0 && part.etag).sort((a, b) => a.partNumber - b.partNumber);
+  if (!parts.length) return json(c, { error: 'At least one uploaded part is required.' }, 400);
+  const upload = bucket.resumeMultipartUpload(key!, uploadId);
+  await upload.complete(parts);
+  const mediaType = blogMediaTypes[normalize(body.contentType)] || { type: 'video' as const };
+  return json(c, { ok: true, media: blogMediaResult(key!, mediaType.type, normalize(body.fileName) || 'blog-media') }, 201);
+});
 app.get('/media/*', async (c) => {
   const bucket = c.env.PRODUCT_IMAGES;
   if (!bucket) return c.text('Product media storage is not enabled.', 503);
@@ -549,7 +637,7 @@ app.post('/api/admin/pos/sales', async (c) => {
 
 app.get('/api/content/home', async (c) => {
   const content = await c.env.DB.prepare("SELECT content_key AS key, content_type AS type, title, body_json AS body FROM cms_content WHERE status = 'published' ORDER BY content_key").all();
-  const posts = await c.env.DB.prepare("SELECT slug, title, excerpt, body, image_url AS imageUrl, published_at AS publishedAt, author FROM blog_posts WHERE status = 'published' ORDER BY published_at DESC, created_at DESC LIMIT 12").all();
+  const posts = await c.env.DB.prepare("SELECT slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, published_at AS publishedAt, author FROM blog_posts WHERE status = 'published' AND (publish_date IS NULL OR publish_date <= CURRENT_TIMESTAMP) ORDER BY priority DESC, published_at DESC, created_at DESC LIMIT 12").all();
   const offers = await c.env.DB.prepare("SELECT code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 20").all();
   return json(c, { content: content.results, posts: posts.results, offers: offers.results });
 });
@@ -558,18 +646,38 @@ app.get('/api/content/pages/:slug', async (c) => {
   const page = await c.env.DB.prepare("SELECT slug, title, body, seo_title AS seoTitle, seo_description AS seoDescription FROM site_pages WHERE slug = ? AND status = 'published'").bind(normalize(c.req.param('slug'))).first();
   return page ? json(c, { page }) : json(c, { error: 'Page not found.' }, 404);
 });
+app.get('/api/content/posts', async (c) => {
+  const posts = await c.env.DB.prepare("SELECT slug, title, excerpt, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, author, published_at AS publishedAt FROM blog_posts WHERE status = 'published' AND (publish_date IS NULL OR publish_date <= CURRENT_TIMESTAMP) ORDER BY priority DESC, published_at DESC, created_at DESC LIMIT 50").all();
+  return json(c, { posts: posts.results });
+});
+app.get('/api/content/posts/:slug', async (c) => {
+  const post = await c.env.DB.prepare("SELECT slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, author, published_at AS publishedAt FROM blog_posts WHERE slug = ? AND status = 'published' AND (publish_date IS NULL OR publish_date <= CURRENT_TIMESTAMP)").bind(normalize(c.req.param('slug'))).first();
+  return post ? json(c, { post }) : json(c, { error: 'Post not found.' }, 404);
+});
 
 app.get('/api/admin/content', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const [content, pages, posts, offers] = await Promise.all([
     c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
     c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
-    c.env.DB.prepare('SELECT id, slug, title, excerpt, body, image_url AS imageUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active FROM offers ORDER BY updated_at DESC').all(),
   ]);
-  return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results });
+    return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results });
 });
-
+app.get('/api/admin/media-library', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const [products, posts] = await Promise.all([
+    c.env.DB.prepare('SELECT name, image_url AS url, media_json AS mediaJson FROM products WHERE image_url IS NOT NULL OR media_json IS NOT NULL ORDER BY updated_at DESC LIMIT 200').all<{ name: string; url: string | null; mediaJson: string | null }>(),
+    c.env.DB.prepare('SELECT title AS name, cover_image_url AS url, media_url AS mediaUrl FROM blog_posts WHERE cover_image_url IS NOT NULL OR media_url IS NOT NULL ORDER BY updated_at DESC LIMIT 200').all<{ name: string; url: string | null; mediaUrl: string | null }>(),
+  ]);
+  const media: Array<{ name: string; url: string; source: string }> = [];
+  const seen = new Set<string>();
+  const add = (name: string, url: unknown, source: string) => { const value = normalize(url); if (!value || !/^(https:\/\/|\/assets\/|\/media\/)/i.test(value) || seen.has(value)) return; seen.add(value); media.push({ name: normalize(name) || 'Rinova media', url: value, source }); };
+  products.results.forEach((product) => { add(product.name, product.url, 'product'); let parsed: unknown = []; try { parsed = JSON.parse(product.mediaJson || '[]'); } catch {} if (Array.isArray(parsed)) parsed.forEach((item) => add(product.name, typeof item === 'string' ? item : (item as Record<string, unknown>)?.url, 'product gallery')); });
+  posts.results.forEach((post) => { add(post.name, post.url, 'blog cover'); add(post.name, post.mediaUrl, 'blog media'); });
+  return json(c, { media });
+});
 app.put('/api/admin/content/:key', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
@@ -592,13 +700,19 @@ app.post('/api/admin/pages', async (c) => {
 app.post('/api/admin/posts', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const body = await c.req.json<{ slug?: string; title?: string; excerpt?: string; body?: string; imageUrl?: string; status?: string }>();
-  const slug = normalize(body.slug);
+  const body = await c.req.json<{ slug?: string; title?: string; excerpt?: string; body?: string; category?: string; subcategory?: string; contentType?: string; mediaUrl?: string; imageUrl?: string; coverImageUrl?: string; extraFileUrl?: string; publishDate?: string; duration?: string; priority?: number; seoTitle?: string; metaDescription?: string; keywords?: string; allowSearchEngines?: boolean | string; rights?: string; licenseUrl?: string; status?: string }>();
+  const slug = normalize(body.slug).toLowerCase();
   if (!slug || !normalize(body.title)) return json(c, { error: 'Post slug and title are required.' }, 400);
   const status = ['draft','published','archived'].includes(normalize(body.status)) ? normalize(body.status) : 'draft';
-  const publishedAt = status === 'published' ? new Date().toISOString() : null;
-  await c.env.DB.prepare('INSERT INTO blog_posts(slug, title, excerpt, body, image_url, status, published_at, updated_by, author, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(slug) DO UPDATE SET title = excluded.title, excerpt = excluded.excerpt, body = excluded.body, image_url = excluded.image_url, status = excluded.status, published_at = excluded.published_at, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP').bind(slug, normalize(body.title), normalize(body.excerpt), normalize(body.body), normalize(body.imageUrl) || null, status, publishedAt, actor, 'Rinova BD').run();
-  return json(c, { ok: true, slug });
+  const coverImageUrl = normalize(body.coverImageUrl || body.imageUrl);
+  const seo = calculateBlogSeo({ ...body, slug, coverImageUrl });
+  if (status === 'published' && !seo.ready) return json(c, { error: 'Complete every SEO readiness item before publishing.', seo }, 400);
+  const publishedAt = status === 'published' ? (normalize(body.publishDate) || new Date().toISOString()) : null;
+  const allowSearchEngines = body.allowSearchEngines === false || normalize(body.allowSearchEngines).toLowerCase() === 'false' ? 0 : 1;
+  const contentType = ['article','video'].includes(normalize(body.contentType)) ? normalize(body.contentType) : 'article';
+  const rights = normalize(body.rights) || 'This is hosted here. The page will claim your copyright and link to your licence.';
+  await c.env.DB.prepare('INSERT INTO blog_posts(slug, title, excerpt, body, image_url, category, subcategory, content_type, media_url, cover_image_url, extra_file_url, publish_date, duration, priority, seo_title, meta_description, keywords, allow_search_engines, rights, license_url, status, published_at, updated_by, author, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(slug) DO UPDATE SET title = excluded.title, excerpt = excluded.excerpt, body = excluded.body, image_url = excluded.image_url, category = excluded.category, subcategory = excluded.subcategory, content_type = excluded.content_type, media_url = excluded.media_url, cover_image_url = excluded.cover_image_url, extra_file_url = excluded.extra_file_url, publish_date = excluded.publish_date, duration = excluded.duration, priority = excluded.priority, seo_title = excluded.seo_title, meta_description = excluded.meta_description, keywords = excluded.keywords, allow_search_engines = excluded.allow_search_engines, rights = excluded.rights, license_url = excluded.license_url, status = excluded.status, published_at = excluded.published_at, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP').bind(slug, normalize(body.title), normalize(body.excerpt), normalize(body.body), coverImageUrl || null, normalize(body.category), normalize(body.subcategory), contentType, normalize(body.mediaUrl) || null, coverImageUrl || null, normalize(body.extraFileUrl) || null, normalize(body.publishDate) || null, normalize(body.duration) || null, Math.max(0, Math.floor(Number(body.priority) || 0)), normalize(body.seoTitle), normalize(body.metaDescription), normalize(body.keywords), allowSearchEngines, rights, normalize(body.licenseUrl) || null, status, publishedAt, actor, 'Rinova BD').run();
+  return json(c, { ok: true, slug, status, seo });
 });
 
 app.post('/api/admin/offers', async (c) => {
