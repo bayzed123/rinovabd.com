@@ -118,3 +118,11 @@ pnpm build
 ```
 
 The build command validates the storefront and typechecks the Worker. The current dashboard, commerce-support expansion, invoice/return views, CMS, POS, customer accounts, hidden clothing foundation, and dual chatbot surfaces are implemented. Remaining hardening includes direct R2 uploads, payment-gateway settlement/refund automation, native barcode-label generation, inbound Messenger/WhatsApp order automation, and a full Playwright regression suite. R2 remains optional until it is enabled at the Cloudflare account level; local repository assets continue to serve the storefront.
+
+## Manual project doctor
+
+Run the **Rinova BD Doctor** workflow from GitHub Actions whenever a deployment, binding, migration, public route, or configuration issue needs a quick report. Open **Actions → Rinova BD Doctor → Run workflow**, keep the default Worker URL, and choose `strict: false` to preserve the complete report even when a required item needs action. Use `strict: true` when the workflow should fail on any required `FAIL` finding.
+
+The doctor runs from the checked-out repository root and validates repository paths, the CI/CD workflow markers, workspace/toolchain scripts, Wrangler D1/KV/Workers AI/assets bindings, migration numbering and key schema files, Cloudflare account/D1/KV/Worker/R2 visibility, public storefront endpoints, protected API boundaries, and obvious hard-coded secret assignments. It is **read-only**: it does not create, update or delete products, orders, customers, KV values, D1 rows, buckets, Workers, or secrets. It reports only whether secrets are set or missing and never prints secret values, customer rows, order rows or database contents.
+
+When the run finishes, open the generated **rinova-doctor-report** artifact and the workflow summary. `PASS` means the contract was observed, `WARN` means an optional integration or credential is not configured, and `FAIL` means developer action is required. The current expected warning is optional R2 until the account enables it and binds `PRODUCT_IMAGES`; the report should show zero `FAIL` findings on a correctly configured deployment.
