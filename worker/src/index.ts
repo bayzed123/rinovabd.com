@@ -1023,10 +1023,12 @@ app.get('/product.html', async (c) => {
   return c.text('Storefront assets are unavailable.', 503);
 });
 
+app.get('/robots.txt', (c) => { const origin = new URL(c.req.url).origin; return c.text(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nSitemap: ${origin}/sitemap.xml\n`, 200, { 'Content-Type': 'text/plain; charset=UTF-8', 'Cache-Control': 'public, max-age=3600' }); });
+
 app.get('/sitemap.xml', async (c) => {
   const origin = new URL(c.req.url).origin;
   const products = await c.env.DB.prepare('SELECT slug, updated_at AS updatedAt FROM products WHERE active = 1 AND slug IS NOT NULL AND slug <> \'\' ORDER BY updated_at DESC, created_at DESC').all<{ slug: string; updatedAt: string | null }>();
-  const staticUrls = [`${origin}/`];
+  const staticUrls = [`${origin}/`, `${origin}/sitemap.html`, `${origin}/blog.html`, `${origin}/track.html`];
   const productEntries = Array.from(new Map(products.results.map((product) => [product.slug, { url: cleanProductUrl(origin, product.slug), updatedAt: product.updatedAt }])).values());
   const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
   const body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...staticUrls.map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`), ...productEntries.map((entry) => `<url><loc>${xmlEscape(entry.url)}</loc>${entry.updatedAt ? `<lastmod>${xmlEscape(new Date(entry.updatedAt).toISOString())}</lastmod>` : ''}</url>`), '</urlset>'].join('');
