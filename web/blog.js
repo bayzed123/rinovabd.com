@@ -1,4 +1,4 @@
-const API_BASE = window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api';
+const API_BASE = window.RINOVA_API_BASE || (window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api');
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
 const safeMediaUrl = (value) => { const url = String(value ?? '').trim(); return /^(https:\/\/|\/assets\/|\/media\/)/i.test(url) ? url : ''; };

@@ -1,4 +1,4 @@
-const API_BASE = window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api';
+const API_BASE = window.RINOVA_API_BASE || (window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api');
 const state = { bag: JSON.parse(localStorage.getItem('rinova-bag') || '[]'), media: [], mediaIndex: 0, rating: 0 };
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;

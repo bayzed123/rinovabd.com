@@ -1,4 +1,4 @@
-const API_BASE = window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api';
+const API_BASE = window.RINOVA_API_BASE || (window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api');
 const state = { products: [], bag: JSON.parse(localStorage.getItem('rinova-bag') || '[]'), filter: 'all', search: '', chatMessages: [], marketingBanners: [], visitorKey: localStorage.getItem('rinova-chat-visitor') || `visitor-${crypto.randomUUID()}`, adminPreview: new URLSearchParams(window.location.search).get('admin_preview') === '1' && Boolean(sessionStorage.getItem('rinova-admin-token')) };
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
 const $ = (selector) => document.querySelector(selector);

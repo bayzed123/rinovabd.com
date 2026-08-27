@@ -33,7 +33,7 @@ type App = Hono<{ Bindings: Bindings }>;
 type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'customer_cancelled' | 'refused' | 'delivery_failed' | 'returned' | 'admin_cancelled';
 
 const app: App = new Hono();
-app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS'] }));
+app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'https://www.rinovabd.com', 'https://bayzed123.github.io', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS'] }));
 
 const json = (c: { json: (body: unknown, status?: number) => Response }, body: unknown, status = 200) => c.json(body, status);
 
