@@ -30,6 +30,7 @@ interface Bindings {
   GOOGLE_ACTIVITY_LEADS_SHEET_ID?: string;
   R2_ACCOUNT_ID?: string;
   R2_BUCKET_NAME?: string;
+  R2_PUBLIC_URL?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
 }
@@ -473,7 +474,11 @@ const blogMediaTypes: Record<string, { extension: string; type: 'image' | 'video
 };
 function validBlogMediaKey(value: unknown) { return /^blog\/[a-zA-Z0-9/_-]+\.(?:jpg|png|webp|mp4|webm|mov)$/i.test(normalize(value)); }
 function storageConfigured(env: Bindings) { return Boolean(env.PRODUCT_IMAGES || r2S3Configured(env)); }
-function mediaUrl(request: Request, key: string) { return `${new URL(request.url).origin}/media/${key}`; }
+function mediaUrl(env: Bindings, request: Request, key: string) {
+  const publicUrl = normalize(env.R2_PUBLIC_URL).replace(/\/$/, '');
+  if (publicUrl && r2S3Configured(env)) return `${publicUrl}/${key.split('/').map(encodeURIComponent).join('/')}`;
+  return `${new URL(request.url).origin}/media/${key}`;
+}
 async function storagePut(env: Bindings, key: string, body: BodyInit, contentType: string) {
   if (env.PRODUCT_IMAGES) {
     await env.PRODUCT_IMAGES.put(key, body as string | ArrayBuffer | Blob | ReadableStream | ArrayBufferView<ArrayBufferLike> | null, { httpMetadata: { contentType, cacheControl: 'public, max-age=31536000, immutable' } });
@@ -493,7 +498,7 @@ async function storageGet(env: Bindings, key: string) {
   }
   return r2S3Configured(env) ? r2S3Get(env, key) : null;
 }
-function blogMediaResult(request: Request, key: string, type: 'image' | 'video', alt: string) { return { type, url: mediaUrl(request, key), alt: alt.replace(/\.[^.]+$/, '').slice(0, 160) }; }
+function blogMediaResult(env: Bindings, request: Request, key: string, type: 'image' | 'video', alt: string) { return { type, url: mediaUrl(env, request, key), alt: alt.replace(/\.[^.]+$/, '').slice(0, 160) }; }
 
 app.post('/api/admin/blog-media', async (c) => {
   const actor = await adminPrincipal(c);
@@ -508,7 +513,7 @@ app.post('/api/admin/blog-media', async (c) => {
   if (!file.size || file.size > 64 * 1024 * 1024) return json(c, { error: 'Files over 64 MB must use the chunked upload flow.' }, 400);
   const key = `blog/${crypto.randomUUID()}.${mediaType.extension}`;
   await storagePut(c.env, key, file.stream(), file.type);
-  return json(c, { ok: true, media: blogMediaResult(c.req.raw, key, mediaType.type, file.name) }, 201);
+  return json(c, { ok: true, media: blogMediaResult(c.env, c.req.raw, key, mediaType.type, file.name) }, 201);
 });
 app.post('/api/admin/blog-media/multipart/start', async (c) => {
   const actor = await adminPrincipal(c);
@@ -520,7 +525,7 @@ app.post('/api/admin/blog-media/multipart/start', async (c) => {
   if (!Number.isFinite(Number(body.size)) || Number(body.size) <= 0 || Number(body.size) > 512 * 1024 * 1024) return json(c, { error: 'File size must be between 1 byte and 512 MB.' }, 400);
   const key = `blog/${crypto.randomUUID()}.${mediaType.extension}`;
   const uploadId = c.env.PRODUCT_IMAGES ? (await c.env.PRODUCT_IMAGES.createMultipartUpload(key, { httpMetadata: { contentType: normalize(body.contentType), cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: normalize(body.fileName).slice(0, 160), uploadedBy: actor } })).uploadId : await r2S3CreateMultipartUpload(c.env, key, normalize(body.contentType));
-  return json(c, { ok: true, key, uploadId, type: mediaType.type, url: mediaUrl(c.req.raw, key) }, 201);
+  return json(c, { ok: true, key, uploadId, type: mediaType.type, url: mediaUrl(c.env, c.req.raw, key) }, 201);
 });
 app.put('/api/admin/blog-media/multipart/part', async (c) => {
   const actor = await adminPrincipal(c);
@@ -555,7 +560,7 @@ app.post('/api/admin/blog-media/multipart/complete', async (c) => {
     await r2S3CompleteMultipartUpload(c.env, key!, uploadId, parts);
   }
   const mediaType = blogMediaTypes[normalize(body.contentType)] || { type: 'video' as const };
-  return json(c, { ok: true, media: blogMediaResult(c.req.raw, key!, mediaType.type, normalize(body.fileName) || 'blog-media') }, 201);
+  return json(c, { ok: true, media: blogMediaResult(c.env, c.req.raw, key!, mediaType.type, normalize(body.fileName) || 'blog-media') }, 201);
 });
 app.get('/media/*', async (c) => {
   if (!storageConfigured(c.env)) return c.text('Product media storage is not enabled.', 503);
@@ -590,7 +595,7 @@ app.post('/api/admin/product-media', async (c) => {
   if (!file.size || file.size > 8 * 1024 * 1024) return json(c, { error: 'Each image must be smaller than 8 MB.' }, 400);
   const key = `products/${crypto.randomUUID()}.${extension}`;
   await storagePut(c.env, key, file.stream(), file.type);
-  return json(c, { ok: true, media: { type: 'image', url: mediaUrl(c.req.raw, key), alt: file.name.replace(/\.[^.]+$/, '').slice(0, 160) } }, 201);
+  return json(c, { ok: true, media: { type: 'image', url: mediaUrl(c.env, c.req.raw, key), alt: file.name.replace(/\.[^.]+$/, '').slice(0, 160) } }, 201);
 });
 
 app.post('/api/admin/login', async (c) => {

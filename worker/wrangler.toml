@@ -13,6 +13,7 @@ GOOGLE_ACCOUNT_LEADS_SHEET_ID = "1-CFi0e0ZtdrrOaZupThVuuwPmL3X_97XgVZLj6Fy4P4"
 GOOGLE_ACTIVITY_LEADS_SHEET_ID = "10AUBmTE3Q-FunWuKIMiDuygc1C7k5cCmqX-WHGG517Q"
 R2_ACCOUNT_ID = "710931da3f3edc974589714c31e1d1a2"
 R2_BUCKET_NAME = "rinovaimagesbuket"
+R2_PUBLIC_URL = "https://media.rinovabd.com"
 SHOP_ADDRESS = "Rajshahi Malopara Police Fhari, Rajshahi, Bangladesh - 6100"
 
 [[d1_databases]]
