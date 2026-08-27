@@ -43,6 +43,20 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(number) ? number : null;
 }
 
+type MarketingBannerInput = { title?: unknown; eyebrow?: unknown; body?: unknown; imageUrl?: unknown; linkUrl?: unknown; placement?: unknown; categorySlug?: unknown; active?: unknown; sortOrder?: unknown; marqueeSpeed?: unknown; startsAt?: unknown; endsAt?: unknown };
+function marketingBannerValues(input: MarketingBannerInput) {
+  const imageUrl = normalize(input.imageUrl);
+  const linkUrl = normalize(input.linkUrl);
+  if (imageUrl && !/^(https:\/\/|\/assets\/|\/media\/)/i.test(imageUrl)) throw new Error('Banner image must use https://, /assets/ or /media/.');
+  if (linkUrl && !/^(https?:\/\/|\/(?!\/))/i.test(linkUrl)) throw new Error('Banner link must use https:// or a site-relative path.');
+  const placement = ['marquee', 'popup'].includes(normalize(input.placement)) ? normalize(input.placement) : 'marquee';
+  return {
+    title: normalize(input.title).slice(0, 160), eyebrow: normalize(input.eyebrow).slice(0, 100), body: normalize(input.body).slice(0, 500), imageUrl: imageUrl || null, linkUrl: linkUrl || null,
+    placement, categorySlug: normalize(input.categorySlug).slice(0, 100) || null, active: input.active === false || normalize(input.active).toLowerCase() === 'false' ? 0 : 1,
+    sortOrder: Math.max(0, Math.floor(Number(input.sortOrder) || 0)), marqueeSpeed: Math.min(90, Math.max(8, Math.floor(Number(input.marqueeSpeed) || 22))), startsAt: normalize(input.startsAt).replace('T', ' ') || null, endsAt: normalize(input.endsAt).replace('T', ' ') || null,
+  };
+}
+
 function calculateBlogSeo(input: { title?: unknown; seoTitle?: unknown; metaDescription?: unknown; coverImageUrl?: unknown; excerpt?: unknown; slug?: unknown; keywords?: unknown; body?: unknown }) {
   const title = normalize(input.title);
   const seoTitle = normalize(input.seoTitle);
@@ -639,7 +653,17 @@ app.get('/api/content/home', async (c) => {
   const content = await c.env.DB.prepare("SELECT content_key AS key, content_type AS type, title, body_json AS body FROM cms_content WHERE status = 'published' ORDER BY content_key").all();
   const posts = await c.env.DB.prepare("SELECT slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, published_at AS publishedAt, author FROM blog_posts WHERE status = 'published' AND (publish_date IS NULL OR publish_date <= CURRENT_TIMESTAMP) ORDER BY priority DESC, published_at DESC, created_at DESC LIMIT 12").all();
   const offers = await c.env.DB.prepare("SELECT code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 20").all();
-  return json(c, { content: content.results, posts: posts.results, offers: offers.results });
+  const banners = await c.env.DB.prepare("SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, sort_order AS sortOrder, marquee_speed AS marqueeSpeed FROM marketing_banners WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY sort_order ASC, updated_at DESC, id DESC LIMIT 30").all();
+  return json(c, { content: content.results, posts: posts.results, offers: offers.results, banners: banners.results });
+});
+
+app.post('/api/newsletter', async (c) => {
+  const body = await c.req.json<{ email?: unknown; source?: unknown }>().catch((): { email?: unknown; source?: unknown } => ({}));
+  const email = normalize(body.email).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 190) return json(c, { error: 'Please enter a valid email address.' }, 400);
+  const source = normalize(body.source).slice(0, 40) || 'footer';
+  await c.env.DB.prepare("INSERT INTO newsletter_leads(email, source, status, updated_at, last_seen_at) VALUES (?, ?, 'subscribed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(email) DO UPDATE SET source = excluded.source, status = 'subscribed', updated_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP").bind(email, source).run();
+  return json(c, { ok: true, message: 'You are on the softer list.' });
 });
 
 app.get('/api/content/pages/:slug', async (c) => {
@@ -657,13 +681,16 @@ app.get('/api/content/posts/:slug', async (c) => {
 
 app.get('/api/admin/content', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const [content, pages, posts, offers] = await Promise.all([
+  const [content, pages, posts, offers, categories, banners, newsletter] = await Promise.all([
     c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
     c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active FROM offers ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all(),
+    c.env.DB.prepare('SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, active, sort_order AS sortOrder, marquee_speed AS marqueeSpeed, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt FROM marketing_banners ORDER BY placement, sort_order ASC, updated_at DESC, id DESC').all(),
+    c.env.DB.prepare('SELECT id, email, source, status, created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt FROM newsletter_leads ORDER BY created_at DESC LIMIT 500').all(),
   ]);
-    return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results });
+    return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results, categories: categories.results, banners: banners.results, newsletter: newsletter.results });
 });
 app.get('/api/admin/media-library', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
@@ -723,6 +750,30 @@ app.post('/api/admin/offers', async (c) => {
   const type = ['fixed','percentage','free_delivery'].includes(normalize(body.discountType)) ? normalize(body.discountType) : 'fixed';
   await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(normalize(body.code) || null, normalize(body.title), normalize(body.description), type, Math.max(0, Number(body.discountValue) || 0), Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, actor).run();
   return json(c, { ok: true, title: normalize(body.title) }, 201);
+});
+
+app.post('/api/admin/marketing-banners', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<MarketingBannerInput>();
+  let values;
+  try { values = marketingBannerValues(body); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'Invalid banner.' }, 400); }
+  if (!values.title && !values.body && !values.imageUrl) return json(c, { error: 'Add a title, message or image to the banner.' }, 400);
+  await c.env.DB.prepare('INSERT INTO marketing_banners(title, eyebrow, body, image_url, link_url, placement, category_slug, active, sort_order, marquee_speed, starts_at, ends_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(values.title, values.eyebrow, values.body, values.imageUrl, values.linkUrl, values.placement, values.categorySlug, values.active, values.sortOrder, values.marqueeSpeed, values.startsAt, values.endsAt).run();
+  return json(c, { ok: true, title: values.title }, 201);
+});
+app.patch('/api/admin/marketing-banners/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid banner id.' }, 400);
+  const body = await c.req.json<MarketingBannerInput>();
+  let values;
+  try { values = marketingBannerValues(body); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'Invalid banner.' }, 400); }
+  if (!values.title && !values.body && !values.imageUrl) return json(c, { error: 'Add a title, message or image to the banner.' }, 400);
+  const result = await c.env.DB.prepare('UPDATE marketing_banners SET title = ?, eyebrow = ?, body = ?, image_url = ?, link_url = ?, placement = ?, category_slug = ?, active = ?, sort_order = ?, marquee_speed = ?, starts_at = ?, ends_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(values.title, values.eyebrow, values.body, values.imageUrl, values.linkUrl, values.placement, values.categorySlug, values.active, values.sortOrder, values.marqueeSpeed, values.startsAt, values.endsAt, id).run();
+  if (!result.meta.changes) return json(c, { error: 'Banner not found.' }, 404);
+  return json(c, { ok: true, id, updatedBy: actor });
 });
 
 app.post('/api/chat/customer', async (c) => {
