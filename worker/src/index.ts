@@ -93,6 +93,18 @@ async function runGa4Report(env: Bindings, body: Record<string, unknown>) {
   return response.json();
 }
 
+async function sheetsAccessCheck(spreadsheetId: string | undefined, token: string) {
+  if (!spreadsheetId) return { configured: false, accessible: false, reason: 'Sheet ID is not configured.' };
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/A1:A1?majorDimension=ROWS`;
+  try {
+    const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) return { configured: true, accessible: false, reason: 'Google Sheet access was rejected.' };
+    return { configured: true, accessible: true };
+  } catch {
+    return { configured: true, accessible: false, reason: 'Google Sheet access could not be reached.' };
+  }
+}
+
 async function sheetsAppendRow(env: Bindings, spreadsheetId: string | undefined, headers: string[], row: Array<string | number | null>) {
   if (!spreadsheetId || !env.SERVICE_ACCOUNT_JSON) return false;
   const token = await googleAccessToken(env, 'https://www.googleapis.com/auth/spreadsheets');
@@ -801,6 +813,21 @@ app.get('/api/admin/analytics/summary', async (c) => {
   const requestedDays = Number(c.req.query('days') || 30);
   const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
   return json(c, await analyticsSummary(c.env, days));
+});
+
+app.get('/api/admin/integrations/status', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  if (!c.env.SERVICE_ACCOUNT_JSON) return json(c, { serviceAccountConfigured: false, sheets: { accountLeads: { configured: false, accessible: false }, activityLeads: { configured: false, accessible: false } } });
+  try {
+    const token = await googleAccessToken(c.env, 'https://www.googleapis.com/auth/spreadsheets');
+    const [accountLeads, activityLeads] = await Promise.all([
+      sheetsAccessCheck(c.env.GOOGLE_ACCOUNT_LEADS_SHEET_ID, token),
+      sheetsAccessCheck(c.env.GOOGLE_ACTIVITY_LEADS_SHEET_ID, token),
+    ]);
+    return json(c, { serviceAccountConfigured: true, sheets: { accountLeads, activityLeads } });
+  } catch {
+    return json(c, { serviceAccountConfigured: true, sheets: { accountLeads: { configured: true, accessible: false, reason: 'Google Sheets authorization failed.' }, activityLeads: { configured: true, accessible: false, reason: 'Google Sheets authorization failed.' } } });
+  }
 });
 
 app.get('/api/admin/notifications', async (c) => {
