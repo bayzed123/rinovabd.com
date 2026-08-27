@@ -104,6 +104,7 @@ jobs:
           GEMINI_API_KEY_1: ${{ secrets.GEMINI_API_KEY_1 }}
           GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
         run: |
           set -euo pipefail
           sync_secret() {
@@ -123,3 +124,4 @@ jobs:
           sync_secret GEMINI_API_KEY_1 "$GEMINI_API_KEY_1"
           sync_secret GEMINI_API_KEY_2 "$GEMINI_API_KEY_2"
           sync_secret GEMINI_MODEL "$GEMINI_MODEL"
+          sync_secret SERVICE_ACCOUNT_JSON "$SERVICE_ACCOUNT_JSON"

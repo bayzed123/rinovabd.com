@@ -66,6 +66,7 @@ async function login(event) {
     state.token = data.token;
     localStorage.setItem('rinova-customer-token', state.token);
     showApp(data.customer);
+    window.rinovaAnalytics?.track('login', { method: 'customer_account' });
   } catch (error) {
     $('#auth-message').textContent = error.message;
   }
@@ -78,6 +79,7 @@ async function register(event) {
     state.token = data.token;
     localStorage.setItem('rinova-customer-token', state.token);
     showApp(data.customer);
+    window.rinovaAnalytics?.track('sign_up', { method: 'customer_account' });
   } catch (error) {
     $('#auth-message').textContent = error.message;
   }
@@ -88,6 +90,7 @@ async function submitReturn(event) {
   try {
     const data = await api('/account/returns', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.target).entries())) });
     $('#return-message').textContent = `Return request ${data.return.returnCode} submitted.`;
+    window.rinovaAnalytics?.track('return_request', { method: 'customer_account' });
     event.target.reset();
   } catch (error) {
     $('#return-message').textContent = error.message;
@@ -106,6 +109,7 @@ $('#account-logout').addEventListener('click', async () => {
   try { await api('/account/logout', { method: 'POST' }); } finally {
     localStorage.removeItem('rinova-customer-token');
     state.token = '';
+    window.rinovaAnalytics?.track('logout', { method: 'customer_account' });
     showAuth();
   }
 });
