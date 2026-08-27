@@ -30,7 +30,7 @@ function sourceLocation(area, extra = '') {
     'Developer tooling': 'scripts/rinova-doctor.mjs:234-240', Secrets: '.github/workflows/doctor.yml:35-53; worker/src/index.ts:1-32',
     'Cloudflare account': 'scripts/rinova-doctor.mjs:157-218', 'Cloudflare D1': 'worker/wrangler.toml:13-18; worker/src/index.ts:1-8',
     'Live D1 schema': 'worker/migrations/:1; worker/src/index.ts:1-8', 'Cloudflare KV': 'worker/wrangler.toml:26-29; worker/src/index.ts:1-8',
-    'Cloudflare Worker': 'worker/wrangler.toml:1-4', 'Optional R2': 'worker/wrangler.toml:27-34; worker/src/index.ts:1-8',
+    'Cloudflare Worker': 'worker/wrangler.toml:1-4', 'Optional R2': 'worker/wrangler.toml:14-16,24-28; worker/src/r2-s3.ts:3-40; .github/workflows/rinovabd-ci-cd.yml:92-131',
     'Live website': 'worker/src/index.ts:875-1085; deployed URL', 'Public endpoint': 'worker/src/index.ts:875-1085',
     Sitemap: 'worker/src/index.ts:1023-1031; deployed /sitemap.xml', 'Sitemap SEO': 'worker/src/index.ts:1023-1031; clean product URL generator', 'Sitemap link': 'worker/src/index.ts:1023-1031; URL from deployed /sitemap.xml',
     'API security': 'worker/src/index.ts:1-8; protected route',
@@ -108,7 +108,7 @@ function checkWorkflowFiles() {
   const missingDoctor = doctorMarkers.filter(([marker]) => !doctor.includes(marker)).map(([, label]) => label);
   if (missingDoctor.length) add('FAIL', 'Workflow configuration', `doctor.yml is missing: ${missingDoctor.join(', ')}`, 'Keep manual trigger, repository-root execution, report artifact, job summary, report write permission and Doctor-report repository publication in the workflow.');
   else add('PASS', 'Workflow configuration', 'doctor.yml has manual trigger, rooted execution and per-run report artifact configuration');
-  const deployMarkers = ['pull_request:', 'push:', 'workflow_dispatch:', 'pnpm install --frozen-lockfile', 'pnpm build', 'cloudflare/wrangler-action@v3', 'workingDirectory: worker'];
+  const deployMarkers = ['pull_request:', 'push:', 'workflow_dispatch:', 'pnpm install --frozen-lockfile', 'pnpm build', 'cloudflare/wrangler-action@v3', 'workingDirectory: worker', 'sync_secret R2_ACCESS_KEY_ID', 'sync_secret R2_SECRET_ACCESS_KEY'];
   const missingDeploy = deployMarkers.filter((marker) => !deploy.includes(marker));
   if (missingDeploy.length) add('FAIL', 'CI/CD workflow', `rinovabd-ci-cd.yml is missing: ${missingDeploy.join(', ')}`, 'Restore the canonical validation/deploy markers and keep Worker commands scoped to worker/.');
   else add('PASS', 'CI/CD workflow', 'build, typecheck, deployment and manual trigger markers are present');
@@ -128,7 +128,13 @@ function checkWrangler() {
   const required = [['name = "rinovabd-worker"', 'Worker name'], ['main = "src/index.ts"', 'Worker entrypoint'], ['migrations_dir = "migrations"', 'D1 migrations directory'], ['binding = "DB"', 'D1 DB binding'], ['binding = "CACHE"', 'KV CACHE binding'], ['[ai]', 'Workers AI section'], ['binding = "AI"', 'Workers AI binding'], ['[assets]', 'Assets section'], ['binding = "ASSETS"', 'Assets binding'], ['directory = "../web"', 'Assets root directory'], ['SHOP_NAME =', 'SHOP_NAME var'], ['SHOP_PHONE =', 'SHOP_PHONE var'], ['AI_MODEL =', 'AI_MODEL var'], ['WHATSAPP_NUMBER =', 'WhatsApp var']];
   const missing = required.filter(([marker]) => !text.includes(marker)).map(([, label]) => label);
   if (missing.length) add('FAIL', 'Wrangler bindings', `worker/wrangler.toml is missing: ${missing.join(', ')}`, 'Restore required D1, KV, Workers AI, assets and shop-variable bindings.'); else add('PASS', 'Wrangler bindings', 'D1, KV, Workers AI, static assets and shop variables are configured');
-  if (/^\s*#\s*\[\[r2_buckets\]\]/m.test(text) && /PRODUCT_IMAGES/.test(text)) add('WARN', 'Optional R2', 'PRODUCT_IMAGES R2 binding is intentionally disabled', 'Enable R2, create rinovabd-product-images, uncomment the binding, then rerun doctor.yml.'); else if (/\[\[r2_buckets\]\]/.test(text) && /binding\s*=\s*"PRODUCT_IMAGES"/.test(text)) add('PASS', 'Optional R2', 'PRODUCT_IMAGES R2 binding is configured'); else add('WARN', 'Optional R2', 'PRODUCT_IMAGES R2 binding was not detected', 'Keep URL/static media workflows until R2 is enabled and bound.');
+  const source = read('worker/src/index.ts');
+  const deploy = read('.github/workflows/rinovabd-ci-cd.yml');
+  const nativeR2Binding = /\[\[r2_buckets\]\]/.test(text) && /binding\s*=\s*"PRODUCT_IMAGES"/.test(text);
+  const crossAccountR2 = /R2_ACCOUNT_ID\s*=/.test(text) && /R2_BUCKET_NAME\s*=/.test(text) && /R2_PUBLIC_URL\s*=/.test(text) && /r2S3Configured|r2S3Put|r2S3Get/.test(source) && /sync_secret R2_ACCESS_KEY_ID/.test(deploy) && /sync_secret R2_SECRET_ACCESS_KEY/.test(deploy);
+  if (crossAccountR2) add('PASS', 'Optional R2', 'Cross-account R2 S3 media path is configured; native PRODUCT_IMAGES binding is not required', 'No medicine: keep the signed S3 adapter, Worker secret sync and public media URL together.');
+  else if (nativeR2Binding) add('PASS', 'Optional R2', 'PRODUCT_IMAGES R2 binding is configured');
+  else add('WARN', 'Optional R2', 'No supported R2 media path was detected', 'Configure either the native PRODUCT_IMAGES binding or the cross-account R2_ACCOUNT_ID/R2_BUCKET_NAME/R2_PUBLIC_URL path with both R2 secrets synced.');
 }
 
 function checkMigrations() {
@@ -154,12 +160,17 @@ async function checkCloudflareResources() {
   const tokenNames = ['CLOUDFLARE_API_TOKEN', 'CLOUD_FLARE_API']; const accountNames = ['CLOUDFLARE_ACCOUNT_ID', 'CLOUD_FLARE_ACCOUNT_ID'];
   if (!envSet(tokenNames)) add('WARN', 'Secrets', `Cloudflare API token is ${envName(tokenNames)}: missing`, 'Add the token as a GitHub Actions secret; the value is never printed.'); else add('PASS', 'Secrets', `Cloudflare API token is ${envName(tokenNames)}: set (value hidden)`);
   if (!envSet(accountNames)) add('WARN', 'Secrets', `Cloudflare account ID is ${envName(accountNames)}: missing`, 'Add the account ID as a secret or variable; the value is never printed.'); else add('PASS', 'Secrets', `Cloudflare account ID is ${envName(accountNames)}: set (value hidden)`);
-  const secretGroups = [{ label: 'Admin username (ADMIN_USERNAME)', names: ['ADMIN_USERNAME'], required: true }, { label: 'Admin password (ADMIN_PASSWORD)', names: ['ADMIN_PASSWORD'], required: true }, { label: 'Admin automation token (ADMIN_API_TOKEN)', names: ['ADMIN_API_TOKEN'] }, { label: 'Steadfast key pair (STEADFAST_API_KEY / STEADFAST_SECRET_KEY)', names: ['STEADFAST_API_KEY', 'STEADFAST_SECRET_KEY'] }, { label: 'Steadfast webhook token (STEADFAST_WEBHOOK_TOKEN)', names: ['STEADFAST_WEBHOOK_TOKEN'] }, { label: 'Gemini fallback (GEMINI_API_KEY / GEMINI_API_KEY_1 / GEMINI_API_KEY_2)', names: ['GEMINI_API_KEY', 'GEMINI_API_KEY_1', 'GEMINI_API_KEY_2'] }];
+  const configText = read('worker/wrangler.toml');
+  const sourceText = read('worker/src/index.ts');
+  const deployText = read('.github/workflows/rinovabd-ci-cd.yml');
+  const crossAccountR2 = /R2_ACCOUNT_ID\s*=/.test(configText) && /R2_BUCKET_NAME\s*=/.test(configText) && /R2_PUBLIC_URL\s*=/.test(configText) && /r2S3Configured|r2S3Put|r2S3Get/.test(sourceText) && /sync_secret R2_ACCESS_KEY_ID/.test(deployText) && /sync_secret R2_SECRET_ACCESS_KEY/.test(deployText);
+  const secretGroups = [{ label: 'Admin username (ADMIN_USERNAME)', names: ['ADMIN_USERNAME'], required: true }, { label: 'Admin password (ADMIN_PASSWORD)', names: ['ADMIN_PASSWORD'], required: true }, { label: 'Admin automation token (ADMIN_API_TOKEN)', names: ['ADMIN_API_TOKEN'] }, { label: 'Steadfast key pair (STEADFAST_API_KEY / STEADFAST_SECRET_KEY)', names: ['STEADFAST_API_KEY', 'STEADFAST_SECRET_KEY'] }, { label: 'Steadfast webhook token (STEADFAST_WEBHOOK_TOKEN)', names: ['STEADFAST_WEBHOOK_TOKEN'] }, { label: 'Gemini fallback (GEMINI_API_KEY / GEMINI_API_KEY_1 / GEMINI_API_KEY_2)', names: ['GEMINI_API_KEY', 'GEMINI_API_KEY_1', 'GEMINI_API_KEY_2'] }, { label: 'Cross-account R2 credentials (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY)', names: ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'], required: crossAccountR2 }];
   for (const group of secretGroups) if (envSet(group.names)) add('PASS', 'Secrets', `${group.label}: set (value hidden)`); else add('WARN', 'Secrets', `${group.label}: not set`, group.required ? 'Set the Worker secret before using the associated production feature.' : 'Optional until the associated integration is intentionally activated.');
   if (!envSet(tokenNames) || !envSet(accountNames)) return;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CLOUD_FLARE_ACCOUNT_ID;
   try { await cloudflareRequest(`/accounts/${accountId}`); add('PASS', 'Cloudflare account', 'Account API is reachable with the configured token'); } catch (error) { add('FAIL', 'Cloudflare account', `Account API rejected the token (${error.message})`, 'Review token scope and account ID; rotate the secret without printing it.'); return; }
   const config = read('worker/wrangler.toml'); const dbId = config.match(/database_id\s*=\s*"([^"]+)"/)?.[1]; const kvId = config.match(/id\s*=\s*"([^"]+)"[\s\S]{0,100}?binding\s*=\s*"CACHE"/)?.[1];
+
   try {
     const dbList = await cloudflareRequest(`/accounts/${accountId}/d1/database?name=rinovabd-db&per_page=50`); const db = Array.isArray(dbList.body) ? dbList.body.find((item) => item.name === 'rinovabd-db') : null;
     if (db && (!dbId || db.uuid === dbId)) add('PASS', 'Cloudflare D1', 'rinovabd-db is visible and matches Wrangler configuration'); else add('FAIL', 'Cloudflare D1', 'rinovabd-db is missing or does not match Wrangler configuration', 'Check D1 database name/ID and read permission.');
@@ -172,7 +183,17 @@ async function checkCloudflareResources() {
   } catch (error) { add('FAIL', 'Cloudflare D1', `D1 read-only check failed (${error.message})`, 'Review D1 read permission, database ID and migration state. No data was written.'); }
   try { const kvList = await cloudflareRequest(`/accounts/${accountId}/storage/kv/namespaces?per_page=100`); const match = Array.isArray(kvList.body) ? kvList.body.find((item) => item.title === 'rinovabd-cache' || item.id === kvId) : null; if (match && (!kvId || match.id === kvId)) add('PASS', 'Cloudflare KV', 'rinovabd-cache is visible and matches Wrangler configuration'); else add('FAIL', 'Cloudflare KV', 'rinovabd-cache is missing or does not match Wrangler configuration', 'Check KV namespace ID and Workers KV read permission.'); } catch (error) { add('FAIL', 'Cloudflare KV', `KV read-only check failed (${error.message})`, 'Review Workers KV read permission and namespace configuration.'); }
   try { const scripts = await cloudflareRequest(`/accounts/${accountId}/workers/scripts`); const deployed = Array.isArray(scripts.body) && scripts.body.some((item) => item.id === 'rinovabd-worker'); if (deployed) add('PASS', 'Cloudflare Worker', 'rinovabd-worker is visible in the account'); else add('WARN', 'Cloudflare Worker', 'rinovabd-worker is not visible in the account', 'Deploy from main or check Workers Scripts:Read permission.'); } catch (error) { add('FAIL', 'Cloudflare Worker', `Worker list check failed (${error.message})`, 'Review Workers Scripts:Read permission and account ID.'); }
-  try { const buckets = await cloudflareRequest(`/accounts/${accountId}/r2/buckets`); const names = (buckets.body?.buckets || []).map((item) => item.name); if (names.includes('rinovabd-product-images')) add('PASS', 'Optional R2', 'rinovabd-product-images bucket is visible'); else add('WARN', 'Optional R2', 'R2 API is available but rinovabd-product-images bucket is not present', 'Create and bind the bucket only after enabling R2.'); } catch (error) { if (error.code === 10042) add('WARN', 'Optional R2', 'R2 is not enabled for this account (Cloudflare code 10042)', 'Enable R2 before testing direct product/blog media uploads.'); else add('FAIL', 'Optional R2', `R2 read-only check failed (${error.message})`, 'Review Workers R2 Storage:Read permission; this doctor does not create buckets.'); }
+  try {
+    const buckets = await cloudflareRequest(`/accounts/${accountId}/r2/buckets`);
+    const names = (buckets.body?.buckets || []).map((item) => item.name);
+    if (names.includes('rinovabd-product-images')) add('PASS', 'Optional R2', 'Native rinovabd-product-images bucket is visible');
+    else if (crossAccountR2) add('PASS', 'Optional R2', 'Worker-account native R2 is not needed; cross-account R2 S3 media path is configured', 'No medicine: keep the client-account bucket, signed S3 adapter, public media URL and synced R2 secrets aligned.');
+    else add('WARN', 'Optional R2', 'R2 API is available but no supported media bucket/path was detected', 'Configure either a native PRODUCT_IMAGES bucket or the cross-account R2 S3 path.');
+  } catch (error) {
+    if (error.code === 10042 && crossAccountR2) add('PASS', 'Optional R2', 'Worker-account R2 API is not enabled, but the configured cross-account R2 S3 path is the active media architecture', 'No medicine: do not enable a second native bucket unless the deployment architecture is intentionally changed.');
+    else if (error.code === 10042) add('WARN', 'Optional R2', 'R2 is not enabled for this account and no cross-account path was detected (Cloudflare code 10042)', 'Configure either a native PRODUCT_IMAGES bucket or the cross-account R2 S3 path before testing media uploads.');
+    else add('FAIL', 'Optional R2', `R2 read-only check failed (${error.message})`, 'Review Workers R2 Storage:Read permission; this doctor does not create buckets.');
+  }
 }
 
 function decodeXml(value) { return String(value || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'"); }
