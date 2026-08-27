@@ -1,0 +1,161 @@
+name: Rinova Domain Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Safe operation to run against the client domain account"
+        required: true
+        type: choice
+        options:
+          - inspect
+          - remove-cross-account-cname
+        default: inspect
+      confirmation:
+        description: "Required only for remove-cross-account-cname: type REMOVE_RINOVA_CNAME"
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: rinova-domain-management
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  manage-domain:
+    name: Inspect or clean up client domain DNS
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOMAIN_ACCOUNT_ID: ${{ secrets.DOMAIN_CLOUD_FLARE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.DOMAIN_CLOUD_FLARE_API }}
+      DOMAIN_NAME: rinovabd.com
+      WORKER_CNAME_TARGET: rinovabd-worker.abdussalam8480.workers.dev
+      OPERATION: ${{ inputs.operation }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Validate client account secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$DOMAIN_ACCOUNT_ID" || -z "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo "Client Cloudflare secrets are missing. Add DOMAIN_CLOUD_FLARE_ID and DOMAIN_CLOUD_FLARE_API as repository Actions secrets."
+            exit 1
+          fi
+          if [[ ! "$DOMAIN_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "DOMAIN_CLOUD_FLARE_ID is not a valid Cloudflare account ID format."
+            exit 1
+          fi
+          echo "Client Cloudflare account credentials are configured. Secret values are not printed."
+
+      - name: Inspect client domain zone and DNS
+        id: inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4"
+          auth_header="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+          zone_response="$(mktemp)"
+          records_response="$(mktemp)"
+          trap 'rm -f "$zone_response" "$records_response"' EXIT
+
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -H "$auth_header" -H 'Content-Type: application/json' \
+            --get "$api/zones" \
+            --data-urlencode "name=${DOMAIN_NAME}" \
+            --data-urlencode "account.id=${DOMAIN_ACCOUNT_ID}" \
+            --data-urlencode 'per_page=20' > "$zone_response"
+
+          if [[ "$(jq -r '.success' "$zone_response")" != "true" ]]; then
+            echo "Cloudflare rejected the client-account zone lookup."
+            jq -c '{success,errors}' "$zone_response"
+            exit 1
+          fi
+
+          zone_id="$(jq -r --arg name "$DOMAIN_NAME" '.result[] | select(.name == $name) | .id' "$zone_response" | head -n 1)"
+          if [[ -z "$zone_id" || "$zone_id" == "null" ]]; then
+            echo "No ${DOMAIN_NAME} zone was found in the client Cloudflare account."
+            exit 1
+          fi
+          echo "zone_id=$zone_id" >> "$GITHUB_OUTPUT"
+
+          jq -r --arg name "$DOMAIN_NAME" '
+            .result[] | select(.name == $name) |
+            "Zone: \(.name) | status=\(.status) | account=\(.account.id) | assigned_ns=\(.name_servers | join(",")) | observed_ns=\((.observed_name_servers // []) | join(","))"
+          ' "$zone_response"
+
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -H "$auth_header" -H 'Content-Type: application/json' \
+            --get "$api/zones/${zone_id}/dns_records" \
+            --data-urlencode 'per_page=100' > "$records_response"
+
+          if [[ "$(jq -r '.success' "$records_response")" != "true" ]]; then
+            echo "Cloudflare rejected the client-account DNS lookup."
+            jq -c '{success,errors}' "$records_response"
+            exit 1
+          fi
+
+          echo "DNS records (sanitized):"
+          jq -c '[.result[] | {id,type,name,content,proxied}]' "$records_response"
+
+          matching_count="$(jq --arg target "$WORKER_CNAME_TARGET" '[.result[] | select(.type == "CNAME" and ((.name == "rinovabd.com") or (.name == "www.rinovabd.com")) and (((.content | ascii_downcase) | rtrimstr(".")) == ($target | ascii_downcase)))] | length' "$records_response")"
+          echo "known_cross_account_cname_matches=$matching_count" >> "$GITHUB_OUTPUT"
+          echo "Known cross-account CNAME matches for ${DOMAIN_NAME} and www.${DOMAIN_NAME}: ${matching_count}"
+
+          if [[ "$OPERATION" == "inspect" ]]; then
+            echo "Read-only inspection complete. No DNS or Worker changes were made."
+          fi
+
+      - name: Remove only the known cross-account CNAME
+        if: inputs.operation == 'remove-cross-account-cname'
+        shell: bash
+        env:
+          ZONE_ID: ${{ steps.inspect.outputs.zone_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "REMOVE_RINOVA_CNAME" ]]; then
+            echo "Removal was not run. To authorize this exact cleanup, dispatch again with confirmation REMOVE_RINOVA_CNAME."
+            exit 1
+          fi
+
+          api="https://api.cloudflare.com/client/v4"
+          auth_header="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+          records_response="$(mktemp)"
+          trap 'rm -f "$records_response"' EXIT
+
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -H "$auth_header" -H 'Content-Type: application/json' \
+            --get "$api/zones/${ZONE_ID}/dns_records" \
+            --data-urlencode 'per_page=100' > "$records_response"
+
+          mapfile -t record_ids < <(
+            jq -r --arg target "$WORKER_CNAME_TARGET" '
+              .result[]
+              | select(.type == "CNAME")
+              | select((.name == "rinovabd.com") or (.name == "www.rinovabd.com"))
+              | select((((.content | ascii_downcase) | rtrimstr(".")) == ($target | ascii_downcase)))
+              | .id
+            ' "$records_response"
+          )
+
+          if (( ${#record_ids[@]} == 0 )); then
+            echo "No matching cross-account CNAME exists. No DNS changes were made."
+            exit 0
+          fi
+
+          for record_id in "${record_ids[@]}"; do
+            delete_response="$(curl --fail-with-body --silent --show-error --max-time 30 \
+              -X DELETE -H "$auth_header" -H 'Content-Type: application/json' \
+              "$api/zones/${ZONE_ID}/dns_records/${record_id}")"
+            if [[ "$(jq -r '.success' <<<"$delete_response")" != "true" ]]; then
+              echo "Cloudflare rejected deletion for the matched record."
+              jq -c '{success,errors}' <<<"$delete_response"
+              exit 1
+            fi
+            echo "Removed one explicitly matched cross-account CNAME record."
+          done
+
+          echo "Cleanup complete. No other DNS record was targeted."
