@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { r2S3CompleteMultipartUpload, r2S3Configured, r2S3CreateMultipartUpload, r2S3Get, r2S3List, r2S3Put, r2S3UploadPart } from './r2-s3';
 
 interface Bindings {
   DB: D1Database;
@@ -27,6 +28,10 @@ interface Bindings {
   SERVICE_ACCOUNT_JSON?: string;
   GOOGLE_ACCOUNT_LEADS_SHEET_ID?: string;
   GOOGLE_ACTIVITY_LEADS_SHEET_ID?: string;
+  R2_ACCOUNT_ID?: string;
+  R2_BUCKET_NAME?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
 }
 
 type App = Hono<{ Bindings: Bindings }>;
@@ -467,13 +472,33 @@ const blogMediaTypes: Record<string, { extension: string; type: 'image' | 'video
   'video/mp4': { extension: 'mp4', type: 'video' }, 'video/webm': { extension: 'webm', type: 'video' }, 'video/quicktime': { extension: 'mov', type: 'video' },
 };
 function validBlogMediaKey(value: unknown) { return /^blog\/[a-zA-Z0-9/_-]+\.(?:jpg|png|webp|mp4|webm|mov)$/i.test(normalize(value)); }
-function blogMediaResult(key: string, type: 'image' | 'video', alt: string) { return { type, url: `/media/${key}`, alt: alt.replace(/\.[^.]+$/, '').slice(0, 160) }; }
+function storageConfigured(env: Bindings) { return Boolean(env.PRODUCT_IMAGES || r2S3Configured(env)); }
+function mediaUrl(request: Request, key: string) { return `${new URL(request.url).origin}/media/${key}`; }
+async function storagePut(env: Bindings, key: string, body: BodyInit, contentType: string) {
+  if (env.PRODUCT_IMAGES) {
+    await env.PRODUCT_IMAGES.put(key, body as string | ArrayBuffer | Blob | ReadableStream | ArrayBufferView<ArrayBufferLike> | null, { httpMetadata: { contentType, cacheControl: 'public, max-age=31536000, immutable' } });
+    return;
+  }
+  await r2S3Put(env, key, body, contentType);
+}
+async function storageGet(env: Bindings, key: string) {
+  if (env.PRODUCT_IMAGES) {
+    const object = await env.PRODUCT_IMAGES.get(key);
+    if (!object) return null;
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('etag', object.httpEtag);
+    headers.set('cache-control', 'public, max-age=31536000, immutable');
+    return new Response(object.body, { headers });
+  }
+  return r2S3Configured(env) ? r2S3Get(env, key) : null;
+}
+function blogMediaResult(request: Request, key: string, type: 'image' | 'video', alt: string) { return { type, url: mediaUrl(request, key), alt: alt.replace(/\.[^.]+$/, '').slice(0, 160) }; }
 
 app.post('/api/admin/blog-media', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const bucket = c.env.PRODUCT_IMAGES;
-  if (!bucket) return json(c, { error: 'Direct blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  if (!storageConfigured(c.env)) return json(c, { error: 'R2 media storage is not configured.' }, 503);
   const form = await c.req.raw.formData().catch(() => null);
   const fileValue = form?.get('file');
   if (!fileValue || typeof fileValue === 'string') return json(c, { error: 'Choose an image or video file first.' }, 400);
@@ -482,70 +507,79 @@ app.post('/api/admin/blog-media', async (c) => {
   if (!mediaType) return json(c, { error: 'Only JPG, PNG, WEBP, MP4, WebM or MOV files are supported.' }, 400);
   if (!file.size || file.size > 64 * 1024 * 1024) return json(c, { error: 'Files over 64 MB must use the chunked upload flow.' }, 400);
   const key = `blog/${crypto.randomUUID()}.${mediaType.extension}`;
-  await bucket.put(key, file.stream(), { httpMetadata: { contentType: file.type, cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: file.name.slice(0, 160), uploadedBy: actor } });
-  return json(c, { ok: true, media: blogMediaResult(key, mediaType.type, file.name) }, 201);
+  await storagePut(c.env, key, file.stream(), file.type);
+  return json(c, { ok: true, media: blogMediaResult(c.req.raw, key, mediaType.type, file.name) }, 201);
 });
 app.post('/api/admin/blog-media/multipart/start', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const bucket = c.env.PRODUCT_IMAGES;
-  if (!bucket) return json(c, { error: 'Chunked blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  if (!storageConfigured(c.env)) return json(c, { error: 'R2 media storage is not configured.' }, 503);
   const body = await c.req.json<{ fileName?: string; contentType?: string; size?: number }>();
   const mediaType = blogMediaTypes[normalize(body.contentType)];
   if (!mediaType) return json(c, { error: 'Only JPG, PNG, WEBP, MP4, WebM or MOV files are supported.' }, 400);
   if (!Number.isFinite(Number(body.size)) || Number(body.size) <= 0 || Number(body.size) > 512 * 1024 * 1024) return json(c, { error: 'File size must be between 1 byte and 512 MB.' }, 400);
   const key = `blog/${crypto.randomUUID()}.${mediaType.extension}`;
-  const upload = await bucket.createMultipartUpload(key, { httpMetadata: { contentType: normalize(body.contentType), cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: normalize(body.fileName).slice(0, 160), uploadedBy: actor } });
-  return json(c, { ok: true, key, uploadId: upload.uploadId, type: mediaType.type, url: `/media/${key}` }, 201);
+  const uploadId = c.env.PRODUCT_IMAGES ? (await c.env.PRODUCT_IMAGES.createMultipartUpload(key, { httpMetadata: { contentType: normalize(body.contentType), cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: normalize(body.fileName).slice(0, 160), uploadedBy: actor } })).uploadId : await r2S3CreateMultipartUpload(c.env, key, normalize(body.contentType));
+  return json(c, { ok: true, key, uploadId, type: mediaType.type, url: mediaUrl(c.req.raw, key) }, 201);
 });
 app.put('/api/admin/blog-media/multipart/part', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const bucket = c.env.PRODUCT_IMAGES;
-  if (!bucket) return json(c, { error: 'Chunked blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  if (!storageConfigured(c.env)) return json(c, { error: 'R2 media storage is not configured.' }, 503);
   const key = c.req.header('X-Upload-Key');
   const uploadId = c.req.header('X-Upload-Id');
   const partNumber = Number(c.req.header('X-Part-Number'));
   if (!validBlogMediaKey(key) || !uploadId || !Number.isInteger(partNumber) || partNumber < 1) return json(c, { error: 'Invalid multipart upload headers.' }, 400);
-  const upload = bucket.resumeMultipartUpload(key!, uploadId);
-  const part = await upload.uploadPart(partNumber, await c.req.raw.arrayBuffer());
-  return json(c, { ok: true, part: { partNumber: part.partNumber, etag: part.etag } });
+  if (c.env.PRODUCT_IMAGES) {
+    const upload = c.env.PRODUCT_IMAGES.resumeMultipartUpload(key!, uploadId);
+    const part = await upload.uploadPart(partNumber, await c.req.raw.arrayBuffer());
+    return json(c, { ok: true, part: { partNumber: part.partNumber, etag: part.etag } });
+  }
+  const etag = await r2S3UploadPart(c.env, key!, uploadId, partNumber, await c.req.raw.arrayBuffer());
+  return json(c, { ok: true, part: { partNumber, etag } });
 });
 app.post('/api/admin/blog-media/multipart/complete', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const bucket = c.env.PRODUCT_IMAGES;
-  if (!bucket) return json(c, { error: 'Chunked blog media upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  if (!storageConfigured(c.env)) return json(c, { error: 'R2 media storage is not configured.' }, 503);
   const key = c.req.header('X-Upload-Key');
   const uploadId = c.req.header('X-Upload-Id');
   if (!validBlogMediaKey(key) || !uploadId) return json(c, { error: 'Invalid multipart upload headers.' }, 400);
   const body = await c.req.json<{ parts?: Array<{ partNumber?: number; etag?: string }>; fileName?: string; contentType?: string }>();
   const parts = (body.parts || []).map((part) => ({ partNumber: Number(part.partNumber), etag: normalize(part.etag) })).filter((part) => Number.isInteger(part.partNumber) && part.partNumber > 0 && part.etag).sort((a, b) => a.partNumber - b.partNumber);
   if (!parts.length) return json(c, { error: 'At least one uploaded part is required.' }, 400);
-  const upload = bucket.resumeMultipartUpload(key!, uploadId);
-  await upload.complete(parts);
+  if (c.env.PRODUCT_IMAGES) {
+    const upload = c.env.PRODUCT_IMAGES.resumeMultipartUpload(key!, uploadId);
+    await upload.complete(parts);
+  } else {
+    await r2S3CompleteMultipartUpload(c.env, key!, uploadId, parts);
+  }
   const mediaType = blogMediaTypes[normalize(body.contentType)] || { type: 'video' as const };
-  return json(c, { ok: true, media: blogMediaResult(key!, mediaType.type, normalize(body.fileName) || 'blog-media') }, 201);
+  return json(c, { ok: true, media: blogMediaResult(c.req.raw, key!, mediaType.type, normalize(body.fileName) || 'blog-media') }, 201);
 });
 app.get('/media/*', async (c) => {
-  const bucket = c.env.PRODUCT_IMAGES;
-  if (!bucket) return c.text('Product media storage is not enabled.', 503);
+  if (!storageConfigured(c.env)) return c.text('Product media storage is not enabled.', 503);
   const key = c.req.path.replace(/^\/media\//, '');
-  if (!key || !/^[a-zA-Z0-9/_-]+\.(?:jpg|jpeg|png|webp|gif|avif)$/i.test(key)) return c.text('Invalid media path.', 400);
-  const object = await bucket.get(key);
-  if (!object) return c.text('Media not found.', 404);
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('etag', object.httpEtag);
-  headers.set('cache-control', 'public, max-age=31536000, immutable');
-  return new Response(object.body, { headers });
+  if (!key || !/^[a-zA-Z0-9/_-]+\.(?:jpg|jpeg|png|webp|gif|avif|mp4|webm|mov)$/i.test(key)) return c.text('Invalid media path.', 400);
+  const response = await storageGet(c.env, key);
+  return response || c.text('Media not found.', 404);
+});
+
+app.get('/api/admin/media-status', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const configured = storageConfigured(c.env);
+  let reachable: boolean | null = configured ? false : null;
+  if (!c.env.PRODUCT_IMAGES && r2S3Configured(c.env)) {
+    try { reachable = (await r2S3List(c.env)).ok; } catch { reachable = false; }
+  } else if (c.env.PRODUCT_IMAGES) reachable = true;
+  return json(c, { configured, reachable, mode: c.env.PRODUCT_IMAGES ? 'worker-binding' : r2S3Configured(c.env) ? 's3-api' : 'disabled', accountId: c.env.R2_ACCOUNT_ID || null, bucket: c.env.R2_BUCKET_NAME || null });
 });
 
 app.post('/api/admin/product-media', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const bucket = c.env.PRODUCT_IMAGES;
-  if (!bucket) return json(c, { error: 'Direct image upload is waiting for the R2 storage binding to be enabled.' }, 503);
+  if (!storageConfigured(c.env)) return json(c, { error: 'R2 media storage is not configured.' }, 503);
   const form = await c.req.raw.formData().catch(() => null);
   const fileValue = form?.get('file');
   if (!fileValue || typeof fileValue === 'string') return json(c, { error: 'Choose an image file first.' }, 400);
@@ -555,8 +589,8 @@ app.post('/api/admin/product-media', async (c) => {
   if (!extension) return json(c, { error: 'Only JPG, PNG, WEBP, GIF or AVIF images are supported.' }, 400);
   if (!file.size || file.size > 8 * 1024 * 1024) return json(c, { error: 'Each image must be smaller than 8 MB.' }, 400);
   const key = `products/${crypto.randomUUID()}.${extension}`;
-  await bucket.put(key, file.stream(), { httpMetadata: { contentType: file.type, cacheControl: 'public, max-age=31536000, immutable' }, customMetadata: { originalName: file.name.slice(0, 160), uploadedBy: actor } });
-  return json(c, { ok: true, media: { type: 'image', url: `/media/${key}`, alt: file.name.replace(/\.[^.]+$/, '').slice(0, 160) } }, 201);
+  await storagePut(c.env, key, file.stream(), file.type);
+  return json(c, { ok: true, media: { type: 'image', url: mediaUrl(c.req.raw, key), alt: file.name.replace(/\.[^.]+$/, '').slice(0, 160) } }, 201);
 });
 
 app.post('/api/admin/login', async (c) => {

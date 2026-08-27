@@ -11,6 +11,8 @@ WHATSAPP_NUMBER = "8801738745949"
 GA4_PROPERTY_ID = "551465065"
 GOOGLE_ACCOUNT_LEADS_SHEET_ID = "1-CFi0e0ZtdrrOaZupThVuuwPmL3X_97XgVZLj6Fy4P4"
 GOOGLE_ACTIVITY_LEADS_SHEET_ID = "10AUBmTE3Q-FunWuKIMiDuygc1C7k5cCmqX-WHGG517Q"
+R2_ACCOUNT_ID = "710931da3f3edc974589714c31e1d1a2"
+R2_BUCKET_NAME = "rinovaimagesbuket"
 SHOP_ADDRESS = "Rajshahi Malopara Police Fhari, Rajshahi, Bangladesh - 6100"
 
 [[d1_databases]]
@@ -19,12 +21,10 @@ database_name = "rinovabd-db"
 database_id = "300aea86-ac31-46b9-aec4-2314f1a78b01"
 migrations_dir = "migrations"
 
-# Enable R2 in the Cloudflare Dashboard, create the bucket named rinovabd-product-images,
-# then uncomment this binding before deploying direct product uploads.
+# Same-account R2 binding remains optional. Cross-account media uses the signed S3 fallback above.
 # [[r2_buckets]]
 # binding = "PRODUCT_IMAGES"
 # bucket_name = "rinovabd-product-images"
-# Local storefront assets remain functional until the optional binding is active.
 
 [[kv_namespaces]]
 binding = "CACHE"
@@ -41,4 +41,3 @@ not_found_handling = "single-page-application"
 
 [observability]
 enabled = true
-
