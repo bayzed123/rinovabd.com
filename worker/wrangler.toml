@@ -37,7 +37,7 @@ binding = "AI"
 [assets]
 directory = "../web"
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/products/*", "/product.html", "/sitemap.xml", "/robots.txt"]
+run_worker_first = ["/api/*", "/media/*", "/products/*", "/product.html", "/sitemap.xml", "/robots.txt"]
 not_found_handling = "single-page-application"
 
 [observability]
