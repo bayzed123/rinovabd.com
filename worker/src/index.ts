@@ -347,16 +347,23 @@ function parseProductMedia(value: unknown): Array<{ type: 'image' | 'video'; url
   else if (typeof value === 'string') {
     try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) items = parsed; } catch {}
   }
+  const seen = new Set<string>();
   return items.map((item) => {
     if (typeof item === 'string') return { type: 'image' as const, url: normalizeMediaUrl(item) };
     const media = item as Record<string, unknown>;
     return { type: media.type === 'video' ? 'video' as const : 'image' as const, url: normalizeMediaUrl(media.url), alt: normalize(media.alt) || undefined };
-  }).filter((item) => Boolean(item.url));
+  }).filter((item) => {
+    if (!item.url) return false;
+    const key = `${item.type}:${item.url.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeMediaUrl(value: unknown) {
   const url = normalize(value);
-  return /^(https:\/\/|\/assets\/)/i.test(url) ? url : '';
+  return /^(https:\/\/|\/assets\/|\/media\/)/i.test(url) ? url : '';
 }
 
 type ProductBadge = 'hot' | 'instock' | 'new';
