@@ -14,7 +14,7 @@
 
   const safeUrl = (value) => {
     const url = String(value ?? '').trim();
-    return /^(https:\/\/|\/assets\/)/i.test(url) ? url : '';
+    return /^(https:\/\/|\/assets\/|\/media\/)/i.test(url) ? url : '';
   };
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
 
