@@ -1,0 +1,23 @@
+{
+  "overall": "ACTION REQUIRED",
+  "counts": {
+    "PASS": 25,
+    "WARN": 5,
+    "FAIL": 15
+  },
+  "targetUrl": "https://rinovabd.com",
+  "readOnly": true,
+  "startedAt": "2026-08-27T22:17:10.508Z",
+  "reportDirectory": "Doctor-report/runs/run-10-33121856520",
+  "files": [
+    "audit-report.md",
+    "sitemap-links.md",
+    "summary.json",
+    "Medicine-or-fixd/fix-report.md"
+  ],
+  "sitemap": {
+    "total": 0,
+    "reachable": 0,
+    "needsAttention": 0
+  }
+}
