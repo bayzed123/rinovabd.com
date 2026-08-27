@@ -1027,11 +1027,15 @@ app.get('/robots.txt', (c) => { const origin = new URL(c.req.url).origin; return
 
 app.get('/sitemap.xml', async (c) => {
   const origin = new URL(c.req.url).origin;
-  const products = await c.env.DB.prepare('SELECT slug, updated_at AS updatedAt FROM products WHERE active = 1 AND slug IS NOT NULL AND slug <> \'\' ORDER BY updated_at DESC, created_at DESC').all<{ slug: string; updatedAt: string | null }>();
-  const staticUrls = [`${origin}/`, `${origin}/sitemap.html`, `${origin}/blog.html`, `${origin}/track.html`];
+  const [products, blogPosts] = await Promise.all([
+    c.env.DB.prepare('SELECT slug, updated_at AS updatedAt FROM products WHERE active = 1 AND slug IS NOT NULL AND slug <> \'\' ORDER BY updated_at DESC, created_at DESC').all<{ slug: string; updatedAt: string | null }>(),
+    c.env.DB.prepare("SELECT slug, updated_at AS updatedAt FROM blog_posts WHERE status = 'published' AND allow_search_engines = 1 AND slug IS NOT NULL AND slug <> '' AND (publish_date IS NULL OR publish_date <= CURRENT_TIMESTAMP) ORDER BY updated_at DESC, created_at DESC").all<{ slug: string; updatedAt: string | null }>(),
+  ]);
+  const staticUrls = [`${origin}/`, `${origin}/sitemap.html`, `${origin}/blog`, `${origin}/track.html`];
   const productEntries = Array.from(new Map(products.results.map((product) => [product.slug, { url: cleanProductUrl(origin, product.slug), updatedAt: product.updatedAt }])).values());
+  const blogEntries = Array.from(new Map(blogPosts.results.map((post) => [post.slug, { url: `${origin}/blog.html?slug=${encodeURIComponent(post.slug)}`, updatedAt: post.updatedAt }])).values());
   const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
-  const body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...staticUrls.map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`), ...productEntries.map((entry) => `<url><loc>${xmlEscape(entry.url)}</loc>${entry.updatedAt ? `<lastmod>${xmlEscape(new Date(entry.updatedAt).toISOString())}</lastmod>` : ''}</url>`), '</urlset>'].join('');
+  const body = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...staticUrls.map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`), ...productEntries.map((entry) => `<url><loc>${xmlEscape(entry.url)}</loc>${entry.updatedAt ? `<lastmod>${xmlEscape(new Date(entry.updatedAt).toISOString())}</lastmod>` : ''}</url>`), ...blogEntries.map((entry) => `<url><loc>${xmlEscape(entry.url)}</loc>${entry.updatedAt ? `<lastmod>${xmlEscape(new Date(entry.updatedAt).toISOString())}</lastmod>` : ''}</url>`), '</urlset>'].join('');
   return new Response(body, { headers: { 'Content-Type': 'application/xml; charset=UTF-8', 'Cache-Control': 'public, max-age=300' } });
 });
 
