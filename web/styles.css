@@ -56,3 +56,7 @@
 
 /* Keep supplied payment artwork contained inside its logo tile */
 .payment-logo img{width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}
+
+
+/* Premium account control */
+.account-link{display:inline-flex;align-items:center;gap:7px;padding:9px 12px;border:1px solid var(--line);border-radius:999px;background:linear-gradient(135deg,#fff,#fff2f7);color:var(--ink)!important;text-decoration:none!important;font-size:10px!important;font-weight:600;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;transition:background .2s,border-color .2s,box-shadow .2s,transform .2s}.account-link:hover{background:var(--blush);border-color:#e5b3c9;box-shadow:0 7px 18px rgba(112,35,72,.12);transform:translateY(-1px)}.account-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.account-link-icon{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}.account-link span{line-height:1}@media(max-width:850px){.header-actions{gap:10px}.account-link{padding:9px 10px;font-size:9px!important;letter-spacing:.1em}.account-link-icon{width:14px;height:14px}}@media(max-width:360px){.account-link span{display:none}.account-link{width:34px;height:34px;padding:0;justify-content:center;border-radius:50%}.account-link-icon{width:16px;height:16px}}
