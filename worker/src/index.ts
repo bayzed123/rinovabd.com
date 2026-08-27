@@ -1311,7 +1311,9 @@ app.get('/api/products', async (c) => {
   if (category) { conditions.push('c.slug = ?'); values.push(category); }
   if (featured === 'true') conditions.push('p.featured = 1');
   const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.tags_json AS tagsJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.featured, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
-  return json(c, { products: result.results });
+  const response = json(c, { products: result.results });
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
 });
 
 app.get('/api/products/:slug', async (c) => {
@@ -1319,7 +1321,9 @@ app.get('/api/products/:slug', async (c) => {
   const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR CAST(p.id AS TEXT) = ?) LIMIT 1').bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
-  return json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
+  const response = json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
 });
 
 app.get('/api/locations', async (c) => {
