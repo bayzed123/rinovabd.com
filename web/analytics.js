@@ -30,7 +30,7 @@
     localStorage.setItem(CONSENT_KEY, next);
     if (typeof gtag === 'function') gtag('consent', 'update', { analytics_storage: next, ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied' });
     document.querySelector('#analytics-consent')?.remove();
-    if (next === 'granted') track('consent_update', { consent_status: next });
+    if (next === 'granted') { track('consent_update', { consent_status: next }); track('page_view', { page_title: cleanText(document.title, 150), page_location: `${window.location.origin}${window.location.pathname}` }); }
   };
   const track = (name, params = {}) => {
     const payload = { event: cleanText(name, 60), ...params };
@@ -44,7 +44,7 @@
     if (typeof gtag === 'function') {
       gtag('consent', 'default', { analytics_storage: consentState() === 'granted' ? 'granted' : 'denied', ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', wait_for_update: 500 });
     }
-    track('page_view', { page_title: cleanText(document.title, 150), page_location: window.location.href });
+    track('page_view', { page_title: cleanText(document.title, 150), page_location: `${window.location.origin}${window.location.pathname}` });
     if (!consentState()) window.setTimeout(showConsent, 500);
   };
   window.rinovaAnalytics = { MEASUREMENT_ID, track, updateConsent, consentState, item: cleanItem, init };
