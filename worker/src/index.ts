@@ -23,6 +23,10 @@ interface Bindings {
   GEMINI_API_KEY_2?: string;
   GEMINI_MODEL?: string;
   WHATSAPP_NUMBER?: string;
+  GA4_PROPERTY_ID?: string;
+  SERVICE_ACCOUNT_JSON?: string;
+  GOOGLE_ACCOUNT_LEADS_SHEET_ID?: string;
+  GOOGLE_ACTIVITY_LEADS_SHEET_ID?: string;
 }
 
 type App = Hono<{ Bindings: Bindings }>;
@@ -41,6 +45,126 @@ function numberOrNull(value: unknown) {
   if (value === undefined || value === null || normalize(value) === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function base64Url(value: string | ArrayBuffer) {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function pemBytes(pem: string) {
+  const encoded = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, '');
+  const binary = atob(encoded);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function googleAccessToken(env: Bindings, scope = 'https://www.googleapis.com/auth/analytics.readonly') {
+  if (!env.SERVICE_ACCOUNT_JSON) throw new Error('GA4 service account is not configured.');
+  let service: { client_email?: string; private_key?: string; project_id?: string };
+  try { service = JSON.parse(env.SERVICE_ACCOUNT_JSON); } catch { throw new Error('GA4 service account configuration is invalid.'); }
+  if (!service.client_email || !service.private_key) throw new Error('GA4 service account configuration is incomplete.');
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = base64Url(JSON.stringify({ iss: service.client_email, scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
+  const signingInput = `${header}.${claim}`;
+  const key = await crypto.subtle.importKey('pkcs8', pemBytes(service.private_key), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(signingInput));
+  const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `grant_type=${encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')}&assertion=${encodeURIComponent(`${signingInput}.${base64Url(signature)}`)}` });
+  if (!response.ok) throw new Error('GA4 authentication failed.');
+  const data = await response.json<{ access_token?: string }>();
+  if (!data.access_token) throw new Error('GA4 authentication returned no token.');
+  return data.access_token;
+}
+
+function reportRows(report: any) {
+  const dimensions = (report?.dimensionHeaders || []).map((header: any) => header.name);
+  const metrics = (report?.metricHeaders || []).map((header: any) => header.name);
+  return (report?.rows || []).map((row: any) => Object.fromEntries([...dimensions.map((name: string, index: number) => [name, row.dimensionValues?.[index]?.value || '']), ...metrics.map((name: string, index: number) => [name, row.metricValues?.[index]?.value || '0'])]));
+}
+
+async function runGa4Report(env: Bindings, body: Record<string, unknown>) {
+  const propertyId = normalize(env.GA4_PROPERTY_ID);
+  if (!/^\d+$/.test(propertyId)) throw new Error('GA4 Property ID is not configured.');
+  const token = await googleAccessToken(env);
+  const response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error('GA4 report request failed.');
+  return response.json();
+}
+
+async function sheetsAccessCheck(spreadsheetId: string | undefined, token: string) {
+  if (!spreadsheetId) return { configured: false, accessible: false, reason: 'Sheet ID is not configured.' };
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/A1:A1?majorDimension=ROWS`;
+  try {
+    const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) return { configured: true, accessible: false, reason: 'Google Sheet access was rejected.' };
+    return { configured: true, accessible: true };
+  } catch {
+    return { configured: true, accessible: false, reason: 'Google Sheet access could not be reached.' };
+  }
+}
+
+async function sheetsAppendRow(env: Bindings, spreadsheetId: string | undefined, headers: string[], row: Array<string | number | null>) {
+  if (!spreadsheetId || !env.SERVICE_ACCOUNT_JSON) return false;
+  const token = await googleAccessToken(env, 'https://www.googleapis.com/auth/spreadsheets');
+  const range = encodeURIComponent(`A:${String.fromCharCode(64 + Math.max(headers.length, row.length))}`);
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${range}`;
+  const headerResponse = await fetch(`${endpoint}?valueRenderOption=UNFORMATTED_VALUE` , { headers: { Authorization: `Bearer ${token}` } });
+  if (!headerResponse.ok) throw new Error('Google Sheet could not be read. Verify the service account has Editor access.');
+  const headerData = await headerResponse.json<{ values?: unknown[][] }>();
+  if (!headerData.values?.length) {
+    const writeHeaders = await fetch(`${endpoint}?valueInputOption=USER_ENTERED`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ range: 'A1', majorDimension: 'ROWS', values: [headers] }) });
+    if (!writeHeaders.ok) throw new Error('Google Sheet headers could not be created.');
+  }
+  const appendResponse = await fetch(`${endpoint}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ majorDimension: 'ROWS', values: [row] }) });
+  if (!appendResponse.ok) throw new Error('Google Sheet row could not be appended.');
+  return true;
+}
+
+const accountLeadHeaders = ['Created At', 'Lead Type', 'Name', 'Phone', 'Email', 'Customer ID', 'Source', 'Account Status'];
+const activityLeadHeaders = ['Created At', 'Activity Type', 'Order Number', 'Invoice Number', 'Customer Name', 'Customer Phone', 'Customer Email', 'Status', 'Payment Method', 'Subtotal', 'Delivery Fee', 'Total', 'Items', 'Return Code', 'Return Reason', 'Notes'];
+
+async function syncAccountLead(env: Bindings, row: Array<string | number | null>) {
+  return sheetsAppendRow(env, env.GOOGLE_ACCOUNT_LEADS_SHEET_ID, accountLeadHeaders, row);
+}
+
+async function syncActivityLead(env: Bindings, row: Array<string | number | null>) {
+  return sheetsAppendRow(env, env.GOOGLE_ACTIVITY_LEADS_SHEET_ID, activityLeadHeaders, row);
+}
+
+async function analyticsSummary(env: Bindings, days: number) {
+  const propertyId = normalize(env.GA4_PROPERTY_ID);
+  if (!env.SERVICE_ACCOUNT_JSON || !/^\d+$/.test(propertyId)) return { configured: false, propertyId: propertyId || null, reason: 'Add SERVICE_ACCOUNT_JSON and grant that service-account email Viewer access to the GA4 property.' };
+  try {
+    const dateRange = { startDate: `${days}daysAgo`, endDate: 'today' };
+    const [overview, events, pages] = await Promise.all([
+      runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'date' }], metrics: [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }, { name: 'purchaseRevenue' }, { name: 'transactions' }], orderBys: [{ dimension: { dimensionName: 'date' }, desc: true }], limit: String(Math.max(days, 7)) }),
+      runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }], orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: '12' }),
+      runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }], orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }], limit: '10' }),
+    ]);
+    return { configured: true, propertyId, days, overview: reportRows(overview), events: reportRows(events), pages: reportRows(pages) };
+  } catch (error) {
+    return { configured: false, propertyId, reason: error instanceof Error ? error.message : 'GA4 report could not be loaded. Verify service-account access and the Analytics Data API.' };
+  }
+}
+
+async function createAdminNotification(env: Bindings, input: { type?: string; title: string; message: string; entityType?: string; entityId?: string }) {
+  try { await env.DB.prepare('INSERT INTO admin_notifications(type, title, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)').bind(normalize(input.type) || 'info', normalize(input.title).slice(0, 160), normalize(input.message).slice(0, 500), normalize(input.entityType) || null, normalize(input.entityId) || null).run(); } catch {}
+}
+
+type MarketingBannerInput = { title?: unknown; eyebrow?: unknown; body?: unknown; imageUrl?: unknown; linkUrl?: unknown; placement?: unknown; categorySlug?: unknown; active?: unknown; sortOrder?: unknown; marqueeSpeed?: unknown; startsAt?: unknown; endsAt?: unknown };
+function marketingBannerValues(input: MarketingBannerInput) {
+  const imageUrl = normalize(input.imageUrl);
+  const linkUrl = normalize(input.linkUrl);
+  if (imageUrl && !/^(https:\/\/|\/assets\/|\/media\/)/i.test(imageUrl)) throw new Error('Banner image must use https://, /assets/ or /media/.');
+  if (linkUrl && !/^(https?:\/\/|\/(?!\/))/i.test(linkUrl)) throw new Error('Banner link must use https:// or a site-relative path.');
+  const placement = ['marquee', 'popup'].includes(normalize(input.placement)) ? normalize(input.placement) : 'marquee';
+  return {
+    title: normalize(input.title).slice(0, 160), eyebrow: normalize(input.eyebrow).slice(0, 100), body: normalize(input.body).slice(0, 500), imageUrl: imageUrl || null, linkUrl: linkUrl || null,
+    placement, categorySlug: normalize(input.categorySlug).slice(0, 100) || null, active: input.active === false || normalize(input.active).toLowerCase() === 'false' ? 0 : 1,
+    sortOrder: Math.max(0, Math.floor(Number(input.sortOrder) || 0)), marqueeSpeed: Math.min(90, Math.max(8, Math.floor(Number(input.marqueeSpeed) || 22))), startsAt: normalize(input.startsAt).replace('T', ' ') || null, endsAt: normalize(input.endsAt).replace('T', ' ') || null,
+  };
 }
 
 function calculateBlogSeo(input: { title?: unknown; seoTitle?: unknown; metaDescription?: unknown; coverImageUrl?: unknown; excerpt?: unknown; slug?: unknown; keywords?: unknown; body?: unknown }) {
@@ -469,6 +593,7 @@ app.post('/api/account/register', async (c) => {
     : await c.env.DB.prepare("INSERT INTO customers(name, phone, email, password_hash, account_status) VALUES (?, ?, ?, ?, 'registered') RETURNING id").bind(name, phone, body.email ?? null, passwordHash).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create account.' }, 500);
   const token = await createCustomerSession(c.env, customer.id);
+  c.executionCtx.waitUntil(syncAccountLead(c.env, [new Date().toISOString(), 'account_created', name, phone, normalize(body.email) || null, customer.id, 'customer_account', 'registered']).catch(() => undefined));
   return json(c, { ok: true, token, customer: { id: customer.id, name, phone, email: body.email ?? null } }, 201);
 });
 
@@ -537,12 +662,14 @@ app.post('/api/account/returns', async (c) => {
   const session = await customerPrincipal(c);
   if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
   const body = await c.req.json<{ orderCode?: string; reason?: string; notes?: string }>();
-  const order = await c.env.DB.prepare("SELECT id, order_code AS orderCode, subtotal, status FROM orders WHERE order_code = ? AND customer_id = ?").bind(normalize(body.orderCode), session.customerId).first<{ id: number; orderCode: string; subtotal: number; status: OrderStatus }>();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.status, c.name AS customerName, c.phone AS customerPhone, c.email AS customerEmail FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? AND o.customer_id = ?").bind(normalize(body.orderCode), session.customerId).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; paymentMethod: string; status: OrderStatus; customerName: string; customerPhone: string; customerEmail: string | null }>();
   if (!order) return json(c, { error: 'Order not found.' }, 404);
   if (!['delivered', 'shipped'].includes(order.status)) return json(c, { error: 'A return can be requested after shipment or delivery.' }, 400);
   const returnCode = `RET-${Date.now().toString(36).toUpperCase()}`;
   const result = await c.env.DB.prepare("INSERT INTO returns(order_id, return_code, reason, amount, notes, created_by) VALUES (?, ?, ?, ?, ?, 'customer') RETURNING id, return_code AS returnCode, status").bind(order.id, returnCode, normalize(body.reason), order.subtotal, normalize(body.notes) || null).first();
   await c.env.DB.prepare("UPDATE orders SET return_status = 'requested', return_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(normalize(body.reason), order.id).run();
+  await createAdminNotification(c.env, { type: 'return', title: 'New return request', message: `Return ${result?.returnCode || returnCode} was requested for order ${order.orderCode}.`, entityType: 'return', entityId: returnCode });
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'return', order.orderCode, order.invoiceNumber, order.customerName, order.customerPhone, order.customerEmail || null, 'requested', order.paymentMethod, order.subtotal, order.deliveryFee, Number(order.subtotal || 0) + Number(order.deliveryFee || 0), null, returnCode, normalize(body.reason), normalize(body.notes) || null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Return lead ${returnCode} could not be added to the activity sheet.`, entityType: 'return', entityId: returnCode }); }));
   return json(c, { ok: true, return: result }, 201);
 });
 
@@ -632,6 +759,8 @@ app.post('/api/admin/pos/sales', async (c) => {
     );
   }
   await c.env.DB.batch(statements);
+  const posItemSummary = items.map((item) => `${item.product.name} × ${item.quantity}`).join(' · ');
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'pos_sale', sale.receiptNumber, null, null, null, null, 'completed', body.paymentMethod, subtotal - discount, 0, subtotal - discount, posItemSummary, null, null, null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `POS sale ${sale.receiptNumber} could not be added to the activity sheet.`, entityType: 'pos_sale', entityId: sale.receiptNumber }); }));
   return json(c, { ok: true, sale: { ...sale, subtotal, discount, total: subtotal - discount, paymentMethod: body.paymentMethod } }, 201);
 });
 
@@ -639,7 +768,18 @@ app.get('/api/content/home', async (c) => {
   const content = await c.env.DB.prepare("SELECT content_key AS key, content_type AS type, title, body_json AS body FROM cms_content WHERE status = 'published' ORDER BY content_key").all();
   const posts = await c.env.DB.prepare("SELECT slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, published_at AS publishedAt, author FROM blog_posts WHERE status = 'published' AND (publish_date IS NULL OR publish_date <= CURRENT_TIMESTAMP) ORDER BY priority DESC, published_at DESC, created_at DESC LIMIT 12").all();
   const offers = await c.env.DB.prepare("SELECT code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt FROM offers WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 20").all();
-  return json(c, { content: content.results, posts: posts.results, offers: offers.results });
+  const banners = await c.env.DB.prepare("SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, sort_order AS sortOrder, marquee_speed AS marqueeSpeed FROM marketing_banners WHERE active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP) ORDER BY sort_order ASC, updated_at DESC, id DESC LIMIT 30").all();
+  return json(c, { content: content.results, posts: posts.results, offers: offers.results, banners: banners.results });
+});
+
+app.post('/api/newsletter', async (c) => {
+  const body = await c.req.json<{ email?: unknown; source?: unknown }>().catch((): { email?: unknown; source?: unknown } => ({}));
+  const email = normalize(body.email).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 190) return json(c, { error: 'Please enter a valid email address.' }, 400);
+  const source = normalize(body.source).slice(0, 40) || 'footer';
+  await c.env.DB.prepare("INSERT INTO newsletter_leads(email, source, status, updated_at, last_seen_at) VALUES (?, ?, 'subscribed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(email) DO UPDATE SET source = excluded.source, status = 'subscribed', updated_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP").bind(email, source).run();
+  await createAdminNotification(c.env, { type: 'lead', title: 'New newsletter lead', message: `A new newsletter signup arrived from ${source}.`, entityType: 'newsletter_lead', entityId: email });
+  return json(c, { ok: true, message: 'You are on the softer list.' });
 });
 
 app.get('/api/content/pages/:slug', async (c) => {
@@ -657,14 +797,61 @@ app.get('/api/content/posts/:slug', async (c) => {
 
 app.get('/api/admin/content', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const [content, pages, posts, offers] = await Promise.all([
+  const [content, pages, posts, offers, categories, banners, newsletter] = await Promise.all([
     c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
     c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active FROM offers ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all(),
+    c.env.DB.prepare('SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, active, sort_order AS sortOrder, marquee_speed AS marqueeSpeed, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt FROM marketing_banners ORDER BY placement, sort_order ASC, updated_at DESC, id DESC').all(),
+    c.env.DB.prepare('SELECT id, email, source, status, created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt FROM newsletter_leads ORDER BY created_at DESC LIMIT 500').all(),
   ]);
-    return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results });
+    return json(c, { content: content.results, pages: pages.results, posts: posts.results, offers: offers.results, categories: categories.results, banners: banners.results, newsletter: newsletter.results });
 });
+app.get('/api/admin/analytics/summary', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const requestedDays = Number(c.req.query('days') || 30);
+  const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
+  return json(c, await analyticsSummary(c.env, days));
+});
+
+app.get('/api/admin/integrations/status', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  if (!c.env.SERVICE_ACCOUNT_JSON) return json(c, { serviceAccountConfigured: false, sheets: { accountLeads: { configured: false, accessible: false }, activityLeads: { configured: false, accessible: false } } });
+  try {
+    const token = await googleAccessToken(c.env, 'https://www.googleapis.com/auth/spreadsheets');
+    const [accountLeads, activityLeads] = await Promise.all([
+      sheetsAccessCheck(c.env.GOOGLE_ACCOUNT_LEADS_SHEET_ID, token),
+      sheetsAccessCheck(c.env.GOOGLE_ACTIVITY_LEADS_SHEET_ID, token),
+    ]);
+    return json(c, { serviceAccountConfigured: true, sheets: { accountLeads, activityLeads } });
+  } catch {
+    return json(c, { serviceAccountConfigured: true, sheets: { accountLeads: { configured: true, accessible: false, reason: 'Google Sheets authorization failed.' }, activityLeads: { configured: true, accessible: false, reason: 'Google Sheets authorization failed.' } } });
+  }
+});
+
+app.get('/api/admin/notifications', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const unreadOnly = c.req.query('unread') === '1';
+  const query = unreadOnly ? 'SELECT id, type, title, message, entity_type AS entityType, entity_id AS entityId, is_read AS isRead, created_at AS createdAt FROM admin_notifications WHERE is_read = 0 ORDER BY created_at DESC LIMIT 100' : 'SELECT id, type, title, message, entity_type AS entityType, entity_id AS entityId, is_read AS isRead, created_at AS createdAt FROM admin_notifications ORDER BY created_at DESC LIMIT 100';
+  const [notifications, unread] = await Promise.all([c.env.DB.prepare(query).all(), c.env.DB.prepare('SELECT COUNT(*) AS count FROM admin_notifications WHERE is_read = 0').first<{ count: number }>()]);
+  return json(c, { notifications: notifications.results, unreadCount: Number(unread?.count || 0) });
+});
+
+app.patch('/api/admin/notifications/:id/read', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Notification not found.' }, 404);
+  await c.env.DB.prepare('UPDATE admin_notifications SET is_read = 1 WHERE id = ?').bind(id).run();
+  return json(c, { ok: true, id });
+});
+
+app.post('/api/admin/notifications/read-all', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  await c.env.DB.prepare('UPDATE admin_notifications SET is_read = 1 WHERE is_read = 0').run();
+  return json(c, { ok: true });
+});
+
 app.get('/api/admin/media-library', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const [products, posts] = await Promise.all([
@@ -723,6 +910,30 @@ app.post('/api/admin/offers', async (c) => {
   const type = ['fixed','percentage','free_delivery'].includes(normalize(body.discountType)) ? normalize(body.discountType) : 'fixed';
   await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(normalize(body.code) || null, normalize(body.title), normalize(body.description), type, Math.max(0, Number(body.discountValue) || 0), Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, actor).run();
   return json(c, { ok: true, title: normalize(body.title) }, 201);
+});
+
+app.post('/api/admin/marketing-banners', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<MarketingBannerInput>();
+  let values;
+  try { values = marketingBannerValues(body); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'Invalid banner.' }, 400); }
+  if (!values.title && !values.body && !values.imageUrl) return json(c, { error: 'Add a title, message or image to the banner.' }, 400);
+  await c.env.DB.prepare('INSERT INTO marketing_banners(title, eyebrow, body, image_url, link_url, placement, category_slug, active, sort_order, marquee_speed, starts_at, ends_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(values.title, values.eyebrow, values.body, values.imageUrl, values.linkUrl, values.placement, values.categorySlug, values.active, values.sortOrder, values.marqueeSpeed, values.startsAt, values.endsAt).run();
+  return json(c, { ok: true, title: values.title }, 201);
+});
+app.patch('/api/admin/marketing-banners/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid banner id.' }, 400);
+  const body = await c.req.json<MarketingBannerInput>();
+  let values;
+  try { values = marketingBannerValues(body); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'Invalid banner.' }, 400); }
+  if (!values.title && !values.body && !values.imageUrl) return json(c, { error: 'Add a title, message or image to the banner.' }, 400);
+  const result = await c.env.DB.prepare('UPDATE marketing_banners SET title = ?, eyebrow = ?, body = ?, image_url = ?, link_url = ?, placement = ?, category_slug = ?, active = ?, sort_order = ?, marquee_speed = ?, starts_at = ?, ends_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(values.title, values.eyebrow, values.body, values.imageUrl, values.linkUrl, values.placement, values.categorySlug, values.active, values.sortOrder, values.marqueeSpeed, values.startsAt, values.endsAt, id).run();
+  if (!result.meta.changes) return json(c, { error: 'Banner not found.' }, 404);
+  return json(c, { ok: true, id, updatedBy: actor });
 });
 
 app.post('/api/chat/customer', async (c) => {
@@ -1125,6 +1336,9 @@ app.post('/api/orders', async (c) => {
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
   }
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();
+  await createAdminNotification(c.env, { type: 'order', title: 'New order received', message: `Order ${order.orderCode} is ready for review.`, entityType: 'order', entityId: order.orderCode });
+  const itemSummary = lineItems.map((item) => `${item.product.name} × ${item.quantity}`).join(' · ');
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', body.paymentMethod, subtotal, deliveryFee, subtotal + deliveryFee, itemSummary, null, null, null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
   return json(c, { order: { ...order, subtotal, deliveryFee, total: subtotal + deliveryFee, zone, paymentMethod: body.paymentMethod }, message: 'Order received successfully.' }, 201);
 });
 

@@ -2,6 +2,8 @@ const API_BASE = window.location.hostname.includes('localhost') ? 'http://localh
 const bag = JSON.parse(localStorage.getItem('rinova-bag') || '[]');
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
+const track = (name, params = {}) => window.rinovaAnalytics?.track ? window.rinovaAnalytics.track(name, params) : (window.dataLayer = window.dataLayer || [], window.dataLayer.push({ event: name, ...params }));
+const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
 const state = { deliveryFee: 0, zone: '' };
 
 function saveBag() {
@@ -68,6 +70,7 @@ async function submitOrder(event) {
     $('#checkout-grid').hidden = true;
     $('#success').hidden = false;
     $('#success').innerHTML = `<strong>অর্ডার সফল হয়েছে।</strong><br>Order ID: <strong>${payload.order.orderCode}</strong><br>Invoice: <strong>${payload.order.invoiceNumber || '—'}</strong><br>Total: ${money(payload.order.total)}<br><a class="button" href="/invoice.html?order=${encodeURIComponent(payload.order.orderCode)}">View printable invoice</a> <a class="button" href="/track.html?orderId=${encodeURIComponent(payload.order.orderCode)}&invoiceNumber=${encodeURIComponent(payload.order.invoiceNumber || '')}">Track order</a>`;
+    track('purchase', { transaction_id: payload.order.orderCode || payload.order.invoiceNumber, currency: 'BDT', value: Number(payload.order.total || 0), shipping: Number(payload.order.deliveryFee || 0), payment_type: payload.order.paymentMethod || 'cod', items: bag.map(itemPayload) });
   } catch (error) {
     $('#checkout-error').textContent = error.message;
   }
@@ -78,3 +81,4 @@ $('#checkout-form').elements.namedItem('district').addEventListener('input', (ev
 $('#checkout-form').elements.namedItem('upazila').addEventListener('input', updateDelivery);
 $('#checkout-form').elements.namedItem('district').addEventListener('change', updateDelivery);
 renderItems();
+if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });
