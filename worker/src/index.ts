@@ -127,7 +127,7 @@ async function analyticsSummary(env: Bindings, days: number) {
   try {
     const dateRange = { startDate: `${days}daysAgo`, endDate: 'today' };
     const [overview, events, pages] = await Promise.all([
-      runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'date' }], metrics: [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }, { name: 'purchaseRevenue' }, { name: 'transactions' }], orderBys: [{ dimension: { dimension: { name: 'date' }, desc: true } }], limit: String(Math.max(days, 7)) }),
+      runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'date' }], metrics: [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }, { name: 'purchaseRevenue' }, { name: 'transactions' }], orderBys: [{ dimension: { dimensionName: 'date' }, desc: true }], limit: String(Math.max(days, 7)) }),
       runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }], orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }], limit: '12' }),
       runGa4Report(env, { dateRanges: [dateRange], dimensions: [{ name: 'pagePath' }], metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }], orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }], limit: '10' }),
     ]);
