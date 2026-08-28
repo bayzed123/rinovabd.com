@@ -13,12 +13,58 @@
   let lastTap = 0;
   let dismissState;
   let closeTimer;
+  let lockedScrollY = 0;
+  let isLocked = false;
+  let lastFocused = null;
 
   const safeUrl = (value) => {
     const url = String(value ?? '').trim();
     return /^(https:\/\/|\/assets\/|\/media\/)/i.test(url) ? url : '';
   };
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+
+  /* ------------------------------------------------------------------
+     SCROLL LOCK
+     The old version toggled `overflow:hidden` only. Removing the
+     scrollbar reflows the page ~15px wider, which is the visible
+     "jump / lock" when an image is clicked. We now pin the body at its
+     current offset AND compensate for the scrollbar width, then restore
+     the exact scroll position on close.
+  ------------------------------------------------------------------ */
+  function lockScroll() {
+    if (isLocked) return;
+    lockedScrollY = window.scrollY || window.pageYOffset || 0;
+    const gutter = window.innerWidth - document.documentElement.clientWidth;
+    const body = document.body;
+    body.style.position = 'fixed';
+    body.style.top = `-${lockedScrollY}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+    if (gutter > 0) body.style.paddingRight = `${gutter}px`;
+    body.classList.add('media-viewer-open');
+    document.documentElement.classList.add('media-viewer-open');
+    isLocked = true;
+  }
+
+  function unlockScroll() {
+    if (!isLocked) return;
+    const body = document.body;
+    body.style.position = '';
+    body.style.top = '';
+    body.style.left = '';
+    body.style.right = '';
+    body.style.width = '';
+    body.style.paddingRight = '';
+    body.classList.remove('media-viewer-open');
+    document.documentElement.classList.remove('media-viewer-open');
+    // restore without smooth-scroll animation
+    const previous = document.documentElement.style.scrollBehavior;
+    document.documentElement.style.scrollBehavior = 'auto';
+    window.scrollTo(0, lockedScrollY);
+    document.documentElement.style.scrollBehavior = previous;
+    isLocked = false;
+  }
 
   function activeImage() { return track?.querySelector(`[data-slide-index="${current}"] img`); }
 
@@ -40,13 +86,26 @@
     image.style.cursor = zoom > 1 ? (dragState ? 'grabbing' : 'grab') : 'zoom-in';
   }
 
+  /* Snap without the smooth-scroll animation (used on open / resize). */
+  function jumpTo(index) {
+    if (!track) return;
+    const width = track.clientWidth;
+    if (!width) return;
+    const previous = track.style.scrollBehavior;
+    track.style.scrollBehavior = 'auto';
+    track.scrollLeft = index * width;
+    // force reflow so the assignment lands before smooth is restored
+    void track.offsetWidth;
+    track.style.scrollBehavior = previous || '';
+  }
+
   function ensureViewer() {
     if (viewer) return;
     viewer = document.createElement('section');
     viewer.className = 'media-viewer';
     viewer.hidden = true;
     viewer.setAttribute('aria-hidden', 'true');
-    viewer.innerHTML = `<div class="media-viewer-backdrop" data-media-close></div><div class="media-viewer-dialog" role="dialog" aria-modal="true" aria-label="Product image viewer"><header class="media-viewer-head"><strong class="media-viewer-title"></strong><button type="button" class="media-viewer-close" data-media-close aria-label="Close image viewer"><span data-rinova-icon="close"></span></button></header><div class="media-viewer-stage"><button type="button" class="media-viewer-arrow media-viewer-prev" aria-label="Previous image"><span data-rinova-icon="arrowLeft"></span></button><div class="media-viewer-track"></div><button type="button" class="media-viewer-arrow media-viewer-next" aria-label="Next image"><span data-rinova-icon="arrowRight"></span></button></div><footer class="media-viewer-tools"><button type="button" data-media-zoom="out" aria-label="Zoom out"><span data-rinova-icon="minus"></span></button><span class="media-viewer-zoom">100%</span><button type="button" data-media-zoom="in" aria-label="Zoom in"><span data-rinova-icon="plus"></span></button><button type="button" data-media-zoom="reset">Reset</button><span class="media-viewer-hint">Swipe between images · double-tap to zoom</span></footer></div>`;
+    viewer.innerHTML = `<div class="media-viewer-backdrop" data-media-close></div><div class="media-viewer-dialog" role="dialog" aria-modal="true" aria-label="Product image viewer"><header class="media-viewer-head"><strong class="media-viewer-title"></strong><button type="button" class="media-viewer-close" data-media-close aria-label="Close image viewer"><span data-rinova-icon="close"></span></button></header><div class="media-viewer-stage"><button type="button" class="media-viewer-arrow media-viewer-prev" aria-label="Previous image"><span data-rinova-icon="arrowLeft"></span></button><div class="media-viewer-track"></div><button type="button" class="media-viewer-arrow media-viewer-next" aria-label="Next image"><span data-rinova-icon="arrowRight"></span></button></div><footer class="media-viewer-tools"><button type="button" data-media-zoom="out" aria-label="Zoom out"><span data-rinova-icon="minus"></span></button><span class="media-viewer-zoom">100%</span><button type="button" data-media-zoom="in" aria-label="Zoom in"><span data-rinova-icon="plus"></span></button><button type="button" data-media-zoom="reset">Reset</button><span class="media-viewer-hint">Swipe between images \u00b7 double-tap to zoom</span></footer></div>`;
     document.body.appendChild(viewer);
     track = viewer.querySelector('.media-viewer-track');
     title = viewer.querySelector('.media-viewer-title');
@@ -68,6 +127,7 @@
           current = next;
           setZoom('reset', false);
           updateControls();
+          preloadNeighbours();
         }
       }, 120);
     }, { passive: true });
@@ -146,14 +206,25 @@
       if (event.key === '0') setZoom('reset');
     });
     window.addEventListener('resize', () => {
-      if (!viewer.hidden) { track.scrollLeft = current * track.clientWidth; applyTransform(); }
+      if (!viewer.hidden) { jumpTo(current); applyTransform(); }
     });
   }
 
   function updateControls() {
     viewer.querySelector('.media-viewer-prev').disabled = current <= 0;
     viewer.querySelector('.media-viewer-next').disabled = current >= slides.length - 1;
-    viewer.querySelector('.media-viewer-hint').textContent = slides.length > 1 ? `Image ${current + 1} of ${slides.length} · Swipe or double-tap to zoom` : 'Click outside or press Esc to close';
+    viewer.querySelector('.media-viewer-hint').textContent = slides.length > 1 ? `Image ${current + 1} of ${slides.length} \u00b7 Swipe or double-tap to zoom` : 'Click outside or press Esc to close';
+  }
+
+  /* Warm the adjacent images so paging never shows a decode flash. */
+  function preloadNeighbours() {
+    [current - 1, current + 1].forEach((index) => {
+      const item = slides[index];
+      if (!item || item.type !== 'image') return;
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = item.url;
+    });
   }
 
   function setZoom(direction, updateLabel = true) {
@@ -173,6 +244,7 @@
     setZoom('reset', false);
     track.scrollTo({ left: current * track.clientWidth, behavior: 'smooth' });
     updateControls();
+    preloadNeighbours();
   }
 
   function close() {
@@ -184,8 +256,11 @@
     viewer.style.removeProperty('--media-dismiss-y');
     viewer.classList.remove('open');
     viewer.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('media-viewer-open');
-    document.documentElement.classList.remove('media-viewer-open');
+    unlockScroll();
+    if (lastFocused && document.contains(lastFocused)) {
+      lastFocused.focus({ preventScroll: true });
+      lastFocused = null;
+    }
     closeTimer = setTimeout(() => { if (!viewer.classList.contains('open')) viewer.hidden = true; }, 220);
   }
 
@@ -194,16 +269,38 @@
     slides = (Array.isArray(items) ? items : []).map((item) => ({ type: item?.type === 'video' ? 'video' : 'image', url: safeUrl(typeof item === 'string' ? item : item?.url), alt: item?.alt || productTitle })).filter((item) => item.url);
     if (!slides.length) return;
     clearTimeout(closeTimer);
+    lastFocused = document.activeElement;
     current = Math.max(0, Math.min(slides.length - 1, Number(index) || 0));
     title.textContent = productTitle;
-    track.innerHTML = slides.map((item, slideIndex) => `<div class="media-viewer-slide" data-slide-index="${slideIndex}">${item.type === 'video' ? `<video controls playsinline preload="metadata"><source src="${escapeHtml(item.url)}">Your browser does not support this video.</video>` : `<img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.alt)}" draggable="false" />`}</div>`).join('');
+    track.innerHTML = slides.map((item, slideIndex) => `<div class="media-viewer-slide is-loading" data-slide-index="${slideIndex}">${item.type === 'video' ? `<video controls playsinline preload="metadata"><source src="${escapeHtml(item.url)}">Your browser does not support this video.</video>` : `<img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.alt)}" draggable="false" decoding="async" />`}</div>`).join('');
+
+    // Fade each slide in as it decodes rather than swapping a bare src.
+    track.querySelectorAll('.media-viewer-slide').forEach((slide) => {
+      const img = slide.querySelector('img');
+      if (!img) { slide.classList.remove('is-loading'); return; }
+      if (img.complete) { slide.classList.remove('is-loading'); return; }
+      img.addEventListener('load', () => slide.classList.remove('is-loading'), { once: true });
+      img.addEventListener('error', () => slide.classList.remove('is-loading'), { once: true });
+    });
+
     viewer.hidden = false;
     viewer.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('media-viewer-open');
-    document.documentElement.classList.add('media-viewer-open');
+    lockScroll();
     setZoom('reset', false);
     updateControls();
-    requestAnimationFrame(() => { track.scrollLeft = current * track.clientWidth; viewer.classList.add('open'); applyTransform(); });
+
+    // Two frames: the first lets the dialog get its real width so
+    // scrollLeft lands on the right slide instead of snapping back.
+    requestAnimationFrame(() => {
+      jumpTo(current);
+      requestAnimationFrame(() => {
+        jumpTo(current);
+        viewer.classList.add('open');
+        applyTransform();
+        preloadNeighbours();
+        viewer.querySelector('.media-viewer-close')?.focus({ preventScroll: true });
+      });
+    });
   }
 
   window.RinovaMediaViewer = { open, close };
