@@ -167,3 +167,13 @@ body,.app-shell,.main-panel{background:var(--admin-canvas)}.topbar{background:rg
 /* Exact client Violet highlight */
 :root{--accent-violet:#EE82EE}
 .nav-item.active{box-shadow:inset 3px 0 0 #EE82EE,0 8px 18px rgba(50,29,53,.14)}.admin-avatar-wrap,.smartgen-quick-mark{background:linear-gradient(135deg,#DA70D6,#EE82EE)}.button:focus-visible,.icon-action:focus-visible{outline-color:#EE82EE}
+
+/* Dual barcode print treatment: keep each code legible for handheld scanners. */
+.barcode-pair{display:flex;gap:12px;justify-content:center;align-items:flex-start;flex-wrap:wrap;width:100%;}
+.barcode-pair>div{min-width:205px;text-align:center;}
+.barcode-pair small{display:block;font-size:9px;letter-spacing:.08em;color:#766a70;margin:2px 0;}
+.barcode-pair svg{display:block;width:198px;height:42px;margin:0 auto;}
+.barcode-label .barcode-pair{gap:7px;}
+.barcode-label .barcode-pair>div{min-width:0;width:100%;}
+.barcode-label .barcode-pair svg{width:208px;height:38px;}
+@media print{.barcode-pair{break-inside:avoid}.barcode-label{min-height:166px}}
