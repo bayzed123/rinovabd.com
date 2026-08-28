@@ -89,3 +89,8 @@ body.search-open{overflow:hidden}.search-overlay{position:fixed;inset:0;z-index:
 /* Client-selected Orchid/Violet global theme */
 :root{--ink:#281C2B;--muted:#6D5B70;--paper:#FFFCFF;--cream:#FFF7FE;--blush:#F8E5F7;--sage:#F2E7F2;--line:#E8C9E8;--accent:#DA70D6;--accent-strong:#7A287A;--shadow:0 18px 50px rgba(122,40,122,.14)}
 .announcement{background:#321D35}.site-header{background:rgba(255,252,255,.96);border-bottom-color:rgba(122,40,122,.16)}.button-dark,.product-add{background:#321D35}.button-dark:hover,.product-add:hover{background:#7A287A}.search-form:focus-within{box-shadow:0 0 0 4px rgba(218,112,214,.2),0 12px 30px rgba(122,40,122,.1)}.search-form button{background:#321D35}.search-form button:hover{background:#7A287A}.chat-form button{background:#7A287A}.chat-form button:hover{background:#64205F}.product-badge{border-color:rgba(122,40,122,.18)}.badge-hot{background:#B44DB4}.detail-media,.detail-media-stage{border-color:rgba(218,112,214,.35)}.detail-media-stage{background:linear-gradient(145deg,#FFFCFF,#F8E5F7)}.media-thumb.active{border-color:#DA70D6;box-shadow:0 0 0 3px rgba(218,112,214,.2),0 8px 18px rgba(122,40,122,.08)}
+
+
+/* Exact client Violet highlight */
+:root{--accent-violet:#EE82EE}
+.category-card:hover,.media-thumb:hover{border-color:#EE82EE}.search-form:focus-within{box-shadow:0 0 0 4px rgba(238,130,238,.2),0 12px 30px rgba(122,40,122,.1)}.marketing-banner-mark{background:linear-gradient(135deg,#DA70D6,#EE82EE)}

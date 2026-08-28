@@ -162,3 +162,8 @@ body,.app-shell,.main-panel{background:var(--admin-canvas)}.topbar{background:rg
 /* Client-selected Orchid/Violet global theme */
 :root{--ink:#281C2B;--muted:#6D5B70;--line:#E8C9E8;--paper:#FFFCFF;--cream:#FFF7FE;--blush:#F8E5F7;--accent:#DA70D6;--accent-strong:#7A287A;--admin-ink:#281C2B;--admin-plum:#321D35;--admin-pink:#DA70D6;--admin-pink-soft:#FFF0FD;--admin-border:#E8C9E8;--admin-canvas:#FFF8FE;--admin-muted:#78677B;--shadow:0 20px 60px rgba(122,40,122,.14)}
 body,.app-shell,.main-panel{background:var(--admin-canvas)}.topbar{background:rgba(255,252,255,.96);border-bottom-color:var(--admin-border)}.nav-item.active{background:linear-gradient(100deg,rgba(218,112,214,.55),rgba(122,40,122,.32));box-shadow:inset 3px 0 0 #DA70D6,0 8px 18px rgba(50,29,53,.14)}.nav-badge{background:#DA70D6;color:#321D35}.button-dark{background:#321D35}.button-dark:hover{background:#7A287A}.button:not(.button-dark):hover,.icon-action:hover{border-color:#DA70D6;background:#FFF0FD;color:#7A287A}input:focus,select:focus,textarea:focus{border-color:#DA70D6;box-shadow:0 0 0 3px rgba(218,112,214,.18)}.admin-chat-panel .chat-form button{background:#7A287A}.admin-chat-panel .chat-form button:hover{background:#64205F}.assistant-fab{background:linear-gradient(145deg,#321D35,#B44DB4 58%,#DA70D6)}.morning-check-item.done{background:#F2E7F2;border-color:#DFC0DF}
+
+
+/* Exact client Violet highlight */
+:root{--accent-violet:#EE82EE}
+.nav-item.active{box-shadow:inset 3px 0 0 #EE82EE,0 8px 18px rgba(50,29,53,.14)}.admin-avatar-wrap,.smartgen-quick-mark{background:linear-gradient(135deg,#DA70D6,#EE82EE)}.button:focus-visible,.icon-action:focus-visible{outline-color:#EE82EE}
