@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+const path = 'web/admin/guide/index.html';
+const source = fs.readFileSync(path, 'utf8');
+const close = source.indexOf('</html>');
+const mainClose = source.indexOf('</main>');
+if (close < 0 || mainClose < 0 || close <= mainClose) throw new Error('Guide closing tags or appended section not found');
+const tail = source.slice(close).replace(/^<\/html>\s*/, '');
+if (!tail.trim()) process.exit(0);
+const base = source.slice(0, close);
+const withoutTail = base.replace(/\s*$/, '');
+const repaired = withoutTail.slice(0, mainClose) + '\n' + tail + '\n' + withoutTail.slice(mainClose) + '\n</html>\n';
+fs.writeFileSync(path, repaired);
