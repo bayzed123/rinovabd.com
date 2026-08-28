@@ -181,3 +181,18 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
   .related-controls{ flex-shrink:0; }
 }
 @media(prefers-reduced-motion:reduce){ .related-row{ scroll-behavior:auto; } }
+
+/* Rinova BD identity system: restrained seal, clean wordmark, and product corner mark. */
+.brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;}
+.brand-lockup{display:inline-flex;align-items:center;gap:8px;}
+.brand-mark{display:grid;place-items:center;width:30px;height:30px;border-radius:10px 10px 10px 3px;background:linear-gradient(145deg,#e85d8d,#b83d6b);color:#fff;font:600 16px/1 'Playfair Display',Georgia,serif;font-style:normal;letter-spacing:-.08em;box-shadow:0 5px 14px rgba(184,61,107,.22);}
+.brand-wordmark{font:600 23px/1 'Playfair Display',Georgia,serif;letter-spacing:-.065em;color:var(--ink);}
+.brand-wordmark b{font:700 9px/1 'DM Sans',system-ui,sans-serif;letter-spacing:.2em;color:var(--rinova-pink-deep);vertical-align:top;margin-left:2px;}
+.site-header .brand small,.footer-brand .brand small{display:block;line-height:1.15;}
+.product-image-wrap{position:relative;overflow:hidden;}
+.product-image-wrap::after{content:'R';position:absolute;right:10px;bottom:10px;z-index:3;display:grid;place-items:center;width:23px;height:23px;border:1px solid rgba(255,255,255,.72);border-radius:8px 8px 8px 2px;background:rgba(184,61,107,.88);color:#fff;font:600 12px/1 'Playfair Display',Georgia,serif;box-shadow:0 5px 12px rgba(50,29,53,.16);pointer-events:none;}
+.product-image-wrap .product-image{transition:transform .35s cubic-bezier(.23,1,.32,1);}
+.product-image-wrap:hover .product-image{transform:scale(1.035);}
+.hero-visual .seal{font-size:18px;letter-spacing:-.06em;}
+.hero-visual .seal small{letter-spacing:.18em;}
+@media(max-width:600px){.brand-wordmark{font-size:20px}.brand-mark{width:27px;height:27px;font-size:14px}.site-header .brand small{display:none}.product-image-wrap::after{right:8px;bottom:8px;width:21px;height:21px;font-size:11px;}}
