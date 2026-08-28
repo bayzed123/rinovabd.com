@@ -1,6 +1,4 @@
-(() => {
-  document.addEventListener('DOMContentLoaded', () => {
-    const assistant = document.getElementById('view-assistant');
-    if (assistant) assistant.classList.add('admin-persistent-assistant');
-  });
+/* Admin UI enhancements are intentionally kept in the dashboard stylesheet and app script. */
+(function () {
+  'use strict';
 })();
