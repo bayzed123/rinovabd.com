@@ -196,3 +196,19 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
 .hero-visual .seal{font-size:18px;letter-spacing:-.06em;}
 .hero-visual .seal small{letter-spacing:.18em;}
 @media(max-width:600px){.brand-wordmark{font-size:20px}.brand-mark{width:27px;height:27px;font-size:14px}.site-header .brand small{display:none}.product-image-wrap::after{right:8px;bottom:8px;width:21px;height:21px;font-size:11px;}}
+
+/* Persistent storefront mobile navigation */
+.global-mobile-nav{display:none;}
+@media(max-width:760px){
+  body{padding-bottom:calc(78px + env(safe-area-inset-bottom));}
+  .global-mobile-nav{position:fixed;left:0;bottom:0;width:100%;z-index:999;background:rgba(255,253,252,.97);border-top:1px solid rgba(50,29,53,.12);box-shadow:0 -8px 26px rgba(50,29,53,.1);display:grid;grid-template-columns:repeat(5,1fr);padding:8px 8px calc(8px + env(safe-area-inset-bottom));backdrop-filter:blur(16px);}
+  .global-mobile-nav a{position:relative;display:grid;justify-items:center;gap:4px;color:var(--muted);text-decoration:none;font-size:10px;font-weight:600;line-height:1.1;letter-spacing:.01em;min-width:0;padding:4px 2px;border-radius:12px;}
+  .global-mobile-nav a svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+  .global-mobile-nav a.is-active{color:var(--rinova-pink-deep,var(--accent));}
+  .global-mobile-nav a.is-active::before{content:'';position:absolute;top:-8px;width:24px;height:3px;border-radius:99px;background:var(--rinova-pink-deep,var(--accent));}
+  .global-mobile-nav .mobile-nav-badge{position:absolute;top:0;left:calc(50% + 5px);display:grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--rinova-pink-deep,#b83d6b);color:#fff;font-size:9px;line-height:1;box-shadow:0 2px 7px rgba(184,61,107,.28);}
+  .global-mobile-nav .mobile-nav-badge.is-empty{display:none;}
+  .chat-launcher{bottom:calc(88px + env(safe-area-inset-bottom))!important;}
+  .chat-panel{bottom:calc(142px + env(safe-area-inset-bottom))!important;}
+}
+@media(max-width:760px){main{padding-bottom:calc(80px + env(safe-area-inset-bottom));}}
