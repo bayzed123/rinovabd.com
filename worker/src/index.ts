@@ -1020,6 +1020,17 @@ app.get('/api/admin/overview', async (c) => {
   return json(c, { periodDays: period, revenue: revenue ?? { revenue: 0, orders: 0 }, grossProfit: profit?.grossProfit ?? 0, stock: stock ?? { units: 0, costValue: 0, retailValue: 0, needsRestock: 0, catalogue: 0 }, pipeline: pipeline.results, topProducts: topProducts.results });
 });
 
+function maskSecret(value: string | undefined) { const secret = normalize(value); return secret ? `${secret.slice(0, 3)}${'•'.repeat(Math.max(4, secret.length - 6))}${secret.slice(-3)}` : 'Not configured'; }
+app.post('/api/admin/steadfast/test', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  if (!steadfastConfigured(c.env)) return json(c, { error: 'SteadFast API key and Secret key are not configured.' }, 400);
+  try { const result = await steadfastRequest(c.env, '/balance'); return json(c, { ok: true, message: 'SteadFast credentials accepted.', balance: result.current_balance ?? result.balance ?? null }); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'SteadFast connection test failed.' }, 502); }
+});
+app.get('/api/admin/steadfast/config', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const requestUrl = new URL(c.req.url);
+  return json(c, { configured: steadfastConfigured(c.env), baseUrl: (c.env.STEADFAST_BASE_URL ?? 'https://portal.packzy.com/api/v1').replace(/\/$/, ''), apiKey: maskSecret(c.env.STEADFAST_API_KEY), secretKey: maskSecret(c.env.STEADFAST_SECRET_KEY), webhookToken: maskSecret(c.env.STEADFAST_WEBHOOK_TOKEN), webhookUrl: `${requestUrl.origin}/api/webhooks/steadfast`, supportedServices: ['SteadFast Courier', 'Pathao Courier', 'RedX', 'Paperfly', 'Sundarban Courier', 'Local delivery / pickup'] });
+});
 app.get('/api/admin/settings', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const result = await c.env.DB.prepare('SELECT setting_key AS key, setting_value AS value FROM store_settings ORDER BY setting_key').all<{ key: string; value: string }>();

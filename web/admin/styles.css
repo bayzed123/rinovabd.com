@@ -177,3 +177,6 @@ body,.app-shell,.main-panel{background:var(--admin-canvas)}.topbar{background:rg
 .barcode-label .barcode-pair>div{min-width:0;width:100%;}
 .barcode-label .barcode-pair svg{width:208px;height:38px;}
 @media print{.barcode-pair{break-inside:avoid}.barcode-label{min-height:166px}}
+
+/* SteadFast courier integration */
+.steadfast-panel{margin-top:18px}.steadfast-panel input[readonly]{background:#f8f3f4;color:#6c5d65;letter-spacing:.02em}.integration-ready{background:#e7f5ec!important;color:#247243!important}.integration-missing{background:#fff0f2!important;color:#a33659!important}.steadfast-book-button{display:block;margin-top:8px}.steadfast-book-button.is-complete{color:#247243;border-color:#9bc9aa;background:#eefaf1}
