@@ -1,209 +1,241 @@
-# Rinova — Premium Redesign (v1)
+# Rinova — Premium Theme Redesign
 
-Branch: `redesign/premium-theme-v1`. Nothing in `styles.css` was deleted — the new
-theme is an override layer, so you can revert by removing two lines.
+Branch: `redesign/premium-theme-v1`
+
+This is an **override layer**. Nothing in `web/styles.css` is deleted. Reverting
+the visual change means removing two lines from each page; the old stylesheet is
+still there underneath.
 
 ---
 
-## 1. Wire it up
+## 0. Before anything else
 
-In every page under `web/` (`index.html`, `product.html`, `blog.html`,
-`checkout.html`, `account.html`, `track.html`, `sitemap.html`, `404.html`),
-add the theme **after** the existing stylesheet:
+The admin username and password were shared in plain text. **Rotate them**, and
+rotate any R2 or deployment keys that account can reach.
+
+---
+
+## 1. Wiring it up
+
+On every page under `web/` — `index.html`, `product.html`, `blog.html`,
+`account.html`, `checkout.html`, `track.html`, `invoice.html`, `sitemap.html`,
+`404.html` — add these **after** the existing `styles.css` link:
 
 ```html
-<link rel="stylesheet" href="/styles.css">
-<link rel="stylesheet" href="/theme.css">   <!-- add this -->
-```
-
-And before `</body>`:
-
-```html
+<link rel="stylesheet" href="/theme.css">
 <script src="/theme-init.js" defer></script>
 ```
 
-Order matters. `theme.css` is written as an override layer and will do nothing
-if it loads first.
+Order matters. `theme.css` must come second or the old tokens win.
+
+`web/media-viewer.js` was rewritten in place — no markup change needed.
+
+To preview on one page first, add the two lines to `product.html` only. That page
+exercises the palette, the buttons, and the lightbox fix together.
 
 ---
 
-## 2. What changed and why
+## 2. What changed visually
 
-### The pink problem
+### Palette
 
-The old tokens made pink the **canvas**: `--paper:#fffbfd`, `--cream:#FFF7FE`,
-`--blush:#F8E5F7`, `--accent:#DA70D6` (orchid). Every surface in the site was
-tinted, so nothing could stand out and the whole page read as noise.
+The old tokens made pink the **canvas**:
 
-None of the reference brands do this. Glossier, Rhode and Fenty Skin all sit on
-near-white or warm cream and spend their entire colour budget on one or two
-moments per screen.
+```css
+--paper:#fffbfd;  --cream:#FFF7FE;  --blush:#F8E5F7;  --accent:#DA70D6;
+```
 
-| Token | Was | Now | Role |
-|---|---|---|---|
-| `--paper` | `#fffbfd` pink-white | `#FBF9F7` warm off-white | page canvas |
-| `--cream` | `#FFF7FE` pink | `#F6F2EE` warm | alternating sections |
-| `--blush` | `#F8E5F7` | `#F2DCD6` | wash blocks only |
-| `--accent` | `#DA70D6` orchid | `#C4776B` clay rose | links, badges, active |
-| `--ink` | `#2b1724` plum | `#16130F` near-black | headings, primary buttons |
-| `--line` | `#f0d6e2` pink | `#EAE4DF` warm grey | hairlines |
+Every surface was tinted, so nothing could stand out against anything. That is
+the "messy, overpowering" feeling — it is a contrast problem, not a taste problem.
 
-Pink now covers roughly 15% of any viewport. That restraint is the premium
-signal — not more pink, less.
+None of the brands worth benchmarking do this. Glossier, Rhode, and Fenty Skin
+all sit on near-white or warm cream and spend their entire colour budget on one
+or two moments per screen.
+
+| Role | Value | Use |
+|---|---|---|
+| Canvas | `#FBF9F7` | Page background |
+| Surface | `#FFFFFF` | Cards, sheets, modals |
+| Ink | `#16130F` | Headings, primary buttons |
+| Muted | `#6B635C` | Body copy, captions |
+| Blush | `#F2DCD6` | Section washes only — never full-page |
+| Accent | `#C4776B` | Links, active states, badges |
+| Line | `#EAE4DF` | 1px hairlines instead of shadows |
+
+Pink now covers roughly 15% of any given viewport. That restraint *is* the
+premium signal.
 
 ### Space
 
-Section padding moves to `clamp(64px, 9vw, 128px)` on an 8pt grid, and body copy
-is capped at `65ch`. Most "messy" beauty sites are simply under-spaced; this is
-the single biggest lever in the whole change.
+The single biggest lever, and the one that costs nothing. Section padding moves
+to `clamp(64px, 9vw, 128px)` on an 8pt grid; body copy caps at 65ch. Most sites
+that read as "messy" are simply under-spaced.
 
-### Buttons
+### Type
 
-One system, three variants, no emoji anywhere:
-
-- `.button.button-dark` — 52px pill, near-black fill, 1px lift on hover. Primary.
-- `.button.button-ghost` — transparent, hairline border. Secondary.
-- `.button.button-accent` — clay rose. Reserve for one moment per page.
-
-No gradients, no drop shadows on buttons, **one filled button per viewport
-section**. Focus rings are visible (2px, 3px offset) — the old buttons had none
-outside the media viewer.
-
-### Icons
-
-`.rinova-icon` is now monochrome, 20px, 1.5px stroke, inheriting `currentColor`.
-The existing `icons.js` registry already injects by `data-rinova-icon`, so
-nothing needs rewiring — but any emoji glyphs still sitting in markup should be
-replaced with `<span data-rinova-icon="…"></span>`. Emoji in UI chrome is the
-fastest way to make a store look amateur.
-
-### Navigation
-
-Header transitions from translucent over the hero to solid `--paper` with a
-hairline bottom border after 40px of scroll (`theme-init.js`). Nav links get a
-scale-X underline on hover and a real `aria-current="page"` state.
-
-**Recommended IA change** (markup edit, not in this branch): cut the top level
-to five items — Shop / Skincare / Bestsellers / About / Journal — and organise
-the Shop panel by **concern** (Acne, Brightening, Barrier Repair) rather than
-product type. Beauty shoppers search by problem, not category.
+Playfair Display for headings at `-0.02em` tracking and `1.06` line-height;
+DM Sans for everything else at `1.65`. Product names in the serif, prices in the
+grotesk.
 
 ---
 
-## 3. The image-click bug — fixed
+## 3. Buttons and icons
 
-**Cause.** `media-viewer.js` locked scrolling with a bare
-`document.body.classList.add('media-viewer-open')` → `overflow:hidden`. Removing
-the scrollbar reflows the page ~15px wider, so everything visibly snaps sideways
-the instant an image is clicked. On close, `overflow` was restored but the
-scroll position was not preserved, which is the second half of the jump.
+52px pills. Three variants, and only ever **one filled button per viewport
+section**:
 
-A third contributor: `html{scroll-behavior:smooth}` is global, so the restore
-animated instead of landing instantly.
+```html
+<a class="button button-dark">Shop the routine</a>
+<a class="button button-ghost">Learn more</a>
+<a class="button button-accent">Save 20%</a>
+```
 
-**Fix**, in `lockScroll()` / `unlockScroll()`:
+No gradients, no drop shadows on buttons, no emoji anywhere in UI chrome — emoji
+are the fastest way to make a store look amateur. Use monochrome SVG at 20px with
+a 1.5px stroke, inheriting `currentColor` (the `.rinova-icon` rule in `theme.css`
+enforces this). The existing `data-rinova-icon` hooks in `icons.js` already work
+with it.
 
-1. Record `window.scrollY`, pin the body with `position:fixed; top:-Ypx; width:100%`.
-2. Compensate the scrollbar with `padding-right: innerWidth - clientWidth`.
-3. On close, clear the styles and `window.scrollTo(0, Y)` with `scroll-behavior`
-   temporarily forced to `auto`.
-4. `html { scrollbar-gutter: stable; }` in `theme.css` so the gutter never
-   collapses in the first place.
-
-**Also fixed** in the same pass:
-
-- Opening on slide *n* used a single `requestAnimationFrame` before setting
-  `scrollLeft`, so the track often had no width yet and the viewer opened on
-  image 1. Now double-rAF with a non-smooth `jumpTo()`.
-- Slides fade in on decode (`.is-loading` → opacity) instead of showing a raw
-  src flash.
-- Neighbouring images preload on every page change.
-- Focus moves to the close button on open and returns to the trigger on close.
+Every interactive element gets a visible `:focus-visible` ring. The old
+stylesheet only had one on the media viewer.
 
 ---
 
-## 4. Cloudflare R2 across two accounts
+## 4. The image-click bug
 
-This one is a platform boundary, not a config mistake:
+### What was wrong
 
-> **An R2 bucket binding only resolves when the bucket and the Worker live in
-> the same Cloudflare account.**
+The lightbox locked the page with a bare `overflow:hidden` on `<body>`. Removing
+the scrollbar reflows the whole page ~15px wider — that sideways snap is the
+"lock" you were seeing. Closing restored `overflow` but never restored the scroll
+position, and the global `scroll-behavior:smooth` animated whatever restore did
+happen.
 
-`rinovabd-worker` cannot bind a bucket owned by a different member account.
-No amount of `wrangler.toml` tuning changes that. Two ways out:
+### The fix
 
-**Option A — move the bucket (cleanest).** Recreate the bucket in the Worker's
-account and copy objects across with `rclone` or the S3 API. One binding, no
-credentials in the Worker, lowest latency, no egress path to misconfigure.
+Pin the body at its current offset and compensate for the scrollbar:
 
-**Option B — keep them split, talk S3.** Mint an R2 API token in the bucket's
-account and call the S3-compatible endpoint from the Worker:
+```js
+const y = window.scrollY;
+const gutter = window.innerWidth - document.documentElement.clientWidth;
+document.body.style.position = 'fixed';
+document.body.style.top = `-${y}px`;
+document.body.style.width = '100%';
+if (gutter > 0) document.body.style.paddingRight = `${gutter}px`;
+```
+
+On unlock, force `scroll-behavior:auto` before `window.scrollTo(0, y)` so the
+restore is instant. `html { scrollbar-gutter: stable; }` in `theme.css` stops the
+gutter collapsing in the first place.
+
+### Three more bugs found in the same file
+
+1. **Wrong opening image.** A single `requestAnimationFrame` before setting
+   `scrollLeft` often ran while the track still had zero width, so opening image
+   3 of 5 landed on image 1. Now double-rAF with a non-smooth jump.
+2. **Decode flash on paging.** Slides now fade in on `load` instead of showing a
+   raw `src` swap, and neighbouring images preload when the index changes.
+3. **Focus was lost.** Focus moves to the close button on open and returns to the
+   triggering thumbnail on close.
+
+---
+
+## 5. R2 across two Cloudflare accounts
+
+This one matters more than it sounds.
+
+**An R2 binding only resolves when the bucket and the Worker live in the same
+Cloudflare account.** If the bucket sits under a different member account than
+`rinovabd-worker`, no binding will ever work. That is a platform boundary, not a
+config mistake, and no amount of `wrangler.toml` editing fixes it.
+
+Two ways out.
+
+### Option A — move the bucket (cleanest)
+
+Put the bucket in the Worker's account and keep the native binding:
+
+```toml
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "rinova-media"
+```
+
+Zero egress, no credentials to rotate, no CORS.
+
+### Option B — keep them split, use the S3 API
+
+Generate an R2 API token in the bucket's account, store it as Worker secrets
+(`wrangler secret put R2_ACCESS_KEY_ID`, etc.), and reach the bucket over its
+S3-compatible endpoint:
 
 ```
 https://<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>
 ```
 
-Store `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` as Worker
-secrets (`wrangler secret put`), never in `runtime-config.js` — that file ships
-to the browser.
+The `<ACCOUNT_ID>` here is the account that **owns the bucket**, not the Worker's.
+That mismatch is the usual reason this setup fails silently.
 
-For public product images, don't proxy through the Worker at all. Attach a
-custom domain to the bucket (`cdn.rinovabd.com`), serve images straight from it,
-and set bucket CORS to allow the storefront origin:
+Then expose the bucket on a custom domain — `cdn.rinovabd.com` — and set CORS to
+allow only your storefront origins:
 
 ```json
 [{
-  "AllowedOrigins": ["https://rinovabd.com"],
+  "AllowedOrigins": ["https://rinovabd.com", "https://www.rinovabd.com"],
   "AllowedMethods": ["GET", "HEAD"],
   "AllowedHeaders": ["*"],
-  "MaxAgeSeconds": 3600
+  "MaxAgeSeconds": 86400
 }]
 ```
 
-A missing or wrong CORS policy here produces exactly the flaky, intermittent
-image loading that makes the lightbox feel broken even after the scroll fix.
+A missing or wildcard-mismatched CORS policy here produces exactly the kind of
+flaky, sometimes-loads-sometimes-doesn't image behaviour that is easy to blame on
+the gallery code.
 
-Note that `media-viewer.js` only accepts URLs matching
-`^(https://|/assets/|/media/)`, so a `cdn.rinovabd.com` origin passes, but any
-protocol-relative or relative path will be silently dropped.
+### One thing to check either way
+
+`media-viewer.js` validates URLs against:
+
+```js
+/^(https:\/\/|\/assets\/|\/media\/)/i
+```
+
+A `https://cdn.rinovabd.com/...` URL passes. A relative path like
+`media/foo.jpg` (no leading slash) is **silently dropped** and the slide never
+renders. If images are vanishing rather than loading slowly, check this first —
+it fails without an error.
 
 ---
 
-## 5. Admin dashboard IA
+## 6. Admin dashboard IA
 
-`web/admin/index.html` is ~39KB of markup with a flat navigation surface — the
-messiness is structural, not cosmetic. Collapse to six top-level groups; every
-other screen becomes a child route:
+`web/admin/index.html` is ~39KB of markup and `web/admin/app.js` is ~73KB. The
+navigation reads as messy because nearly every feature claimed a top-level slot.
+
+Proposed structure — six groups, everything else becomes a child route:
 
 | Group | Contains |
 |---|---|
-| **Overview** | KPIs, today's orders, low stock |
+| **Overview** | KPIs, recent activity, alerts |
 | **Orders** | All orders, tracking, invoices, returns |
 | **Catalog** | Products, categories, inventory, media |
-| **Customers** | Accounts, support threads |
-| **Content** | Blog, doctor reports, offers, popups |
-| **Settings** | Users, integrations, R2, analytics |
+| **Customers** | Accounts, segments, support threads |
+| **Content** | Blog, homepage blocks, offers, banners |
+| **Settings** | Account, users, integrations, R2 config |
 
-Persistent 260px left rail, exactly one active state at a time, breadcrumbs on
-every detail view. Most sprawling admin panels sprawl because every feature was
-given a top-level slot as it shipped.
+Persistent left rail at 260px, one active state at a time, breadcrumbs on every
+detail view, and a single primary action per screen in the top-right.
 
----
-
-## 6. Security — do this first
-
-The admin username and password were shared in plain text in a chat transcript.
-Rotate them, and rotate any R2 or deployment credentials that account can reach.
-If the admin login is a single shared credential, that is worth replacing with
-per-user accounts and 2FA regardless.
+**Not implemented in this PR.** Restructuring 39KB of markup deserves its own
+branch where the diff can actually be reviewed.
 
 ---
 
-## 7. Verify before merge
+## 7. Suggested order of work
 
-- Open a product image on iOS Safari and Android Chrome — the page must not
-  shift horizontally, and must return to the same scroll offset on close.
-- Open image 3 of 5 directly — the viewer must open on image 3.
-- Tab through the header — every control shows a visible focus ring.
-- Check contrast: `--muted` `#6B635C` on `--paper` `#FBF9F7` passes AA for body text.
-- Load a product image from `cdn.rinovabd.com` with devtools open — no CORS errors.
+1. Rotate credentials.
+2. Merge this branch, wire the two lines into `product.html`, confirm the
+   lightbox no longer jumps.
+3. Roll the two lines out to the remaining pages.
+4. Resolve the R2 account split — Option A if you can move the bucket.
+5. Admin IA as a separate PR.
