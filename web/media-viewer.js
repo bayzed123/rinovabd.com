@@ -11,6 +11,8 @@
   let dragState;
   let scrollTimer;
   let lastTap = 0;
+  let dismissState;
+  let closeTimer;
 
   const safeUrl = (value) => {
     const url = String(value ?? '').trim();
@@ -44,11 +46,12 @@
     viewer.className = 'media-viewer';
     viewer.hidden = true;
     viewer.setAttribute('aria-hidden', 'true');
-    viewer.innerHTML = `<div class="media-viewer-backdrop" data-media-close></div><div class="media-viewer-dialog" role="dialog" aria-modal="true" aria-label="Product image viewer"><header class="media-viewer-head"><strong class="media-viewer-title"></strong><button type="button" class="media-viewer-close" data-media-close aria-label="Close image viewer"><span data-rinova-icon="close"></span></button></header><div class="media-viewer-stage"><button type="button" class="media-viewer-arrow media-viewer-prev" aria-label="Previous image"><span data-rinova-icon="arrowLeft"></span></button><div class="media-viewer-track"></div><button type="button" class="media-viewer-arrow media-viewer-next" aria-label="Next image"><span data-rinova-icon="arrowRight"></span></button></div><footer class="media-viewer-tools"><button type="button" data-media-zoom="out" aria-label="Zoom out"><span data-rinova-icon="minus"></span></button><span class="media-viewer-zoom">100%</span><button type="button" data-media-zoom="in" aria-label="Zoom in">+</button><button type="button" data-media-zoom="reset">Reset</button><span class="media-viewer-hint">Swipe between images · double-tap to zoom</span></footer></div>`;
+    viewer.innerHTML = `<div class="media-viewer-backdrop" data-media-close></div><div class="media-viewer-dialog" role="dialog" aria-modal="true" aria-label="Product image viewer"><header class="media-viewer-head"><strong class="media-viewer-title"></strong><button type="button" class="media-viewer-close" data-media-close aria-label="Close image viewer"><span data-rinova-icon="close"></span></button></header><div class="media-viewer-stage"><button type="button" class="media-viewer-arrow media-viewer-prev" aria-label="Previous image"><span data-rinova-icon="arrowLeft"></span></button><div class="media-viewer-track"></div><button type="button" class="media-viewer-arrow media-viewer-next" aria-label="Next image"><span data-rinova-icon="arrowRight"></span></button></div><footer class="media-viewer-tools"><button type="button" data-media-zoom="out" aria-label="Zoom out"><span data-rinova-icon="minus"></span></button><span class="media-viewer-zoom">100%</span><button type="button" data-media-zoom="in" aria-label="Zoom in"><span data-rinova-icon="plus"></span></button><button type="button" data-media-zoom="reset">Reset</button><span class="media-viewer-hint">Swipe between images · double-tap to zoom</span></footer></div>`;
     document.body.appendChild(viewer);
     track = viewer.querySelector('.media-viewer-track');
     title = viewer.querySelector('.media-viewer-title');
     zoomLabel = viewer.querySelector('.media-viewer-zoom');
+    const dialog = viewer.querySelector('.media-viewer-dialog');
     viewer.addEventListener('click', (event) => {
       if (event.target.closest('[data-media-close]')) close();
       const zoomButton = event.target.closest('[data-media-zoom]');
@@ -68,6 +71,40 @@
         }
       }, 120);
     }, { passive: true });
+    const resetDismiss = () => {
+      dismissState = null;
+      viewer.classList.remove('media-viewer-dismissing');
+      viewer.style.removeProperty('--media-dismiss-y');
+    };
+    dialog.addEventListener('touchstart', (event) => {
+      if (zoom > 1) return;
+      const touch = event.changedTouches[0];
+      if (touch) dismissState = { x: touch.clientX, y: touch.clientY, deltaY: 0, active: false };
+    }, { passive: true });
+    dialog.addEventListener('touchmove', (event) => {
+      if (!dismissState || zoom > 1) return;
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - dismissState.x;
+      const deltaY = touch.clientY - dismissState.y;
+      if (deltaY <= 0 || Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (dismissState.active) resetDismiss();
+        return;
+      }
+      dismissState.active = true;
+      dismissState.deltaY = deltaY;
+      event.preventDefault();
+      viewer.classList.add('media-viewer-dismissing');
+      viewer.style.setProperty('--media-dismiss-y', `${Math.min(deltaY, window.innerHeight)}px`);
+    }, { passive: false });
+    dialog.addEventListener('touchend', () => {
+      if (!dismissState) return;
+      const shouldClose = dismissState.active && dismissState.deltaY > 96;
+      resetDismiss();
+      if (shouldClose) close();
+    }, { passive: true });
+    dialog.addEventListener('touchcancel', resetDismiss, { passive: true });
+
     track.addEventListener('pointerdown', (event) => {
       const image = event.target.closest('.media-viewer-slide img');
       if (!image || zoom <= 1) return;
@@ -139,23 +176,31 @@
   }
 
   function close() {
-    if (!viewer || viewer.hidden) return;
+    if (!viewer) return;
+    clearTimeout(closeTimer);
+    dismissState = null;
+    dragState = null;
+    viewer.classList.remove('media-viewer-dismissing');
+    viewer.style.removeProperty('--media-dismiss-y');
     viewer.classList.remove('open');
-    document.body.classList.remove('media-viewer-open');
-    setTimeout(() => { if (!viewer.classList.contains('open')) viewer.hidden = true; }, 180);
     viewer.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('media-viewer-open');
+    document.documentElement.classList.remove('media-viewer-open');
+    closeTimer = setTimeout(() => { if (!viewer.classList.contains('open')) viewer.hidden = true; }, 220);
   }
 
   function open(items, index = 0, productTitle = 'Product images') {
     ensureViewer();
     slides = (Array.isArray(items) ? items : []).map((item) => ({ type: item?.type === 'video' ? 'video' : 'image', url: safeUrl(typeof item === 'string' ? item : item?.url), alt: item?.alt || productTitle })).filter((item) => item.url);
     if (!slides.length) return;
+    clearTimeout(closeTimer);
     current = Math.max(0, Math.min(slides.length - 1, Number(index) || 0));
     title.textContent = productTitle;
     track.innerHTML = slides.map((item, slideIndex) => `<div class="media-viewer-slide" data-slide-index="${slideIndex}">${item.type === 'video' ? `<video controls playsinline preload="metadata"><source src="${escapeHtml(item.url)}">Your browser does not support this video.</video>` : `<img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.alt)}" draggable="false" />`}</div>`).join('');
     viewer.hidden = false;
     viewer.setAttribute('aria-hidden', 'false');
     document.body.classList.add('media-viewer-open');
+    document.documentElement.classList.add('media-viewer-open');
     setZoom('reset', false);
     updateControls();
     requestAnimationFrame(() => { track.scrollLeft = current * track.clientWidth; viewer.classList.add('open'); applyTransform(); });
