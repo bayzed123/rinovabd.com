@@ -729,10 +729,23 @@ app.post('/api/account/returns', async (c) => {
   return json(c, { ok: true, return: result }, 201);
 });
 
-app.get('/api/orders/:orderCode/invoice', async (c) => {
+app.get('/api/admin/invoices/:invoiceNumber', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const invoiceNumber = normalize(c.req.param('invoiceNumber'));
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(invoiceNumber, invoiceNumber).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  if (!order) return json(c, { error: 'Invoice not found.' }, 404);
+  const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || invoiceNumber;
+  if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
+  order.invoiceNumber = cleanInvoiceNumber;
+  const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku AS sku, p.barcode AS barcode, p.slug AS productSlug, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
+  return json(c, { invoice: { ...order, total: order.subtotal + order.deliveryFee }, items: items.results });
+});
+
+app.get('/api/orders/:orderIdentifier/invoice', async (c) => {
   const admin = await adminPrincipal(c);
   const customerSession = admin ? null : await customerPrincipal(c);
-  const order = await c.env.DB.prepare('SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(normalize(c.req.param('orderCode'))).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  const identifier = normalize(c.req.param('orderIdentifier'));
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('RNV-%06d', o.id) = ?").bind(identifier, identifier, identifier).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
   if (!order || (!admin && (!customerSession || customerSession.customerId !== order.customerId))) return json(c, { error: 'Order not found.' }, 404);
   const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || order.orderCode;
   if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
@@ -797,12 +810,13 @@ app.get('/api/admin/pos/products', async (c) => {
 app.post('/api/admin/pos/sales', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const body = await c.req.json<{ items?: Array<{ productId: number; quantity: number }>; paymentMethod?: 'cash'|'bkash'|'nagad'|'rocket'|'card'; discount?: number }>();
+  const body = await c.req.json<{ items?: Array<{ sku: string; quantity: number }>; paymentMethod?: 'cash'|'bkash'|'nagad'|'rocket'|'card'; discount?: number }>();
   if (!body.items?.length || !body.paymentMethod) return json(c, { error: 'POS items and payment method are required.' }, 400);
-  const ids = body.items.map((item) => item.productId);
-  const products = await c.env.DB.prepare(`SELECT id, name, barcode, price, cost_price AS costPrice, stock FROM products WHERE active = 1 AND id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<{ id: number; name: string; barcode: string | null; price: number; costPrice: number; stock: number }>();
-  const byId = new Map(products.results.map((product) => [product.id, product]));
-  const items = body.items.map((item) => { const product = byId.get(item.productId); if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A POS product is unavailable or out of stock.'); return { ...item, product }; });
+  const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
+  if (skus.length !== body.items.length) return json(c, { error: 'Each POS item must include a product SKU.' }, 400);
+  const products = await c.env.DB.prepare(`SELECT id, name, sku, barcode, price, cost_price AS costPrice, stock FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; barcode: string | null; price: number; costPrice: number; stock: number }>();
+  const bySku = new Map(products.results.map((product) => [product.sku, product]));
+  const items = body.items.map((item) => { const product = bySku.get(normalize(item.sku)); if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A POS product is unavailable or out of stock.'); return { ...item, product }; });
   const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
   const discount = Math.max(0, Math.min(subtotal, Number(body.discount) || 0));
   const receiptNumber = `POS-${Date.now().toString(36).toUpperCase()}`;
@@ -1108,17 +1122,17 @@ app.patch('/api/admin/categories/:id', async (c) => {
   }
 });
 
-app.get('/api/admin/products/:id', async (c) => {
+app.get('/api/admin/products/sku/:sku', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const id = Number(c.req.param('id'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?').bind(id).first();
+  const sku = normalize(c.req.param('sku'));
+  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.sku = ?').bind(sku).first();
   return product ? json(c, { product }) : json(c, { error: 'Product not found.' }, 404);
 });
 
-app.get('/api/admin/products/:id/stock-movements', async (c) => {
+app.get('/api/admin/products/sku/:sku/stock-movements', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const id = Number(c.req.param('id'));
-  const result = await c.env.DB.prepare('SELECT id, quantity_delta AS quantityDelta, quantity_after AS quantityAfter, reason, note, actor, created_at AS createdAt FROM stock_movements WHERE product_id = ? ORDER BY created_at DESC, id DESC LIMIT 100').bind(id).all();
+  const sku = normalize(c.req.param('sku'));
+  const result = await c.env.DB.prepare('SELECT sm.id, sm.quantity_delta AS quantityDelta, sm.quantity_after AS quantityAfter, sm.reason, sm.note, sm.actor, sm.created_at AS createdAt FROM stock_movements sm JOIN products p ON p.id = sm.product_id WHERE p.sku = ? ORDER BY sm.created_at DESC, sm.id DESC LIMIT 100').bind(sku).all();
   return json(c, { movements: result.results });
 });
 
@@ -1153,35 +1167,35 @@ app.post('/api/admin/products', async (c) => {
   return json(c, { ok: true, product: result, createdBy: username }, 201);
 });
 
-app.patch('/api/admin/products/:id', async (c) => {
+app.patch('/api/admin/products/sku/:sku', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const id = Number(c.req.param('id'));
+  const sku = normalize(c.req.param('sku'));
   const body = await c.req.json<Record<string, unknown>>();
   const status = ['active', 'draft', 'archived'].includes(normalize(body.status)) ? normalize(body.status) : null;
   const active = status === null ? null : status === 'active' ? 1 : 0;
   const volumeTiers = body.volumeTiers === undefined ? null : JSON.stringify(parseVolumeTiers(body.volumeTiers));
   const mediaJson = body.mediaJson === undefined ? null : JSON.stringify(parseProductMedia(body.mediaJson));
   const badgesJson = body.badgesJson === undefined && body.badges === undefined ? null : JSON.stringify(parseProductBadges(body.badgesJson ?? body.badges));
-  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), editor_note = COALESCE(?, editor_note), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), badges_json = COALESCE(?, badges_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.editorNote === undefined ? null : normalize(body.editorNote), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, badgesJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, id).run();
-  return json(c, { ok: result.meta.changes > 0, productId: id, updatedBy: username });
+  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), editor_note = COALESCE(?, editor_note), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), badges_json = COALESCE(?, badges_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE sku = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.editorNote === undefined ? null : normalize(body.editorNote), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, badgesJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, sku).run();
+  return json(c, { ok: result.meta.changes > 0, productSku: sku, updatedBy: username });
 });
 
-app.post('/api/admin/products/:id/stock', async (c) => {
+app.post('/api/admin/products/sku/:sku/stock', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const id = Number(c.req.param('id'));
+  const sku = normalize(c.req.param('sku'));
   const body = await c.req.json<{ mode?: 'delta' | 'set'; quantity?: number; reason?: string; note?: string }>();
-  const product = await c.env.DB.prepare('SELECT stock FROM products WHERE id = ?').bind(id).first<{ stock: number }>();
+  const product = await c.env.DB.prepare('SELECT id, sku, stock FROM products WHERE sku = ?').bind(sku).first<{ id: number; sku: string; stock: number }>();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reason = ['restock','return','damage','adjustment','sale','cancellation'].includes(normalize(body.reason)) ? normalize(body.reason) : 'adjustment';
   const next = body.mode === 'set' ? Number(body.quantity) : product.stock + Number(body.quantity);
   if (!Number.isFinite(next) || next < 0) return json(c, { error: 'Stock cannot be negative.' }, 400);
   await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Math.floor(next), id),
-    c.env.DB.prepare('INSERT INTO stock_movements(product_id, quantity_delta, quantity_after, reason, note, actor) VALUES (?, ?, ?, ?, ?, ?)').bind(id, Math.floor(next - product.stock), Math.floor(next), reason, normalize(body.note) || null, username),
+    c.env.DB.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE sku = ?').bind(Math.floor(next), sku),
+    c.env.DB.prepare('INSERT INTO stock_movements(product_id, quantity_delta, quantity_after, reason, note, actor) VALUES (?, ?, ?, ?, ?, ?)').bind(product.id, Math.floor(next - product.stock), Math.floor(next), reason, normalize(body.note) || null, username),
   ]);
-  return json(c, { ok: true, productId: id, previousStock: product.stock, stock: Math.floor(next), quantityDelta: Math.floor(next - product.stock) });
+  return json(c, { ok: true, productSku: product.sku, previousStock: product.stock, stock: Math.floor(next), quantityDelta: Math.floor(next - product.stock) });
 });
 
 app.get('/api/health', (c) => json(c, { ok: true, service: c.env.SHOP_NAME, timestamp: new Date().toISOString() }));
@@ -1200,7 +1214,7 @@ app.get('/api/customer-tracking', async (c) => {
   const order = orderCode
     ? await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>()
     : invoiceNumber
-      ? await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ?').bind(invoiceNumber).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>()
+      ? await c.env.DB.prepare("SELECT o.order_code AS orderCode, printf('RNV-%06d', o.id) AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('RNV-%06d', o.id) = ?").bind(invoiceNumber, invoiceNumber).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>()
       : await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.phone = ? ORDER BY o.created_at DESC LIMIT 1').bind(phone).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>();
   if (!order || (orderCode && phone && order.phone !== phone)) return json(c, { error: 'Order not found.' }, 404);
   const courierStatus = order.courierStatus ?? (order.status === 'delivered' ? 'delivered' : order.status);
@@ -1373,7 +1387,7 @@ app.get('/api/products', async (c) => {
 
 app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR CAST(p.id AS TEXT) = ?) LIMIT 1').bind(slug, slug).first();
+  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1').bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
   const response = json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
@@ -1411,24 +1425,25 @@ app.post('/api/orders', async (c) => {
   const body = await c.req.json<{
     name: string; phone: string; email?: string; address: string; specialNote?: string;
     paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
-    items: Array<{ productId: number; quantity: number }>;
+    items: Array<{ sku: string; quantity: number }>;
   }>();
   const address = normalize(body.address);
   if (!body.name || !body.phone || !address || !body.items?.length) return json(c, { error: 'Please complete customer, address, and cart details.' }, 400);
   const zone: 'dhaka' | 'outside-dhaka' = /\bdhaka\b/i.test(address) || address.includes('ঢাকা') ? 'dhaka' : 'outside-dhaka';
   const deliveryFee = zone === 'dhaka' ? 90 : 150;
   const paymentMethod = ['cod', 'bkash', 'nagad', 'rocket'].includes(normalize(body.paymentMethod)) ? normalize(body.paymentMethod) : 'cod';
-  const productIds = body.items.map((item) => item.productId);
-  const products = await c.env.DB.prepare(`SELECT id, name, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ id: number; name: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
-  const byId = new Map(products.results.map((product) => [product.id, product]));
+  const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
+  if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
+  const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
+  const bySku = new Map(products.results.map((product) => [product.sku, product]));
   const lineItems = body.items.map((item) => {
-    const product = byId.get(item.productId);
+    const product = bySku.get(normalize(item.sku));
     if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A selected product is unavailable or out of stock.');
     const minimum = Math.max(1, Number(product.minOrderQty || 1));
     if (item.quantity < minimum) throw new Error(`${product.name} requires a minimum order quantity of ${minimum}.`);
     const tiers = parseVolumeTiers(product.volumeTiersJson);
     const tier = tiers.filter((entry) => item.quantity >= entry.minQty).at(-1);
-    return { ...item, product, unitPrice: tier?.price ?? product.price };
+    return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? product.price };
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
@@ -1467,11 +1482,11 @@ app.patch('/api/orders/:orderCode/status', async (c) => {
   return json(c, { ok: true, orderCode, status: body.status });
 });
 
-app.get('/api/orders/:orderCode', async (c) => {
-  const orderCode = normalize(c.req.param('orderCode'));
-  const order = await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first();
+app.get('/api/orders/:orderIdentifier', async (c) => {
+  const identifier = normalize(c.req.param('orderIdentifier'));
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, printf('RNV-%06d', o.id) AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(identifier, identifier, identifier).first();
   if (!order) return json(c, { error: 'Order not found.' }, 404);
-  const items = await c.env.DB.prepare('SELECT product_name AS productName, quantity, unit_price AS unitPrice FROM order_items WHERE order_id = (SELECT id FROM orders WHERE order_code = ?)').bind(orderCode).all();
+  const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku AS sku FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id').bind((order as { id: number }).id).all();
   return json(c, { order, items: items.results });
 });
 

@@ -46,7 +46,7 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | GET | `/api/locations?q=` | Searchable district and upazila directory |
 | GET | `/api/delivery-fee` | Automatic zone and fee calculation |
 | POST | `/api/orders` | Create a COD or mobile-payment order |
-| GET | `/api/orders/:orderCode/invoice` | Secure invoice data for customer or admin print view |
+| GET | `/api/orders/:orderIdentifier/invoice` | Secure invoice data resolved by order code or clean invoice number; barcode payload is invoice-only |
 | POST | `/api/account/register` | Create a customer account |
 | POST | `/api/account/login` | Sign in a customer account |
 | GET | `/api/account/me` | Read the current customer profile |
@@ -60,15 +60,17 @@ The production-style Worker configuration is in `worker/wrangler.toml`. The D1 s
 | POST | `/api/admin/logout` | Revoke the current admin session |
 | GET | `/api/admin/overview?days=30` | Dashboard revenue, profit, stock and pipeline metrics |
 | GET/PUT | `/api/admin/settings` | Read or update store settings |
-| GET | `/api/admin/categories` | Admin category list |
+| GET/POST/PATCH | `/api/admin/categories` and `/api/admin/categories/:id` | Admin category management |
+| GET | `/api/admin/invoices/:invoiceNumber` | Resolve a clean invoice number to client data and linked SKU items |
 | GET/POST | `/api/admin/products` | Search or create products |
-| GET/PATCH | `/api/admin/products/:id` | Read or edit a product |
-| POST | `/api/admin/products/:id/stock` | Add a stock ledger movement |
-| GET | `/api/admin/products/:id/stock-movements` | Read product stock history |
+| GET | `/api/admin/products/sku/:sku` | Read a product by SKU |
+| PATCH | `/api/admin/products/sku/:sku` | Edit a product by SKU |
+| GET | `/api/admin/products/sku/:sku/stock-movements` | Read stock history by SKU |
+| POST | `/api/admin/products/sku/:sku/stock` | Add a stock ledger movement by SKU |
 | GET | `/api/admin/orders` | Search and filter orders for admin |
 | GET/PATCH | `/api/admin/returns` and `/api/admin/returns/:id` | Review, receive and refund returns |
 | GET | `/api/admin/pos/products` | Search active products by name, SKU or barcode |
-| POST | `/api/admin/pos/sales` | Complete an in-store POS sale and stock movement |
+| POST | `/api/admin/pos/sales` | Complete an in-store POS sale and stock movement using SKU items |
 | GET | `/api/admin/content` | Read CMS blocks, pages, posts and offers |
 | PUT | `/api/admin/content/:key` | Publish a CMS block/banner |
 | POST | `/api/admin/pages` | Create or update a page |
@@ -113,7 +115,7 @@ The courier adapter uses the documented order creation and status lookup paths a
 
 The storefront floating support launcher provides two dynamic choices: Cloudflare Workers AI-backed shop support and a WhatsApp redirect to `+880 1738-745949`. The customer assistant is limited to product, price, stock, usage, delivery, orders, returns, payments, and store policy. The private `/admin` assistant receives operational summaries for staff, owner, and administrator support, but it cannot execute irreversible mutations or reveal credentials. Cloudflare Workers AI is called through the bound `AI` service using configurable `AI_MODEL`; if it fails and Gemini secrets are configured, the Worker tries the configured Gemini keys in sequence.
 
-Customer-facing account, checkout, and printable invoice entry points are `/account.html`, `/checkout.html`, and `/invoice.html?order=...`. The hidden Clothing category is seeded as inactive so it remains prepared for a future sector without appearing in the current storefront. POS receipt printing is browser-based and uses the existing barcode/SKU data.
+Customer-facing account, checkout, and printable invoice entry points are `/account.html`, `/checkout.html`, and `/invoice.html?order=...` or `/invoice.html?invoice=RNV-000001`. The printable invoice barcode encodes only the clean sequential invoice number. The admin Barcode Generator supports online SmartGen validation, explicit product saving, manual offline queueing, CSV/JSON downloads, printable labels, and invoice-number scanner lookup. The hidden Clothing category is seeded as inactive so it remains prepared for a future sector without appearing in the current storefront. POS receipt printing is browser-based and uses the existing barcode/SKU data.
 
 ## Verification
 

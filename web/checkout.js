@@ -3,7 +3,7 @@ const bag = JSON.parse(localStorage.getItem('rinova-bag') || '[]');
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
 const track = (name, params = {}) => window.rinovaAnalytics?.track ? window.rinovaAnalytics.track(name, params) : (window.dataLayer = window.dataLayer || [], window.dataLayer.push({ event: name, ...params }));
-const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
+const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.sku || item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
 const state = { deliveryFee: 0, zone: '' };
 
 function saveBag() {
@@ -54,7 +54,7 @@ async function submitOrder(event) {
   if (!bag.length) return $('#checkout-error').textContent = 'Your bag is empty.';
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
-    data.items = bag.map((item) => ({ productId: item.id, quantity: item.quantity }));
+    data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity }));
     data.paymentMethod = 'cod';
     $('#checkout-error').textContent = '';
   try {
