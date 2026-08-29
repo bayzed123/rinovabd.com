@@ -80,6 +80,15 @@ jobs:
             echo "Cloudflare deployment skipped: repository secrets are not configured."
           fi
 
+      - name: Apply D1 migrations
+        if: steps.deploy-gate.outputs.enabled == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 46bf056399139631a967566fdb0413fa
+          workingDirectory: worker
+          command: d1 migrations apply rinovabd-db --remote --config wrangler.toml
+
       - name: Deploy through Wrangler
         if: steps.deploy-gate.outputs.enabled == 'true'
         uses: cloudflare/wrangler-action@v3

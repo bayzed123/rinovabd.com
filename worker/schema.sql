@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','pending','verified','failed','refunded')),
   courier_status TEXT NOT NULL DEFAULT 'not_booked',
   admin_note TEXT,
+  customer_note TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

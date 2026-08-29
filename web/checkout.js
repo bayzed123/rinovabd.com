@@ -33,25 +33,19 @@ function renderItems() {
   document.querySelectorAll('[data-checkout-qty]').forEach((button) => button.addEventListener('click', () => changeQuantity(Number(button.dataset.checkoutQty), Number(button.dataset.direction))));
 }
 
-async function loadLocations(query) {
-  if (!query) return;
-  const response = await fetch(`${API_BASE}/locations?q=${encodeURIComponent(query)}`);
-  const data = await response.json();
-  $('#district-list').innerHTML = [...new Set((data.locations || []).map((item) => item.district))].map((value) => `<option value="${value}">`).join('');
-  $('#upazila-list').innerHTML = (data.locations || []).map((item) => `<option value="${item.upazila}">${item.district}</option>`).join('');
-}
-
-async function updateDelivery() {
-  const form = $('#checkout-form');
-  const district = form.elements.namedItem('district').value.trim();
-  const upazila = form.elements.namedItem('upazila').value.trim();
-  if (!district || !upazila) return;
-  const response = await fetch(`${API_BASE}/delivery-fee?district=${encodeURIComponent(district)}&upazila=${encodeURIComponent(upazila)}`);
-  const data = await response.json();
-  if (!response.ok) return;
-  state.deliveryFee = data.fee;
-  state.zone = data.zone;
-  $('#delivery').textContent = `${money(data.fee)} · ${data.label}`;
+function updateDelivery() {
+  const address = $('#checkout-form').elements.namedItem('address').value.trim();
+  if (!address) {
+    state.deliveryFee = 0;
+    state.zone = '';
+    $('#delivery').textContent = 'Enter address';
+    renderItems();
+    return;
+  }
+  const insideDhaka = /\bdhaka\b/i.test(address) || address.includes('ঢাকা');
+  state.deliveryFee = insideDhaka ? 90 : 150;
+  state.zone = insideDhaka ? 'dhaka' : 'outside-dhaka';
+  $('#delivery').textContent = `${money(state.deliveryFee)} · ${insideDhaka ? 'Inside Dhaka' : 'Outside Dhaka'}`;
   renderItems();
 }
 
@@ -60,8 +54,9 @@ async function submitOrder(event) {
   if (!bag.length) return $('#checkout-error').textContent = 'Your bag is empty.';
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
-  data.items = bag.map((item) => ({ productId: item.id, quantity: item.quantity }));
-  $('#checkout-error').textContent = '';
+    data.items = bag.map((item) => ({ productId: item.id, quantity: item.quantity }));
+    data.paymentMethod = 'cod';
+    $('#checkout-error').textContent = '';
   try {
     const response = await fetch(`${API_BASE}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     const payload = await response.json();
@@ -77,8 +72,6 @@ async function submitOrder(event) {
 }
 
 $('#checkout-form').addEventListener('submit', submitOrder);
-$('#checkout-form').elements.namedItem('district').addEventListener('input', (event) => loadLocations(event.target.value));
-$('#checkout-form').elements.namedItem('upazila').addEventListener('input', updateDelivery);
-$('#checkout-form').elements.namedItem('district').addEventListener('change', updateDelivery);
+$('#checkout-form').elements.namedItem('address').addEventListener('input', updateDelivery);
 renderItems();
 if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });

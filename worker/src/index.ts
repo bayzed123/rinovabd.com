@@ -366,14 +366,14 @@ function normalizeMediaUrl(value: unknown) {
   return /^(https:\/\/|\/assets\/|\/media\/)/i.test(url) ? url : '';
 }
 
-type ProductBadge = 'hot' | 'instock' | 'new';
+type ProductBadge = 'hot' | 'stockout' | 'out' | 'instock' | 'new';
 function parseProductBadges(value: unknown): ProductBadge[] {
   let items: unknown[] = [];
   if (Array.isArray(value)) items = value;
   else if (typeof value === 'string') {
     try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) items = parsed; } catch {}
   }
-  return Array.from(new Set(items.map((item) => normalize(item).toLowerCase()).filter((item): item is ProductBadge => ['hot', 'instock', 'new'].includes(item))));
+  return Array.from(new Set(items.map((item) => normalize(item).toLowerCase()).filter((item): item is ProductBadge => ['hot', 'stockout', 'out', 'instock', 'new'].includes(item))));
 }
 
 async function findRelevantProducts(env: Bindings, question: string): Promise<ShopProductLink[]> {
@@ -1086,7 +1086,7 @@ app.get('/api/admin/orders', async (c) => {
   const values: string[] = [];
   if (status) { condition.push('o.status = ?'); values.push(status); }
   if (query) { condition.push('(o.order_code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
-  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.customer_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
   return json(c, { orders: result.results });
 });
 
@@ -1365,14 +1365,15 @@ app.get('/api/customers/:phone/trust', async (c) => {
 
 app.post('/api/orders', async (c) => {
   const body = await c.req.json<{
-    name: string; phone: string; email?: string; district: string; upazila: string; address: string;
-    paymentMethod: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
+    name: string; phone: string; email?: string; address: string; specialNote?: string;
+    paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
     items: Array<{ productId: number; quantity: number }>;
   }>();
-  if (!body.name || !body.phone || !body.district || !body.upazila || !body.address || !body.items?.length) return json(c, { error: 'Please complete customer, address, and cart details.' }, 400);
-  const location = await c.env.DB.prepare('SELECT zone FROM location_directory WHERE district = ? AND upazila = ? LIMIT 1').bind(body.district, body.upazila).first<{ zone: 'dhaka' | 'outside-dhaka' }>();
-  const zone = location?.zone ?? (body.district.toLowerCase() === 'dhaka' ? 'dhaka' : 'outside-dhaka');
+  const address = normalize(body.address);
+  if (!body.name || !body.phone || !address || !body.items?.length) return json(c, { error: 'Please complete customer, address, and cart details.' }, 400);
+  const zone: 'dhaka' | 'outside-dhaka' = /\bdhaka\b/i.test(address) || address.includes('ঢাকা') ? 'dhaka' : 'outside-dhaka';
   const deliveryFee = zone === 'dhaka' ? 90 : 150;
+  const paymentMethod = ['cod', 'bkash', 'nagad', 'rocket'].includes(normalize(body.paymentMethod)) ? normalize(body.paymentMethod) : 'cod';
   const productIds = body.items.map((item) => item.productId);
   const products = await c.env.DB.prepare(`SELECT id, name, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ id: number; name: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
   const byId = new Map(products.results.map((product) => [product.id, product]));
@@ -1388,9 +1389,9 @@ app.post('/api/orders', async (c) => {
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
   const invoiceNumber = `RNV-INV-${Date.now().toString(36).toUpperCase()}`;
-  const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, body.district, body.upazila, body.address).first<{ id: number }>();
+  const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, zone === 'dhaka' ? 'Dhaka' : '', '', address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
-  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoiceNumber, customer.id, subtotal, deliveryFee, zone, body.paymentMethod, body.trxId ?? null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
+  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, customer_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoiceNumber, customer.id, subtotal, deliveryFee, zone, paymentMethod, body.trxId ?? null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
   for (const item of lineItems) {
     await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.product.name, item.quantity, item.unitPrice).run();
@@ -1399,8 +1400,8 @@ app.post('/api/orders', async (c) => {
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();
   await createAdminNotification(c.env, { type: 'order', title: 'New order received', message: `Order ${order.orderCode} is ready for review.`, entityType: 'order', entityId: order.orderCode });
   const itemSummary = lineItems.map((item) => `${item.product.name} × ${item.quantity}`).join(' · ');
-  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', body.paymentMethod, subtotal, deliveryFee, subtotal + deliveryFee, itemSummary, null, null, null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
-  return json(c, { order: { ...order, subtotal, deliveryFee, total: subtotal + deliveryFee, zone, paymentMethod: body.paymentMethod }, message: 'Order received successfully.' }, 201);
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', paymentMethod, subtotal, deliveryFee, subtotal + deliveryFee, itemSummary, null, null, body.specialNote ? normalize(body.specialNote) : null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
+  return json(c, { order: { ...order, subtotal, deliveryFee, total: subtotal + deliveryFee, zone, paymentMethod }, message: 'Order received successfully.' }, 201);
 });
 
 app.patch('/api/orders/:orderCode/status', async (c) => {
@@ -1421,7 +1422,7 @@ app.patch('/api/orders/:orderCode/status', async (c) => {
 
 app.get('/api/orders/:orderCode', async (c) => {
   const orderCode = normalize(c.req.param('orderCode'));
-  const order = await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first();
+  const order = await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.customer_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first();
   if (!order) return json(c, { error: 'Order not found.' }, 404);
   const items = await c.env.DB.prepare('SELECT product_name AS productName, quantity, unit_price AS unitPrice FROM order_items WHERE order_id = (SELECT id FROM orders WHERE order_code = ?)').bind(orderCode).all();
   return json(c, { order, items: items.results });

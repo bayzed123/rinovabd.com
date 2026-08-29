@@ -212,3 +212,31 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
   .chat-panel{bottom:calc(142px + env(safe-area-inset-bottom))!important;}
 }
 @media(max-width:760px){main{padding-bottom:calc(80px + env(safe-area-inset-bottom));}}
+
+/* Product grid refactor: concise editorial cards with actions anchored at the bottom. */
+.product-card{display:flex;flex-direction:column;cursor:pointer;}
+.product-card:focus-visible{outline:2px solid var(--rinova-pink-deep);outline-offset:4px;}
+.product-card .product-info{display:flex;flex:1;flex-direction:column;gap:0;padding:16px;}
+.product-card .product-category,.product-card .product-description{display:none!important;}
+.product-card .product-name{margin:0;min-height:2.5em;font-size:clamp(17px,2vw,22px);line-height:1.12;}
+.product-card .product-name a{color:inherit;text-decoration:none;}
+.product-card .product-rating{display:flex;align-items:center;gap:6px;margin-top:10px;color:var(--rinova-pink-deep);font-size:12px;min-height:18px;}
+.product-card .product-rating .product-rating-icon{width:14px;height:14px;fill:currentColor;stroke:currentColor;}
+.product-card .product-price{margin-top:auto;padding-top:16px;font-size:15px;}
+.product-card .product-actions{display:flex;gap:8px;margin-top:16px;}
+.product-card .product-actions button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;opacity:1;transform:none;}
+.product-card .product-actions .product-add,.product-card .product-actions .product-shop-now{position:static;visibility:visible;}
+.product-badge.badge-hot,.product-badge.badge-new,.product-badge.badge-out{color:#fff;border:0;font-weight:700;}
+.product-badge.badge-hot{background:#FF4747;}
+.product-badge.badge-new{background:#F97316;}
+.product-badge.badge-out{background:#C2410C;}
+.detail-faq{margin-top:32px;padding-top:24px;border-top:1px solid var(--line);}
+.detail-faq h2{font:600 clamp(28px,4vw,42px)/1 'Playfair Display',Georgia,serif;letter-spacing:-.05em;margin:0 0 16px;}
+.faq-list{display:grid;gap:0;}
+.faq-list details{border-bottom:1px solid var(--line);}
+.faq-list summary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 0;cursor:pointer;font-size:14px;font-weight:600;list-style:none;}
+.faq-list summary::-webkit-details-marker{display:none;}
+.faq-list summary::after{content:'+';font-size:21px;font-weight:400;color:var(--rinova-pink-deep);}
+.faq-list details[open] summary::after{content:'−';}
+.faq-list details p{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.75;max-width:620px;}
+@media(max-width:520px){.product-card .product-info{padding:13px;}.product-card .product-actions{flex-direction:column;}.product-card .product-actions button{width:100%;}.product-card .product-name{font-size:17px;}}
