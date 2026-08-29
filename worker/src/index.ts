@@ -206,7 +206,7 @@ async function trackingHealth(env: Bindings, origin: string) {
     const pixelId = normalize(settings.tracking_meta_pixel_id || env.META_PIXEL_ID);
     const capiToken = normalize(env.META_CAPI_TOKEN);
     if (!pixelId || !capiToken) throw new Error('Meta Pixel ID or META_CAPI_TOKEN is not configured as a Worker secret.');
-    const response = await fetch('https://graph.facebook.com/v20.0/' + encodeURIComponent(pixelId) + '/events?access_token=' + encodeURIComponent(capiToken), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: [{ event_name: 'PageView', event_time: Math.floor(Date.now() / 1000), action_source: 'website', event_source_url: origin + '/campaign/health-check', user_data: {} }], test_event_code: 'RINOVA_HEALTHCHECK' }) });
+    const response = await fetch('https://graph.facebook.com/v20.0/' + encodeURIComponent(pixelId) + '/events?access_token=' + encodeURIComponent(capiToken), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: [{ event_name: 'PageView', event_time: Math.floor(Date.now() / 1000), action_source: 'website', event_source_url: origin + '/campaign/health-check', user_data: {} }], test_event_code: normalize(env.META_TEST_EVENT_CODE) || 'TEST72846' }) });
     if (!response.ok) throw new Error('Meta CAPI verification failed with HTTP ' + response.status + '.');
     results.meta = { status: 'healthy', message: 'Meta CAPI returned HTTP 200.' };
   } catch (error) { results.meta = { status: 'error', message: error instanceof Error ? error.message : 'Meta CAPI verification failed.' }; console.error('[Meta CAPI]', error); }
