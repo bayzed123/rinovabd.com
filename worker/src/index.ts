@@ -47,6 +47,16 @@ function normalize(value: unknown) {
   return String(value ?? '').trim();
 }
 
+function invoiceNumberForOrderId(orderId: unknown) {
+  const id = Number(orderId);
+  return Number.isInteger(id) && id > 0 ? `RNV-${String(id).padStart(6, '0')}` : '';
+}
+
+function slugifyCategory(value: unknown) {
+  const slug = normalize(value).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  return slug || `category-${Date.now()}`;
+}
+
 function numberOrNull(value: unknown) {
   if (value === undefined || value === null || normalize(value) === '') return null;
   const number = Number(value);
@@ -724,6 +734,9 @@ app.get('/api/orders/:orderCode/invoice', async (c) => {
   const customerSession = admin ? null : await customerPrincipal(c);
   const order = await c.env.DB.prepare('SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(normalize(c.req.param('orderCode'))).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
   if (!order || (!admin && (!customerSession || customerSession.customerId !== order.customerId))) return json(c, { error: 'Order not found.' }, 404);
+  const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || order.orderCode;
+  if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
+  order.invoiceNumber = cleanInvoiceNumber;
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.id AS productId, p.slug AS productSlug, p.sku AS sku, p.barcode AS barcode, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
   const computedWeight = items.results.reduce((sum, item) => sum + Number((item as { quantity: number; weightGrams: number }).quantity) * Number((item as { quantity: number; weightGrams: number }).weightGrams), 0);
   return json(c, { invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: order.subtotal + order.deliveryFee }, items: items.results });
@@ -1060,8 +1073,39 @@ app.get('/api/admin/products', async (c) => {
 
 app.get('/api/admin/categories', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const result = await c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all();
+  const result = await c.env.DB.prepare('SELECT c.id, c.name, c.slug, c.image_url AS imageUrl, c.sort_order AS sortOrder, c.active, COUNT(p.id) AS productCount FROM categories c LEFT JOIN products p ON p.category_id = c.id GROUP BY c.id ORDER BY c.sort_order ASC, c.name ASC').all();
   return json(c, { categories: result.results });
+});
+app.post('/api/admin/categories', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const body = await c.req.json<{ name?: string; slug?: string; imageUrl?: string; sortOrder?: number; active?: boolean }>();
+  const name = normalize(body.name);
+  if (!name) return json(c, { error: 'Category name is required.' }, 400);
+  const slug = slugifyCategory(body.slug || name);
+  try {
+    const result = await c.env.DB.prepare('INSERT INTO categories(name, slug, image_url, sort_order, active) VALUES (?, ?, ?, ?, ?) RETURNING id, name, slug, image_url AS imageUrl, sort_order AS sortOrder, active').bind(name, slug, normalize(body.imageUrl) || null, Math.max(0, Number(body.sortOrder) || 0), body.active === false ? 0 : 1).first();
+    return json(c, { ok: true, category: result, createdBy: username }, 201);
+  } catch (error) {
+    return json(c, { error: error instanceof Error && /unique/i.test(error.message) ? 'A category with this name or slug already exists.' : 'Could not create category.' }, 409);
+  }
+});
+app.patch('/api/admin/categories/:id', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  const body = await c.req.json<{ name?: string; slug?: string; imageUrl?: string; sortOrder?: number; active?: boolean }>();
+  const current = await c.env.DB.prepare('SELECT name, slug, image_url AS imageUrl, sort_order AS sortOrder, active FROM categories WHERE id = ?').bind(id).first<{ name: string; slug: string; imageUrl: string | null; sortOrder: number; active: number }>();
+  if (!current) return json(c, { error: 'Category not found.' }, 404);
+  const name = body.name === undefined ? current.name : normalize(body.name);
+  if (!name) return json(c, { error: 'Category name is required.' }, 400);
+  const slug = body.slug === undefined ? current.slug : slugifyCategory(body.slug || name);
+  try {
+    const result = await c.env.DB.prepare('UPDATE categories SET name = ?, slug = ?, image_url = ?, sort_order = ?, active = ? WHERE id = ?').bind(name, slug, body.imageUrl === undefined ? current.imageUrl : (normalize(body.imageUrl) || null), body.sortOrder === undefined ? current.sortOrder : Math.max(0, Number(body.sortOrder) || 0), body.active === undefined ? current.active : body.active ? 1 : 0, id).run();
+    return json(c, { ok: result.meta.changes > 0, categoryId: id, updatedBy: username });
+  } catch (error) {
+    return json(c, { error: error instanceof Error && /unique/i.test(error.message) ? 'A category with this name or slug already exists.' : 'Could not update category.' }, 409);
+  }
 });
 
 app.get('/api/admin/products/:id', async (c) => {
@@ -1086,7 +1130,7 @@ app.get('/api/admin/orders', async (c) => {
   const values: string[] = [];
   if (status) { condition.push('o.status = ?'); values.push(status); }
   if (query) { condition.push('(o.order_code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
-  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, printf('RNV-%06d', o.id) AS invoiceNumber, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
   return json(c, { orders: result.results });
 });
 
@@ -1308,7 +1352,7 @@ app.get('/sitemap.xml', async (c) => {
 });
 
 app.get('/api/categories', async (c) => {
-  const result = await c.env.DB.prepare('SELECT id, name, slug, image_url AS imageUrl FROM categories WHERE active = 1 ORDER BY sort_order ASC').all();
+  const result = await c.env.DB.prepare('SELECT id, name, slug, image_url AS imageUrl, sort_order AS sortOrder FROM categories WHERE active = 1 ORDER BY sort_order ASC, name ASC').all();
   return json(c, { categories: result.results });
 });
 
@@ -1388,11 +1432,14 @@ app.post('/api/orders', async (c) => {
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
-  const invoiceNumber = `RNV-INV-${Date.now().toString(36).toUpperCase()}`;
+  const invoicePlaceholder = `PENDING-${orderCode}`;
   const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, zone === 'dhaka' ? 'Dhaka' : '', '', address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
-  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoiceNumber, customer.id, subtotal, deliveryFee, zone, paymentMethod, body.trxId ?? null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
+  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, deliveryFee, zone, paymentMethod, body.trxId ?? null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
+  const invoiceNumber = invoiceNumberForOrderId(order.id) || invoicePlaceholder;
+  await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(invoiceNumber, order.id).run();
+  order.invoiceNumber = invoiceNumber;
   for (const item of lineItems) {
     await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.product.name, item.quantity, item.unitPrice).run();
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
