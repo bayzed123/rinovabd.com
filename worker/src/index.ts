@@ -38,6 +38,7 @@ interface Bindings {
   GA4_API_SECRET?: string;
   META_PIXEL_ID?: string;
   META_CAPI_TOKEN?: string;
+  META_TEST_EVENT_CODE?: string;
   GSC_SITE_URL?: string;
 }
 
@@ -142,6 +143,16 @@ async function sheetsAppendRow(env: Bindings, spreadsheetId: string | undefined,
   const appendResponse = await fetch(`${endpoint}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ majorDimension: 'ROWS', values: [row] }) });
   if (!appendResponse.ok) throw new Error('Google Sheet row could not be appended.');
   return true;
+}
+
+async function metaCapiEvent(env: Bindings, event: { eventName: string; eventId: string; sourceUrl: string; value?: number; currency?: string; user: { name?: string; email?: string; phone?: string; city?: string; region?: string; country?: string; externalId?: string }; items?: Array<{ id: string; name: string; quantity: number; price: number }> }) {
+  const pixelId = normalize(env.META_PIXEL_ID); const token = normalize(env.META_CAPI_TOKEN); if (!pixelId || !token) return { skipped: true, reason: 'Meta CAPI is not configured.' };
+  const split = normalize(event.user.name).split(/\\s+/); const userData: Record<string, unknown> = {};
+  const hash = async (value: unknown) => { const normalized = normalize(value).toLowerCase(); return normalized ? sha256(normalized) : undefined; };
+  const values: Record<string, unknown> = { em: event.user.email, ph: event.user.phone, fn: split[0], ln: split.slice(1).join(' '), ct: event.user.city, st: event.user.region, country: event.user.country || 'bd', external_id: event.user.externalId };
+  for (const [key, value] of Object.entries(values)) { const hashed = await hash(value); if (hashed) userData[key] = hashed; }
+  const payload = { data: [{ event_name: event.eventName, event_id: event.eventId, event_time: Math.floor(Date.now() / 1000), action_source: 'website', event_source_url: event.sourceUrl, user_data: userData, custom_data: { currency: event.currency || 'BDT', value: Number(event.value || 0), contents: (event.items || []).map((item) => ({ id: item.id, quantity: item.quantity, item_price: item.price })), content_type: 'product' } }], test_event_code: normalize(env.META_TEST_EVENT_CODE) || 'TEST72846' };
+  const response = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(token)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!response.ok) throw new Error(`Meta CAPI returned HTTP ${response.status}.`); return { sent: true };
 }
 
 const accountLeadHeaders = ['Created At', 'Lead Type', 'Name', 'Phone', 'Email', 'Customer ID', 'Source', 'Account Status'];
@@ -1549,6 +1560,7 @@ app.post('/api/orders', async (c) => {
   }
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();
   await createAdminNotification(c.env, { type: 'order', title: 'New order received', message: `Order ${order.orderCode} is ready for review.`, entityType: 'order', entityId: order.orderCode });
+  c.executionCtx.waitUntil(metaCapiEvent(c.env, { eventName: 'Purchase', eventId: order.orderCode, sourceUrl: new URL('/checkout', c.req.url).toString(), value: subtotal + deliveryFee, user: { name: body.name, email: body.email, phone: body.phone, city: zone === 'dhaka' ? 'Dhaka' : undefined, region: zone, country: 'bd', externalId: String(customer.id) }, items: lineItems.map((item) => ({ id: item.product.sku, name: item.product.name, quantity: item.quantity, price: item.unitPrice })) }).catch(async (error) => { console.error('[Meta CAPI Purchase]', error); await createAdminNotification(c.env, { type: 'integration', title: 'Meta CAPI purchase sync failed', message: `Purchase event ${order.orderCode} could not be sent.`, entityType: 'order', entityId: order.orderCode }); }));
   const itemSummary = lineItems.map((item) => `${item.product.name} × ${item.quantity}`).join(' · ');
   c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', paymentMethod, subtotal, deliveryFee, subtotal + deliveryFee, itemSummary, null, null, body.specialNote ? normalize(body.specialNote) : null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
   return json(c, { order: { ...order, subtotal, deliveryFee, total: subtotal + deliveryFee, zone, paymentMethod }, message: 'Order received successfully.' }, 201);
