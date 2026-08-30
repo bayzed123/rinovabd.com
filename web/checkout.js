@@ -33,19 +33,82 @@ function renderItems() {
   document.querySelectorAll('[data-checkout-qty]').forEach((button) => button.addEventListener('click', () => changeQuantity(Number(button.dataset.checkoutQty), Number(button.dataset.direction))));
 }
 
-function updateDelivery() {
-  const address = $('#checkout-form').elements.namedItem('address').value.trim();
-  if (!address) {
+let districtDebounce;
+let upazilaDebounce;
+
+async function fetchLocations(query) {
+  if (!query || query.trim().length < 2) return [];
+  try {
+    const response = await fetch(`${API_BASE}/locations?q=${encodeURIComponent(query.trim())}`);
+    if (!response.ok) return [];
+    const payload = await response.json();
+    return payload.locations || [];
+  } catch {
+    return [];
+  }
+}
+
+function fillDatalist(datalistId, values) {
+  const list = document.getElementById(datalistId);
+  if (!list) return;
+  const unique = [...new Set(values.filter(Boolean))].slice(0, 20);
+  list.innerHTML = unique.map((value) => `<option value="${String(value).replace(/"/g, '&quot;')}"></option>`).join('');
+}
+
+function onDistrictInput(event) {
+  clearTimeout(districtDebounce);
+  const query = event.target.value;
+  districtDebounce = setTimeout(async () => {
+    const locations = await fetchLocations(query);
+    fillDatalist('checkout-district-options', locations.map((location) => location.district));
+  }, 200);
+  updateDelivery();
+}
+
+function onUpazilaInput(event) {
+  clearTimeout(upazilaDebounce);
+  const query = event.target.value;
+  upazilaDebounce = setTimeout(async () => {
+    const locations = await fetchLocations(query);
+    fillDatalist('checkout-upazila-options', locations.map((location) => location.upazila));
+  }, 200);
+  updateDelivery();
+}
+
+async function updateDelivery() {
+  const form = $('#checkout-form');
+  const address = form.elements.namedItem('address').value.trim();
+  const district = form.elements.namedItem('district').value.trim();
+  const upazila = form.elements.namedItem('upazila').value.trim();
+
+  if (district && upazila) {
+    try {
+      const response = await fetch(`${API_BASE}/delivery-fee?district=${encodeURIComponent(district)}&upazila=${encodeURIComponent(upazila)}`);
+      if (response.ok) {
+        const payload = await response.json();
+        state.deliveryFee = Number(payload.fee || 150);
+        state.zone = payload.zone || 'outside-dhaka';
+        $('#delivery').textContent = `${money(state.deliveryFee)} · ${payload.label || (state.zone === 'dhaka' ? 'Inside Dhaka' : 'Outside Dhaka')}`;
+        renderItems();
+        return;
+      }
+    } catch {
+      // Directory lookup failed — fall through to the estimate below instead of blocking checkout.
+    }
+  }
+
+  if (!district && !address) {
     state.deliveryFee = 0;
     state.zone = '';
-    $('#delivery').textContent = 'Enter address';
+    $('#delivery').textContent = 'Select district & upazila';
     renderItems();
     return;
   }
-  const insideDhaka = /\bdhaka\b/i.test(address) || address.includes('ঢাকা');
+  const referenceText = `${district} ${address}`;
+  const insideDhaka = /\bdhaka\b/i.test(referenceText) || referenceText.includes('ঢাকা');
   state.deliveryFee = insideDhaka ? 90 : 150;
   state.zone = insideDhaka ? 'dhaka' : 'outside-dhaka';
-  $('#delivery').textContent = `${money(state.deliveryFee)} · ${insideDhaka ? 'Inside Dhaka' : 'Outside Dhaka'}`;
+  $('#delivery').textContent = `${money(state.deliveryFee)} · ${insideDhaka ? 'Inside Dhaka (estimated)' : 'Outside Dhaka (estimated)'}`;
   renderItems();
 }
 
@@ -73,5 +136,7 @@ async function submitOrder(event) {
 
 $('#checkout-form').addEventListener('submit', submitOrder);
 $('#checkout-form').elements.namedItem('address').addEventListener('input', updateDelivery);
+$('#checkout-form').elements.namedItem('district').addEventListener('input', onDistrictInput);
+$('#checkout-form').elements.namedItem('upazila').addEventListener('input', onUpazilaInput);
 renderItems();
 if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });
