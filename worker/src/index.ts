@@ -54,6 +54,17 @@ function normalize(value: unknown) {
   return String(value ?? '').trim();
 }
 
+async function resolveDeliveryZone(env: Bindings, district: string, upazila: string, addressFallback: string): Promise<{ zone: 'dhaka' | 'outside-dhaka'; fee: number }> {
+  if (district && upazila) {
+    const location = await env.DB.prepare('SELECT zone FROM location_directory WHERE district = ? AND upazila = ? LIMIT 1').bind(district, upazila).first<{ zone: 'dhaka' | 'outside-dhaka' }>();
+    if (location?.zone) return { zone: location.zone, fee: location.zone === 'dhaka' ? 90 : 150 };
+  }
+  const referenceText = `${district} ${addressFallback}`;
+  const insideDhaka = /\bdhaka\b/i.test(referenceText) || referenceText.includes('ঢাকা');
+  const zone: 'dhaka' | 'outside-dhaka' = insideDhaka ? 'dhaka' : 'outside-dhaka';
+  return { zone, fee: zone === 'dhaka' ? 90 : 150 };
+}
+
 function invoiceNumberForOrderId(orderId: unknown) {
   const id = Number(orderId);
   return Number.isInteger(id) && id > 0 ? `RNV-${String(id).padStart(6, '0')}` : '';
@@ -1522,14 +1533,15 @@ app.get('/api/customers/:phone/trust', async (c) => {
 
 app.post('/api/orders', async (c) => {
   const body = await c.req.json<{
-    name: string; phone: string; email?: string; address: string; specialNote?: string;
+    name: string; phone: string; email?: string; address: string; district?: string; upazila?: string; specialNote?: string;
     paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
     items: Array<{ sku: string; quantity: number }>;
   }>();
   const address = normalize(body.address);
-  if (!body.name || !body.phone || !address || !body.items?.length) return json(c, { error: 'Please complete customer, address, and cart details.' }, 400);
-  const zone: 'dhaka' | 'outside-dhaka' = /\bdhaka\b/i.test(address) || address.includes('ঢাকা') ? 'dhaka' : 'outside-dhaka';
-  const deliveryFee = zone === 'dhaka' ? 90 : 150;
+  const district = normalize(body.district);
+  const upazila = normalize(body.upazila);
+  if (!body.name || !body.phone || !address || !district || !upazila || !body.items?.length) return json(c, { error: 'Please complete customer, district, upazila, address, and cart details.' }, 400);
+  const { zone, fee: deliveryFee } = await resolveDeliveryZone(c.env, district, upazila, address);
   const paymentMethod = ['cod', 'bkash', 'nagad', 'rocket'].includes(normalize(body.paymentMethod)) ? normalize(body.paymentMethod) : 'cod';
   const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
   if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
@@ -1547,7 +1559,7 @@ app.post('/api/orders', async (c) => {
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
   const invoicePlaceholder = `PENDING-${orderCode}`;
-  const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, zone === 'dhaka' ? 'Dhaka' : '', '', address).first<{ id: number }>();
+  const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, district, upazila, address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
   const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, deliveryFee, zone, paymentMethod, body.trxId ?? null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
@@ -1597,4 +1609,3 @@ app.all('*', async (c) => {
 });
 
 export default app;
-
