@@ -112,12 +112,26 @@ async function updateDelivery() {
   renderItems();
 }
 
+async function hydrateBagSkus() {
+  const missing = bag.filter((item) => !String(item.sku || '').trim());
+  if (!missing.length) return true;
+  try {
+    const response = await fetch(`${API_BASE}/products`);
+    const payload = await response.json();
+    const byId = new Map((payload.products || []).map((product) => [String(product.id), product]));
+    missing.forEach((item) => { const product = byId.get(String(item.id)); if (product?.sku) item.sku = String(product.sku).trim(); });
+    saveBag();
+  } catch {}
+  return bag.every((item) => String(item.sku || '').trim());
+}
+
 async function submitOrder(event) {
   event.preventDefault();
   if (!bag.length) return $('#checkout-error').textContent = 'Your bag is empty.';
+  if (!await hydrateBagSkus()) return $('#checkout-error').textContent = 'One product is missing its verified SKU. Please remove it and add the product again.';
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
-    data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity }));
+  data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity }));
     data.paymentMethod = 'cod';
     $('#checkout-error').textContent = '';
   try {
