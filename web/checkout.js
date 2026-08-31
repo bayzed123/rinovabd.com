@@ -4,7 +4,8 @@ const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
 const track = (name, params = {}) => window.rinovaAnalytics?.track ? window.rinovaAnalytics.track(name, params) : (window.dataLayer = window.dataLayer || [], window.dataLayer.push({ event: name, ...params }));
 const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.sku || item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
-const state = { deliveryFee: 0, zone: '' };
+const state = { deliveryFee: 0, zone: '', paymentMethod: 'cod' };
+function updatePaymentFields() { const method = $('#checkout-payment-method')?.value || 'cod'; state.paymentMethod = method; const note = $('#bkash-payment-note'); const trx = $('#checkout-trx-id'); if (note) note.hidden = method !== 'bkash'; if (trx) { trx.required = method === 'bkash'; trx.disabled = method !== 'bkash'; if (method !== 'bkash') trx.value = ''; } }
 
 function saveBag() {
   localStorage.setItem('rinova-bag', JSON.stringify(bag));
@@ -26,7 +27,7 @@ function changeQuantity(productId, direction) {
 }
 
 function renderItems() {
-  $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="checkout-item"><div><strong>${item.name}</strong><small>${money(item.price)} each</small></div><div class="checkout-item-actions"><div class="quantity-stepper"><button type="button" data-checkout-qty="${item.id}" data-direction="-1" aria-label="Decrease ${item.name}"><span data-rinova-icon="minus"></span></button><span>${Number(item.quantity || 0)}</span><button type="button" data-checkout-qty="${item.id}" data-direction="1" aria-label="Increase ${item.name}">+</button></div><strong>${money(Number(item.price || 0) * Number(item.quantity || 0))}</strong></div></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>';
+  $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="checkout-item"><div><strong>${item.name}</strong>${item.options?.size || item.options?.color ? `<small>${[item.options?.size && `Size: ${item.options.size}`, item.options?.color && `Colour: ${item.options.color}`].filter(Boolean).join(' · ')}</small>` : ''}<small>${money(item.price)} each</small></div><div class="checkout-item-actions"><div class="quantity-stepper"><button type="button" data-checkout-qty="${item.id}" data-direction="-1" aria-label="Decrease ${item.name}"><span data-rinova-icon="minus"></span></button><span>${Number(item.quantity || 0)}</span><button type="button" data-checkout-qty="${item.id}" data-direction="1" aria-label="Increase ${item.name}">+</button></div><strong>${money(Number(item.price || 0) * Number(item.quantity || 0))}</strong></div></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>';
   const subtotal = bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
   $('#subtotal').textContent = money(subtotal);
   $('#total').textContent = money(subtotal + state.deliveryFee);
@@ -131,8 +132,9 @@ async function submitOrder(event) {
   if (!await hydrateBagSkus()) return $('#checkout-error').textContent = 'One product is missing its verified SKU. Please remove it and add the product again.';
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
-  data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity }));
-    data.paymentMethod = 'cod';
+  data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity, options: item.options || {} }));
+    data.paymentMethod = $('#checkout-payment-method')?.value || 'cod';
+    if (data.paymentMethod === 'bkash' && !String(data.trxId || '').trim()) return $('#checkout-error').textContent = 'Please enter the bKash transaction ID for an advance payment.';
     $('#checkout-error').textContent = '';
   try {
     const response = await fetch(`${API_BASE}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -153,5 +155,7 @@ $('#checkout-form').addEventListener('submit', submitOrder);
 $('#checkout-form').elements.namedItem('address').addEventListener('input', updateDelivery);
 $('#checkout-form').elements.namedItem('district').addEventListener('input', onDistrictInput);
 $('#checkout-form').elements.namedItem('upazila').addEventListener('input', onUpazilaInput);
+$('#checkout-payment-method')?.addEventListener('change', updatePaymentFields);
+updatePaymentFields();
 renderItems();
 if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });

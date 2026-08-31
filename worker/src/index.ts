@@ -805,7 +805,7 @@ app.get('/api/admin/invoices/:invoiceNumber', async (c) => {
   if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
   order.invoiceNumber = cleanInvoiceNumber;
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku AS sku, p.barcode AS barcode, p.slug AS productSlug, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
-  return json(c, { invoice: { ...order, total: order.subtotal + order.deliveryFee }, items: items.results });
+  return json(c, { shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS }, invoice: { ...order, total: order.subtotal + order.deliveryFee }, items: items.results });
 });
 
 app.get('/api/orders/:orderIdentifier/invoice', async (c) => {
@@ -819,7 +819,7 @@ app.get('/api/orders/:orderIdentifier/invoice', async (c) => {
   order.invoiceNumber = cleanInvoiceNumber;
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.id AS productId, p.slug AS productSlug, p.sku AS sku, p.barcode AS barcode, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
   const computedWeight = items.results.reduce((sum, item) => sum + Number((item as { quantity: number; weightGrams: number }).quantity) * Number((item as { quantity: number; weightGrams: number }).weightGrams), 0);
-  return json(c, { invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: order.subtotal + order.deliveryFee }, items: items.results });
+  return json(c, { shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS }, invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: order.subtotal + order.deliveryFee }, items: items.results });
 });
 
 app.get('/api/admin/reviews', async (c) => {
@@ -1276,6 +1276,59 @@ app.get('/api/admin/orders', async (c) => {
   return json(c, { orders: result.results });
 });
 
+app.get('/api/admin/orders/:orderCode', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const orderCode = normalize(c.req.param('orderCode'));
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.trx_id AS trxId, o.status, o.courier_provider AS courierProvider, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? LIMIT 1").bind(orderCode).first();
+  if (!order) return json(c, { error: 'Order not found.' }, 404);
+  const items = await c.env.DB.prepare('SELECT oi.id, oi.product_id AS productId, oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku, p.stock, p.weight_grams AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind((order as { id: number }).id).all();
+  return json(c, { order: { ...order, total: Number((order as { subtotal: number }).subtotal || 0) + Number((order as { deliveryFee: number }).deliveryFee || 0) }, items: items.results });
+});
+
+app.patch('/api/admin/orders/:orderCode', async (c) => {
+  const username = await adminPrincipal(c);
+  if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const orderCode = normalize(c.req.param('orderCode'));
+  const body = await c.req.json<{ name?: string; phone?: string; email?: string; district?: string; upazila?: string; address?: string; items?: Array<{ sku?: string; quantity?: number; details?: string }> }>();
+  const existing = await c.env.DB.prepare('SELECT o.id, o.customer_id AS customerId, o.subtotal, o.delivery_fee AS deliveryFee FROM orders o WHERE o.order_code = ? LIMIT 1').bind(orderCode).first<{ id: number; customerId: number; subtotal: number; deliveryFee: number }>();
+  if (!existing) return json(c, { error: 'Order not found.' }, 404);
+  const customer = await c.env.DB.prepare('SELECT name, phone, email, district, upazila, address FROM customers WHERE id = ?').bind(existing.customerId).first<{ name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  if (!customer) return json(c, { error: 'Customer not found.' }, 404);
+  const name = body.name === undefined ? customer.name : normalize(body.name);
+  const phone = body.phone === undefined ? customer.phone : normalize(body.phone);
+  const email = body.email === undefined ? customer.email : normalize(body.email) || null;
+  const district = body.district === undefined ? customer.district : normalize(body.district);
+  const upazila = body.upazila === undefined ? customer.upazila : normalize(body.upazila);
+  const address = body.address === undefined ? customer.address : normalize(body.address);
+  if (!name || !phone || !district || !upazila || !address) return json(c, { error: 'Name, phone, district, upazila, and address are required.' }, 400);
+  try {
+    await c.env.DB.prepare('UPDATE customers SET name = ?, phone = ?, email = ?, district = ?, upazila = ?, address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, phone, email, district, upazila, address, existing.customerId).run();
+  } catch (error) {
+    if (error instanceof Error && /unique/i.test(error.message)) return json(c, { error: 'That phone number is already used by another customer.' }, 409);
+    throw error;
+  }
+  if (body.items !== undefined) {
+    const requested = body.items.map((item) => ({ sku: normalize(item.sku), quantity: Math.floor(Number(item.quantity || 0)), details: normalize(item.details) })).filter((item) => item.sku && item.quantity > 0);
+    if (!requested.length) return json(c, { error: 'Keep at least one order item.' }, 400);
+    const oldItems = await c.env.DB.prepare('SELECT product_id AS productId, quantity FROM order_items WHERE order_id = ?').bind(existing.id).all<{ productId: number; quantity: number }>();
+    const oldByProduct = new Map(oldItems.results.map((item) => [Number(item.productId), Number(item.quantity)]));
+    const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, weight_grams AS weightGrams FROM products WHERE active = 1 AND sku IN (${requested.map(() => '?').join(',')})`).bind(...requested.map((item) => item.sku)).all<{ id: number; name: string; sku: string; price: number; stock: number; weightGrams: number }>();
+    const bySku = new Map(products.results.map((product) => [product.sku, product]));
+    if (bySku.size !== requested.length) return json(c, { error: 'One or more selected products are unavailable.' }, 400);
+    const newByProduct = new Map<number, number>();
+    const lines = requested.map((item) => { const product = bySku.get(item.sku)!; const available = Number(product.stock || 0) + Number(oldByProduct.get(product.id) || 0); if (item.quantity > available) throw new Error(`${product.name} does not have enough stock for this quantity.`); newByProduct.set(product.id, item.quantity); return { product, quantity: item.quantity, details: item.details }; });
+    const subtotal = lines.reduce((sum, line) => sum + Number(line.product.price || 0) * line.quantity, 0);
+    const statements = [c.env.DB.prepare('DELETE FROM order_items WHERE order_id = ?').bind(existing.id)];
+    for (const product of products.results) { const before = Number(oldByProduct.get(product.id) || 0); const after = Number(newByProduct.get(product.id) || 0); if (before !== after) statements.push(c.env.DB.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(before - after, product.id)); }
+    for (const line of lines) statements.push(c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(existing.id, line.product.id, line.details || line.product.name, line.quantity, line.product.price));
+    statements.push(c.env.DB.prepare('UPDATE orders SET subtotal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subtotal, existing.id));
+    await c.env.DB.batch(statements);
+  }
+  await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(existing.id, 'pending', `Order details edited by ${username}`).run();
+  const updated = await c.env.DB.prepare('SELECT subtotal, delivery_fee AS deliveryFee FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; deliveryFee: number }>();
+  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, deliveryFee: updated?.deliveryFee || 0, total: Number(updated?.subtotal || 0) + Number(updated?.deliveryFee || 0), updatedBy: username });
+});
+
 app.post('/api/admin/products', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
@@ -1331,7 +1384,7 @@ app.get('/api/health', (c) => json(c, { ok: true, service: c.env.SHOP_NAME, time
 app.get('/api/config', (c) => json(c, {
   shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS },
   delivery: { dhaka: 90, outsideDhaka: 150, emergency: 250, customerCanSelect: false },
-  paymentMethods: ['cod', 'bkash', 'nagad', 'rocket']
+  paymentMethods: ['cod', 'bkash']
 }));
 
 app.get('/api/customer-tracking', async (c) => {
@@ -1522,7 +1575,7 @@ app.get('/api/products', async (c) => {
 
 app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1').bind(slug, slug).first();
+  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1').bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
   const response = json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
@@ -1560,14 +1613,14 @@ app.post('/api/orders', async (c) => {
   const body = await c.req.json<{
     name: string; phone: string; email?: string; address: string; district?: string; upazila?: string; specialNote?: string;
     paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
-    items: Array<{ sku: string; quantity: number }>;
+    items: Array<{ sku: string; quantity: number; options?: { size?: string; color?: string; gram?: string } }>;
   }>();
   const address = normalize(body.address);
   const district = normalize(body.district);
   const upazila = normalize(body.upazila);
   if (!body.name || !body.phone || !address || !district || !upazila || !body.items?.length) return json(c, { error: 'Please complete customer, district, upazila, address, and cart details.' }, 400);
   const { zone, fee: deliveryFee } = await resolveDeliveryZone(c.env, district, upazila, address);
-  const paymentMethod = ['cod', 'bkash', 'nagad', 'rocket'].includes(normalize(body.paymentMethod)) ? normalize(body.paymentMethod) : 'cod';
+  const paymentMethod = ['cod', 'bkash'].includes(normalize(body.paymentMethod)) ? normalize(body.paymentMethod) : 'cod';
   const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
   if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
   const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
@@ -1579,7 +1632,7 @@ app.post('/api/orders', async (c) => {
     if (item.quantity < minimum) throw new Error(`${product.name} requires a minimum order quantity of ${minimum}.`);
     const tiers = parseVolumeTiers(product.volumeTiersJson);
     const tier = tiers.filter((entry) => item.quantity >= entry.minQty).at(-1);
-    return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? product.price };
+    const options = Object.fromEntries(Object.entries(item.options || {}).filter(([key, value]) => ['size', 'color', 'gram'].includes(key) && normalize(value))); return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? product.price, options };
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
@@ -1592,7 +1645,7 @@ app.post('/api/orders', async (c) => {
   await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(invoiceNumber, order.id).run();
   order.invoiceNumber = invoiceNumber;
   for (const item of lineItems) {
-    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.product.name, item.quantity, item.unitPrice).run();
+    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.options && Object.keys(item.options).length ? `${item.product.name} · ${Object.entries(item.options).map(([key, value]) => `${key === 'size' ? 'Size' : key === 'color' ? 'Colour' : 'Weight'}: ${value}`).join(' · ')}` : item.product.name, item.quantity, item.unitPrice).run();
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
   }
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();

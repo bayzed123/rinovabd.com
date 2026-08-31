@@ -161,14 +161,14 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
 .related-section{ padding-block:clamp(56px,8vw,96px); }
 .related-heading{ display:flex; align-items:end; justify-content:space-between; gap:24px; margin-bottom:24px; }
 .related-heading h2{ margin:0; }
-.related-controls{ display:flex; gap:8px; }
+.related-controls{display:none}
 .related-control{ width:42px; height:42px; border:1px solid var(--line-strong); border-radius:50%; background:var(--white); color:var(--ink); cursor:pointer; transition:all .18s var(--ease); }
 .related-control:hover{ background:var(--rinova-pink); color:#fff; border-color:var(--rinova-pink); transform:translateY(-1px); }
-.related-row{ display:flex; gap:16px; overflow-x:auto; scroll-snap-type:x proximity; scroll-behavior:smooth; overscroll-behavior-inline:contain; padding:4px 2px 16px; scrollbar-width:thin; scrollbar-color:var(--rinova-pink) rgba(232,93,141,.14); }
+.related-row{display:grid;grid-template-columns:1fr;gap:14px;overflow:visible;width:100%}
 .related-row::-webkit-scrollbar{ height:7px; }
 .related-row::-webkit-scrollbar-track{ background:rgba(232,93,141,.14); border-radius:99px; }
 .related-row::-webkit-scrollbar-thumb{ background:var(--rinova-pink); border-radius:99px; }
-.related-card{ flex:0 0 clamp(190px,22vw,250px); scroll-snap-align:start; background:var(--white); border:1px solid var(--line); border-radius:16px; overflow:hidden; color:inherit; text-decoration:none; transition:transform .22s var(--ease), box-shadow .22s ease; }
+.related-card{display:grid;grid-template-columns:minmax(110px,28%) minmax(0,1fr);gap:16px;width:100%;min-width:0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--paper);text-decoration:none;color:inherit}
 .related-card:hover{ transform:translateY(-3px); box-shadow:var(--shadow-lift); }
 .related-card img{ display:block; width:100%; aspect-ratio:1/1.08; object-fit:cover; background:var(--cream); }
 .related-card-copy{ display:grid; gap:5px; padding:14px; }
@@ -240,3 +240,5 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
 .faq-list details[open] summary::after{content:'−';}
 .faq-list details p{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.75;max-width:620px;}
 @media(max-width:520px){.product-card .product-info{padding:13px;}.product-card .product-actions{flex-direction:column;}.product-card .product-actions button{width:100%;}.product-card .product-name{font-size:17px;}}
+
+.product-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0}.product-options label{display:grid;gap:6px;color:var(--muted);font-size:11px}.product-options select{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--white);color:var(--ink)}@media(max-width:560px){.product-options{grid-template-columns:1fr}.related-card{grid-template-columns:96px minmax(0,1fr)}}
