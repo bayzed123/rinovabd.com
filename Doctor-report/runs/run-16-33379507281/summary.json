@@ -1,0 +1,23 @@
+{
+  "overall": "ACTION REQUIRED",
+  "counts": {
+    "PASS": 31,
+    "WARN": 0,
+    "FAIL": 15
+  },
+  "targetUrl": "https://rinovabd.com/assets/beauty-flatlay.jpg find locations  check why all new products auto injection ",
+  "readOnly": true,
+  "startedAt": "2026-08-31T09:48:57.933Z",
+  "reportDirectory": "Doctor-report/runs/run-16-33379507281",
+  "files": [
+    "audit-report.md",
+    "sitemap-links.md",
+    "summary.json",
+    "Medicine-or-fixd/fix-report.md"
+  ],
+  "sitemap": {
+    "total": 0,
+    "reachable": 0,
+    "needsAttention": 0
+  }
+}
