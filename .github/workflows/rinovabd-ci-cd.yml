@@ -80,13 +80,13 @@ jobs:
             echo "Cloudflare deployment skipped: repository secrets are not configured."
           fi
 
-      - name: Apply remote D1 migrations
+      - name: Apply catalog seed update
         if: steps.deploy-gate.outputs.enabled == 'true'
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 46bf056399139631a967566fdb0413fa
-        run: pnpm exec wrangler d1 migrations apply rinovabd-db --remote
+        run: pnpm exec wrangler d1 execute rinovabd-db --remote --file migrations/0016-clothing-options.sql
 
       - name: Deploy through Wrangler
         if: steps.deploy-gate.outputs.enabled == 'true'
