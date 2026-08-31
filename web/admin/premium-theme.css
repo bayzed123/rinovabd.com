@@ -1,0 +1,174 @@
+/* ============================================================
+   RINOVA ADMIN — PREMIUM THEME LAYER
+   Load AFTER admin/styles.css. Overrides only; nothing removed.
+   One accent color, spent only on the current location and primary
+   actions. Bigger touch targets and unmistakable active states —
+   this dashboard is run by people who are not developers.
+   ============================================================ */
+
+:root{
+  --ink:#241A22;
+  --ink-soft:#3A2C36;
+  --muted:#7A6B72;
+  --paper:#FBF7F8;
+  --white:#FFFFFF;
+  --cream:#F6F1F2;
+  --line:#E9DFE3;
+  --line-strong:#D9CBD1;
+  --accent:#C24E7A;
+  --accent-strong:#9C3860;
+  --accent-soft:#F7E8ED;
+  --shadow:0 1px 2px rgba(36,26,34,.05), 0 10px 28px rgba(36,26,34,.06);
+  --shadow-lift:0 4px 10px rgba(36,26,34,.08), 0 20px 48px rgba(36,26,34,.10);
+  --r-sm:10px; --r-md:14px; --r-lg:20px; --r-pill:999px;
+  --ease:cubic-bezier(.2,.8,.2,1);
+}
+
+body{ background:var(--paper); -webkit-font-smoothing:antialiased; }
+
+/* ---------- Sidebar: the one bold, confident surface ---------- */
+.sidebar{
+  background:var(--ink);
+  padding:26px 16px;
+}
+.side-brand strong{ letter-spacing:-.03em; }
+.side-brand span{ color:#B99BA8; letter-spacing:.14em; }
+
+.side-nav{ display:grid; gap:20px; }
+.nav-group{ display:grid; gap:3px; }
+.nav-group-secondary{
+  padding-top:18px;
+  margin-top:6px;
+  border-top:1px solid rgba(255,255,255,.10);
+}
+.nav-label{
+  padding:0 14px 6px;
+  color:rgba(255,255,255,.38);
+  font-size:10px;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  font-weight:600;
+}
+
+/* Every nav row: icon + two-line label (English + Bangla), generous target */
+.nav-item{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:13px;
+  width:100%;
+  min-height:52px;
+  padding:9px 14px 9px 17px;
+  border:0;
+  border-radius:var(--r-sm);
+  background:transparent;
+  color:rgba(255,255,255,.72);
+  text-align:left;
+  text-decoration:none;
+  font:500 14px/1.25 'DM Sans',system-ui,sans-serif;
+  transition:background-color .15s ease, color .15s ease;
+}
+.nav-item-text{ display:flex; flex-direction:column; gap:1px; min-width:0; }
+.nav-item-text > span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nav-item-text small{
+  font-size:11px;
+  font-weight:400;
+  color:rgba(255,255,255,.42);
+}
+.nav-item:hover{ background:rgba(255,255,255,.06); color:#fff; }
+.nav-item:hover .nav-item-text small{ color:rgba(255,255,255,.55); }
+
+/* Active: an unmistakable left bar + soft fill + brighter text — never just a color shift */
+.nav-item.active{
+  background:rgba(194,78,122,.16);
+  color:#fff;
+}
+.nav-item.active .nav-item-text small{ color:rgba(255,240,244,.75); }
+.nav-item.active::before{
+  content:'';
+  position:absolute;
+  left:0; top:8px; bottom:8px;
+  width:3px;
+  border-radius:var(--r-pill);
+  background:var(--accent);
+}
+.nav-item:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+.nav-icon{ color:rgba(255,255,255,.55); flex-shrink:0; }
+.nav-item:hover .nav-icon,
+.nav-item.active .nav-icon{ color:#fff; }
+.nav-icon svg{ width:19px; height:19px; stroke:currentColor; stroke-width:1.7; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+
+.nav-badge{
+  margin-left:auto;
+  flex-shrink:0;
+  padding:3px 8px;
+  border-radius:var(--r-pill);
+  background:rgba(255,255,255,.14);
+  color:#fff;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.06em;
+}
+.nav-external{ margin-left:auto; color:rgba(255,255,255,.4); font-size:14px; }
+
+.logout-button{
+  color:rgba(255,255,255,.5);
+  transition:color .15s ease;
+}
+.logout-button:hover{ color:#fff; }
+
+/* ---------- Content area: calm, bright, generous spacing ---------- */
+.topbar{ border-bottom-color:var(--line); }
+.main-panel{ padding:0 40px 72px; }
+
+.panel{
+  background:var(--white);
+  border:1px solid var(--line);
+  border-radius:var(--r-md);
+  box-shadow:none;
+}
+
+.button-dark{
+  background:var(--accent);
+  color:#fff;
+  border-radius:var(--r-pill);
+  transition:background-color .15s ease, transform .15s var(--ease);
+}
+.button-dark:hover{
+  background:var(--accent-strong);
+  transform:translateY(-1px);
+}
+
+input[type=text],input[type=email],input[type=tel],input[type=number],
+input[type=search],input[type=password],select,textarea{
+  border:1px solid var(--line-strong);
+  border-radius:var(--r-sm);
+  background:var(--white);
+}
+input:focus,select:focus,textarea:focus{
+  outline:none;
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+
+/* Read-only fields (e.g. barcode mirroring SKU) should look calmly inactive, not broken */
+input[readonly],input:disabled{
+  background:var(--cream);
+  color:var(--muted);
+  cursor:not-allowed;
+}
+
+@media (max-width:960px){
+  .nav-item{ min-height:56px; }
+}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    transition-duration:.01ms !important;
+    animation-duration:.01ms !important;
+  }
+}
