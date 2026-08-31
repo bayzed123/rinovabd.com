@@ -138,6 +138,7 @@ async function submitOrder(event) {
     const response = await fetch(`${API_BASE}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Could not place order.');
+    if (payload.customerToken) localStorage.setItem('rinova-customer-token', payload.customerToken);
     localStorage.removeItem('rinova-bag');
     $('#checkout-grid').hidden = true;
     $('#success').hidden = false;
