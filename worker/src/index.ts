@@ -1143,7 +1143,7 @@ function maskSecret(value: string | undefined) { const secret = normalize(value)
 app.post('/api/admin/steadfast/test', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   if (!steadfastConfigured(c.env)) return json(c, { error: 'SteadFast API key and Secret key are not configured.' }, 400);
-  try { const result = await steadfastRequest(c.env, '/balance'); return json(c, { ok: true, message: 'SteadFast credentials accepted.', balance: result.current_balance ?? result.balance ?? null }); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'SteadFast connection test failed.' }, 502); }
+  try { const result = await steadfastRequest(c.env, '/get_balance'); return json(c, { ok: true, message: 'SteadFast credentials accepted.', balance: result.current_balance ?? result.balance ?? null }); } catch (error) { return json(c, { error: error instanceof Error ? error.message : 'SteadFast connection test failed.' }, 502); }
 });
 app.get('/api/admin/steadfast/config', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
