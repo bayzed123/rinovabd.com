@@ -78,6 +78,12 @@
       <section id="view-overview" class="view">
         <div class="period-row"><div><p class="muted">A clear view of how the shop is moving.</p></div><div class="period-buttons"><button data-days="7">7d</button><button class="active" data-days="30">30d</button><button data-days="90">90d</button></div></div>
         <div id="metric-grid" class="metric-grid"></div>
+        <section class="overview-insights-grid" aria-label="Owner insights">
+          <article class="panel alert-panel"><div class="panel-heading"><div><p class="eyebrow">SHOP HEALTH · দোকানের অবস্থা</p><h3>What needs attention?</h3></div><span class="insight-live-dot">Live</span></div><div id="overview-alerts" class="overview-alerts"></div></article>
+          <article class="panel trend-panel"><div class="panel-heading"><div><p class="eyebrow">PERFORMANCE TREND · বিক্রির ধারা</p><h3>Revenue &amp; orders over time</h3></div><span id="trend-period-label" class="metric-chip">30 days</span></div><div id="overview-trend" class="overview-trend"></div></article>
+          <article class="panel demographics-panel"><div class="panel-heading"><div><p class="eyebrow">CUSTOMER DEMOGRAPHICS · গ্রাহকের এলাকা</p><h3>Where customers live</h3><p class="muted">District share based on customers with orders in this period.</p></div><span id="district-total" class="metric-chip">0 districts</span></div><div id="district-map" class="district-map" aria-label="District customer share map"></div><div id="district-list" class="district-list"></div></article>
+          <article class="panel district-cards-panel"><div class="panel-heading"><div><p class="eyebrow">DISTRICT SNAPSHOT · জেলার সারাংশ</p><h3>Top customer areas</h3></div></div><div id="district-cards" class="district-cards"></div></article>
+        </section>
         <article class="panel morning-checklist"><div class="panel-heading"><div><p class="eyebrow">সকালের দ্রুত CHECKLIST</p><h3>আজকের shop check</h3></div><button id="morning-reset" class="icon-action" type="button">আজ reset</button></div><p class="muted">প্রতিদিন সকালে এই তালিকা একবার শেষ করুন। প্রতিটি item-এর পাশে Open চাপলে সরাসরি প্রয়োজনীয় page খুলবে।</p><div id="morning-checklist-list" class="morning-checklist-list"></div></article>
         <div class="dashboard-grid">
           <article class="panel"><div class="panel-heading"><div><p class="eyebrow">ORDER PIPELINE</p><h3>Where orders are now</h3></div></div><div id="pipeline" class="pipeline"></div></article>

@@ -1114,6 +1114,17 @@ app.get('/api/admin/overview', async (c) => {
   return json(c, { periodDays: period, revenue: revenue ?? { revenue: 0, orders: 0 }, grossProfit: profit?.grossProfit ?? 0, stock: stock ?? { units: 0, costValue: 0, retailValue: 0, needsRestock: 0, catalogue: 0 }, pipeline: pipeline.results, topProducts: topProducts.results });
 });
 
+
+app.get('/api/admin/overview-insights', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const period = Math.min(Math.max(Number(c.req.query('days') ?? 30) || 30, 7), 90);
+  const orderFilter = "o.status IN ('confirmed','processing','shipped','delivered')";
+  const trend = await c.env.DB.prepare(`SELECT date(o.created_at) AS day, COUNT(*) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o WHERE o.created_at >= datetime('now', ?) AND ${orderFilter} GROUP BY date(o.created_at) ORDER BY day ASC`).bind(`-${period} days`).all();
+  const districts = await c.env.DB.prepare(`SELECT COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') AS district, COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?) GROUP BY COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') ORDER BY customers DESC, orders DESC LIMIT 20`).bind(`-${period} days`).all();
+  const totals = await c.env.DB.prepare(`SELECT COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?)`).bind(`-${period} days`).first();
+  return json(c, { periodDays: period, trend: trend.results, districts: districts.results, totals: totals ?? { customers: 0, orders: 0, revenue: 0 } });
+});
+
 function maskSecret(value: string | undefined) { const secret = normalize(value); return secret ? `${secret.slice(0, 3)}${'•'.repeat(Math.max(4, secret.length - 6))}${secret.slice(-3)}` : 'Not configured'; }
 app.post('/api/admin/steadfast/test', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
