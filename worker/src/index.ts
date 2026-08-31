@@ -1122,9 +1122,18 @@ app.get('/api/admin/overview-insights', async (c) => {
   const trend = await c.env.DB.prepare(`SELECT date(o.created_at) AS day, COUNT(*) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o WHERE o.created_at >= datetime('now', ?) AND ${orderFilter} GROUP BY date(o.created_at) ORDER BY day ASC`).bind(`-${period} days`).all();
   const districts = await c.env.DB.prepare(`SELECT COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') AS district, COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?) GROUP BY COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') ORDER BY customers DESC, orders DESC LIMIT 20`).bind(`-${period} days`).all();
   const totals = await c.env.DB.prepare(`SELECT COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?)`).bind(`-${period} days`).first();
-  return json(c, { periodDays: period, trend: trend.results, districts: districts.results, totals: totals ?? { customers: 0, orders: 0, revenue: 0 } });
+  const returnClients = await c.env.DB.prepare(`SELECT c.id AS customerId, c.name, c.phone, c.email, c.district, COUNT(r.id) AS returns, MAX(r.created_at) AS lastReturn FROM returns r JOIN orders o ON o.id = r.order_id JOIN customers c ON c.id = o.customer_id WHERE r.created_at >= datetime('now', ?) GROUP BY c.id ORDER BY lastReturn DESC LIMIT 8`).bind(`-${period} days`).all();
+  const cancelClients = await c.env.DB.prepare(`SELECT c.id AS customerId, c.name, c.phone, c.email, c.district, COUNT(o.id) AS cancelledOrders, MAX(o.created_at) AS lastCancelled FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?) AND o.status IN ('customer_cancelled','admin_cancelled') GROUP BY c.id ORDER BY lastCancelled DESC LIMIT 8`).bind(`-${period} days`).all();
+  return json(c, { periodDays: period, trend: trend.results, districts: districts.results, totals: totals ?? { customers: 0, orders: 0, revenue: 0 }, returnClients: returnClients.results, cancelClients: cancelClients.results });
 });
-
+app.get('/api/admin/overview-search', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const query = normalize(c.req.query('q'));
+  if (!query) return json(c, { results: [] });
+  const like = `%${query}%`;
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, (o.subtotal + o.delivery_fee) AS total FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code LIKE ? OR o.invoice_number LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.name LIKE ? ORDER BY o.created_at DESC LIMIT 20`).bind(like, like, like, like, like).all();
+  return json(c, { results: result.results });
+});
 function maskSecret(value: string | undefined) { const secret = normalize(value); return secret ? `${secret.slice(0, 3)}${'•'.repeat(Math.max(4, secret.length - 6))}${secret.slice(-3)}` : 'Not configured'; }
 app.post('/api/admin/steadfast/test', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);

@@ -107,6 +107,8 @@ jobs:
           SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          META_CAPI_TOKEN: ${{ secrets.META_CAPI_TOKEN }}
+          META_TEST_EVENT_CODE: ${{ secrets.META_TEST_EVENT_CODE }}
         run: |
           set -euo pipefail
           sync_secret() {
@@ -129,3 +131,5 @@ jobs:
           sync_secret SERVICE_ACCOUNT_JSON "$SERVICE_ACCOUNT_JSON"
           sync_secret R2_ACCESS_KEY_ID "$R2_ACCESS_KEY_ID"
           sync_secret R2_SECRET_ACCESS_KEY "$R2_SECRET_ACCESS_KEY"
+          sync_secret META_CAPI_TOKEN "$META_CAPI_TOKEN"
+          sync_secret META_TEST_EVENT_CODE "$META_TEST_EVENT_CODE"
