@@ -78,6 +78,12 @@
       <section id="view-overview" class="view">
         <div class="period-row"><div><p class="muted">A clear view of how the shop is moving.</p></div><div class="period-buttons"><button data-days="7">7d</button><button class="active" data-days="30">30d</button><button data-days="90">90d</button></div></div>
         <div id="metric-grid" class="metric-grid"></div>
+        <section class="overview-finance-row" aria-label="Finance composition">
+          <article class="panel finance-composition-panel"><div class="panel-heading"><div><p class="eyebrow">FINANCE COMPOSITION · অর্থের গঠন</p><h3>Product price, cost &amp; delivery</h3><p class="muted">Delivery charge is shown separately from product revenue and product cost.</p></div><span class="metric-chip">Period view</span></div><div id="overview-finance-cards" class="finance-composition-cards"></div></article>
+        </section>
+        <section class="overview-courier-row" aria-label="Courier mapping details">
+          <article class="panel courier-mapping-panel"><div class="panel-heading"><div><p class="eyebrow">COURIER MAPPING · কুরিয়ার ম্যাপিং</p><h3>Delivery charge by zone and courier</h3><p class="muted">This row maps stored courier provider, delivery zone, order count, and collected delivery charge.</p></div><span class="metric-chip">Mapped data only</span></div><div id="overview-courier-chart" class="courier-chart"></div></article>
+        </section>
         <section class="overview-insights-grid" aria-label="Owner insights">
           <article class="panel alert-panel"><div class="panel-heading"><div><p class="eyebrow">SHOP HEALTH · দোকানের অবস্থা</p><h3>What needs attention?</h3></div><span class="insight-live-dot">Live</span></div><div id="overview-alerts" class="overview-alerts"></div></article>
           <article class="panel trend-panel"><div class="panel-heading"><div><p class="eyebrow">PERFORMANCE TREND · বিক্রির ধারা</p><h3>Revenue &amp; orders over time</h3></div><span id="trend-period-label" class="metric-chip">30 days</span></div><div id="overview-trend" class="overview-trend"></div></article>
