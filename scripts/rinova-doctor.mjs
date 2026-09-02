@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createSign } from 'node:crypto';
 import { join, resolve, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -249,6 +250,87 @@ async function checkSitemap(sitemapResult) {
 
 function checkSecretSafeReport(report) { if (/ADMIN_PASSWORD\s*[:=]\s*[^$\n]*[A-Za-z0-9]{8}/.test(report) || /CLOUDFLARE_API_TOKEN\s*[:=]\s*[^$\n]*[A-Za-z0-9]{12}/.test(report)) throw new Error('Report safety check detected a possible secret value'); }
 
+const HEALTH_SHEET_ID = String(process.env.GOOGLE_PROJECT_HEALTH_SHEET_ID || '10VO_WxqXLFOPQAPb0ITi_hYaZAojLhn2r1_0qj5UhI4').trim();
+const HEALTH_SHEET_HEADERS = ['Run At', 'Overall', 'Pass', 'Warn', 'Fail', 'Target URL', 'Sitemap Reachable', 'Sitemap Total', 'Commit', 'Run URL', 'Top Findings'];
+
+const base64url = (input) => Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+/**
+ * Mint a Google access token from the service-account JSON held in CI secrets.
+ * The doctor runs in Actions, not in the Worker, so it signs its own JWT here.
+ */
+async function googleSheetsToken(serviceAccountJson) {
+  const service = JSON.parse(serviceAccountJson);
+  if (!service.client_email || !service.private_key) throw new Error('Service account JSON is missing client_email or private_key.');
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = base64url(JSON.stringify({
+    iss: service.client_email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  }));
+  const signer = createSign('RSA-SHA256');
+  signer.update(`${header}.${claim}`);
+  const signature = signer.sign(service.private_key.replace(/\\n/g, '\n')).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${header}.${claim}.${signature}` }),
+  });
+  if (!response.ok) throw new Error(`Google token request failed with HTTP ${response.status}.`);
+  const data = await response.json();
+  if (!data.access_token) throw new Error('Google token response did not include an access token.');
+  return data.access_token;
+}
+
+/**
+ * Append one row per doctor run to the developer project-health sheet.
+ * This sheet is for the developer only and is never shown in the admin dashboard.
+ */
+async function publishHealthRow(summary) {
+  const serviceAccountJson = process.env.SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
+  if (!HEALTH_SHEET_ID) return console.log('Project-health sheet: no sheet ID configured, skipping.');
+  if (!serviceAccountJson) return console.log('Project-health sheet: SERVICE_ACCOUNT_JSON is not set, skipping.');
+  const topFindings = results.filter((item) => item.status !== 'PASS').slice(0, 8).map((item) => `${item.status} ${item.area}: ${item.message}`).join(' | ') || 'No warnings or failures.';
+  const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+    ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    : 'local run';
+  const row = [
+    startedAt,
+    summary.overall,
+    summary.counts.PASS,
+    summary.counts.WARN,
+    summary.counts.FAIL,
+    TARGET_URL,
+    summary.sitemap.reachable,
+    summary.sitemap.total,
+    String(process.env.GITHUB_SHA || '').slice(0, 12) || 'local',
+    runUrl,
+    topFindings.slice(0, 900),
+  ];
+  // The report safety check already ran; this row carries only names and counts.
+  checkSecretSafeReport(row.join(' '));
+  try {
+    const token = await googleSheetsToken(serviceAccountJson);
+    const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(HEALTH_SHEET_ID)}/values/A:K`;
+    const headerResponse = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+    if (!headerResponse.ok) throw new Error(`Sheet read failed with HTTP ${headerResponse.status}. Give the service-account email Editor access.`);
+    const headerData = await headerResponse.json();
+    if (!headerData.values?.length) {
+      const writeHeaders = await fetch(`${endpoint}?valueInputOption=USER_ENTERED`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ range: 'A1', majorDimension: 'ROWS', values: [HEALTH_SHEET_HEADERS] }) });
+      if (!writeHeaders.ok) throw new Error(`Sheet header write failed with HTTP ${writeHeaders.status}.`);
+    }
+    const append = await fetch(`${endpoint}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ majorDimension: 'ROWS', values: [row] }) });
+    if (!append.ok) throw new Error(`Sheet append failed with HTTP ${append.status}.`);
+    console.log(`Project-health sheet updated: ${summary.overall} (${summary.counts.PASS} pass, ${summary.counts.WARN} warn, ${summary.counts.FAIL} fail)`);
+  } catch (error) {
+    // A reporting hiccup must never fail the diagnostics run.
+    console.log(`Project-health sheet could not be updated: ${error.message}`);
+  }
+}
+
 function writeReports() {
   mkdirSync(FIX_DIR, { recursive: true });
   const counts = results.reduce((acc, item) => { acc[item.status] += 1; return acc; }, { PASS: 0, WARN: 0, FAIL: 0 }); const overall = counts.FAIL ? 'ACTION REQUIRED' : counts.WARN ? 'READY WITH WARNINGS' : 'HEALTHY';
@@ -263,6 +345,7 @@ function writeReports() {
   if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, `${summaryMd}\n`, { encoding: 'utf8', flag: 'a' });
   console.log(`\nDoctor result: ${overall} — ${counts.PASS} pass, ${counts.WARN} warning, ${counts.FAIL} fail`); console.log(`Reports written to ${rel(OUTPUT_DIR)}`);
   if (STRICT && counts.FAIL) process.exitCode = 1;
+  return summary;
 }
 
 console.log(`\nRinova BD Doctor — read-only diagnostics\nRoot: ${ROOT}\nTarget: ${TARGET_URL}\n`);
@@ -271,4 +354,4 @@ await publicCheck('/'); await publicCheck('/api/health'); await publicCheck('/ap
 const sitemapResult = await publicCheck('/sitemap.xml'); await checkSitemap(sitemapResult);
 await publicCheck('/admin/'); await publicCheck('/account.html'); await publicCheck('/blog.html?slug=a-gentler-way-to-build-your-morning-routine');
 for (const path of ['/api/admin/session', '/api/admin/products', '/api/admin/media-library', '/api/account/me', '/api/account/orders']) await publicCheck(path, [401]);
-writeReports();
+await publishHealthRow(writeReports());

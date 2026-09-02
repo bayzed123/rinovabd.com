@@ -242,3 +242,90 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
 @media(max-width:520px){.product-card .product-info{padding:13px;}.product-card .product-actions{flex-direction:column;}.product-card .product-actions button{width:100%;}.product-card .product-name{font-size:17px;}}
 
 .product-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0}.product-options label{display:grid;gap:6px;color:var(--muted);font-size:11px}.product-options select{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--white);color:var(--ink)}@media(max-width:560px){.product-options{grid-template-columns:1fr}.related-card{grid-template-columns:96px minmax(0,1fr)}}
+
+
+/* ============================================================
+   Footer rebuild: four clear columns, no duplicated links,
+   real contact details and a calm payments strip.
+   ============================================================ */
+.site-footer{
+  display:grid;
+  grid-template-columns:1.6fr .8fr .9fr 1.3fr;
+  gap:44px 32px;
+  padding:64px clamp(20px,6vw,84px) 28px;
+  border-top:1px solid rgba(50,29,53,.16);
+}
+.footer-brand{ max-width:340px; }
+.footer-brand p{ max-width:none; margin:18px 0 0; font-size:13px; line-height:1.75; }
+.footer-contact{ display:grid; gap:2px; margin-top:18px; }
+.footer-contact a{ display:inline-flex; align-items:center; gap:9px; margin:0; padding:7px 0; font-size:13px; font-weight:500; }
+.footer-contact .rinova-icon{ width:1em; height:1em; opacity:.75; }
+
+.footer-links{ display:block; min-width:0; }
+.footer-links a{ display:block; margin:0; padding:7px 0; font-size:13px; }
+.footer-links a:hover{ text-decoration:underline; text-underline-offset:4px; }
+
+.footer-newsletter p{ max-width:none; }
+.footer-newsletter p:not(.footer-label):not(.newsletter-message){ margin:0 0 14px; font-size:13px; line-height:1.7; }
+.footer-newsletter form{ display:flex; align-items:center; gap:8px; border-bottom-width:1px; }
+.footer-newsletter input{ padding:12px 0; font-size:14px; }
+.footer-newsletter button{ flex:0 0 auto; padding:6px; cursor:pointer; }
+
+.footer-payments{
+  grid-column:1/-1;
+  display:flex; align-items:center; gap:20px; flex-wrap:wrap;
+  padding-top:26px; margin-top:6px;
+  border-top:1px solid rgba(50,29,53,.16);
+}
+.footer-payments .payment-note{ margin-left:auto; font-size:11px; }
+
+.footer-bottom{
+  grid-column:1/-1;
+  display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  padding-top:18px; margin-top:14px;
+  border-top:1px solid rgba(50,29,53,.16);
+  font-size:11.5px;
+}
+
+@media(max-width:900px){
+  .site-footer{ grid-template-columns:1fr 1fr; gap:34px 24px; padding:48px 22px 24px; }
+  .footer-brand,.footer-newsletter{ grid-column:1/-1; }
+  .footer-payments{ gap:14px; }
+  .footer-payments .payment-note{ margin-left:0; width:100%; }
+}
+@media(max-width:520px){
+  .site-footer{ grid-template-columns:1fr; gap:28px; }
+  .footer-bottom{ flex-direction:column; align-items:flex-start; gap:6px; }
+}
+
+/* Screen-reader-only labels must stay hidden inside the footer too — a later
+   layer had been resetting them to static, so the newsletter label showed. */
+.site-footer .sr-only{
+  position:absolute !important;
+  width:1px; height:1px;
+  padding:0; margin:-1px;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0;
+}
+
+/* Payment marks: one consistent card, image fully contained. */
+.footer-payments .payment-logo{
+  display:grid; place-items:center;
+  width:92px; height:46px;
+  padding:7px 10px;
+  border:1px solid rgba(50,29,53,.12);
+  border-radius:10px;
+  background:#fff;
+  overflow:hidden;
+}
+.footer-payments .payment-logo img{
+  display:block;
+  width:100%; height:100%;
+  padding:0;
+  object-fit:contain;
+}
+/* Keep the sign-off clear of the floating chat button. */
+.footer-bottom{ padding-right:64px; }
+@media(max-width:520px){ .footer-bottom{ padding-right:0; padding-bottom:56px; } }

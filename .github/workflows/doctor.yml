@@ -50,6 +50,8 @@ jobs:
       GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+      GOOGLE_PROJECT_HEALTH_SHEET_ID: ${{ vars.GOOGLE_PROJECT_HEALTH_SHEET_ID || '10VO_WxqXLFOPQAPb0ITi_hYaZAojLhn2r1_0qj5UhI4' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

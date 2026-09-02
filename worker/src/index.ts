@@ -28,6 +28,7 @@ interface Bindings {
   SERVICE_ACCOUNT_JSON?: string;
   GOOGLE_ACCOUNT_LEADS_SHEET_ID?: string;
   GOOGLE_ACTIVITY_LEADS_SHEET_ID?: string;
+  GOOGLE_PROJECT_HEALTH_SHEET_ID?: string;
   R2_ACCOUNT_ID?: string;
   R2_BUCKET_NAME?: string;
   R2_PUBLIC_URL?: string;
@@ -410,20 +411,34 @@ async function verifyPassword(password: string, stored: string | null) {
   return Boolean(salt && digest && digest === await sha256(`${salt}:${password}`));
 }
 
-async function adminPrincipal(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
+type AdminRole = 'owner' | 'staff';
+
+/** The signed-in dashboard principal, with the role that decides owner-only actions. */
+async function adminSession(c: { env: Bindings; req: { header: (name: string) => string | undefined } }): Promise<{ username: string; role: AdminRole } | null> {
   const authorization = c.req.header('Authorization') ?? '';
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
   if (!token) return null;
-  if (c.env.ADMIN_API_TOKEN && token === c.env.ADMIN_API_TOKEN) return 'api-admin';
+  if (c.env.ADMIN_API_TOKEN && token === c.env.ADMIN_API_TOKEN) return { username: 'api-admin', role: 'owner' };
   const tokenHash = await sha256(token);
-  const session = await c.env.DB.prepare("SELECT username, expires_at AS expiresAt FROM admin_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1").bind(tokenHash).first<{ username: string; expiresAt: string }>();
-  return session?.username ?? null;
+  const session = await c.env.DB.prepare("SELECT username, role FROM admin_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1").bind(tokenHash).first<{ username: string; role: string | null }>();
+  if (!session) return null;
+  return { username: session.username, role: session.role === 'staff' ? 'staff' : 'owner' };
 }
 
-async function createAdminSession(env: Bindings, username: string) {
+async function adminPrincipal(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
+  return (await adminSession(c))?.username ?? null;
+}
+
+/** Creating or removing dashboard logins is the owner's alone. */
+async function ownerPrincipal(c: { env: Bindings; req: { header: (name: string) => string | undefined } }) {
+  const session = await adminSession(c);
+  return session?.role === 'owner' ? session.username : null;
+}
+
+async function createAdminSession(env: Bindings, username: string, role: AdminRole = 'owner') {
   const token = `${crypto.randomUUID()}.${crypto.randomUUID()}`;
   const tokenHash = await sha256(token);
-  await env.DB.prepare("INSERT INTO admin_sessions(token_hash, username, expires_at) VALUES (?, ?, datetime('now', '+12 hours'))").bind(tokenHash, username).run();
+  await env.DB.prepare("INSERT INTO admin_sessions(token_hash, username, role, expires_at) VALUES (?, ?, ?, datetime('now', '+12 hours'))").bind(tokenHash, username, role).run();
   return token;
 }
 
@@ -776,15 +791,169 @@ app.post('/api/admin/product-media', async (c) => {
 
 app.post('/api/admin/login', async (c) => {
   const body = await c.req.json<{ username?: string; password?: string }>().catch((): { username?: string; password?: string } => ({}));
+  const username = normalize(body.username);
+  const password = normalize(body.password);
   const expectedUsername = c.env.ADMIN_USERNAME ?? 'admin';
-  if (normalize(body.username).toLowerCase() !== expectedUsername.toLowerCase() || !c.env.ADMIN_PASSWORD || body.password !== c.env.ADMIN_PASSWORD) return json(c, { error: 'Invalid administrator credentials.' }, 401);
-  const token = await createAdminSession(c.env, expectedUsername);
-  return json(c, { ok: true, token, expiresInHours: 12, username: expectedUsername });
+
+  // The owner login lives in Worker secrets and is only changed by the developer.
+  if (username.toLowerCase() === expectedUsername.toLowerCase()) {
+    if (!c.env.ADMIN_PASSWORD || body.password !== c.env.ADMIN_PASSWORD) return json(c, { error: 'Invalid administrator credentials.' }, 401);
+    const token = await createAdminSession(c.env, expectedUsername, 'owner');
+    return json(c, { ok: true, token, expiresInHours: 12, username: expectedUsername, role: 'owner' });
+  }
+
+  // Staff logins are created by the owner from the dashboard.
+  const staff = await c.env.DB.prepare('SELECT id, username, password_hash AS passwordHash, role, active FROM admin_users WHERE lower(username) = lower(?) LIMIT 1').bind(username).first<{ id: number; username: string; passwordHash: string; role: string; active: number }>();
+  if (!staff || !Number(staff.active) || !await verifyPassword(password, staff.passwordHash)) return json(c, { error: 'Invalid administrator credentials.' }, 401);
+  await c.env.DB.prepare('UPDATE admin_users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').bind(staff.id).run();
+  const role: AdminRole = staff.role === 'owner' ? 'owner' : 'staff';
+  const token = await createAdminSession(c.env, staff.username, role);
+  return json(c, { ok: true, token, expiresInHours: 12, username: staff.username, role });
+});
+
+/**
+ * Staff account management. Only the owner may create, edit or remove a login,
+ * and no endpoint ever returns a password or a security answer.
+ */
+const SECURITY_QUESTIONS = [
+  "Mother's name",
+  'Village or home town',
+  'First school name',
+  'Favourite colour',
+  'Pet name',
+];
+
+/**
+ * Customer support for a forgotten password.
+ *
+ * Customer passwords are stored only as salted hashes and are never readable —
+ * not by the dashboard and not from a spreadsheet. So instead of showing an agent
+ * a password, this issues a fresh temporary one, shows it to the agent exactly once,
+ * and records that a reset happened in the customer sheet.
+ */
+function temporaryPassword() {
+  // No look-alike characters, so an agent can read it out over the phone.
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return `Rnv-${Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')}`;
+}
+
+/**
+ * The two business spreadsheets the shop owner works from. The project-health sheet
+ * used by the CI doctor is deliberately absent: it is a developer tool and carries
+ * nothing an owner needs to see.
+ */
+app.get('/api/admin/sheets', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const definitions = [
+    { key: 'sales', title: 'Sales & order leads', titleBn: 'বিক্রি ও অর্ডার', description: 'Every order, POS sale and return is appended here with customer, payment and totals.', id: normalize(c.env.GOOGLE_ACTIVITY_LEADS_SHEET_ID), columns: activityLeadHeaders },
+    { key: 'customers', title: 'Customer accounts', titleBn: 'কাস্টমার অ্যাকাউন্ট', description: 'Every new customer account and every support password reset is appended here. Passwords are never written.', id: normalize(c.env.GOOGLE_ACCOUNT_LEADS_SHEET_ID), columns: accountLeadHeaders },
+  ];
+  let token = '';
+  try { token = c.env.SERVICE_ACCOUNT_JSON ? await googleAccessToken(c.env, 'https://www.googleapis.com/auth/spreadsheets') : ''; } catch { token = ''; }
+  const sheets = await Promise.all(definitions.map(async (definition) => {
+    const access = token && definition.id ? await sheetsAccessCheck(definition.id, token) : { configured: Boolean(definition.id), accessible: false, reason: definition.id ? 'Google service account is not configured on the Worker.' : 'Sheet ID is not configured.' };
+    return { ...definition, url: definition.id ? `https://docs.google.com/spreadsheets/d/${definition.id}/edit` : '', ...access };
+  }));
+  return json(c, { sheets, serviceAccountConfigured: Boolean(c.env.SERVICE_ACCOUNT_JSON) });
+});
+
+app.get('/api/admin/customers', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const query = normalize(c.req.query('q'));
+  const pattern = `%${query}%`;
+  const rows = query
+    ? await c.env.DB.prepare("SELECT c.id, c.name, c.phone, c.email, c.district, c.upazila, c.account_status AS accountStatus, c.created_at AS createdAt, (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) AS orderCount, CASE WHEN c.password_hash IS NULL THEN 0 ELSE 1 END AS hasAccount FROM customers c WHERE c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? ORDER BY c.updated_at DESC LIMIT 50").bind(pattern, pattern, pattern).all()
+    : await c.env.DB.prepare("SELECT c.id, c.name, c.phone, c.email, c.district, c.upazila, c.account_status AS accountStatus, c.created_at AS createdAt, (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) AS orderCount, CASE WHEN c.password_hash IS NULL THEN 0 ELSE 1 END AS hasAccount FROM customers c ORDER BY c.updated_at DESC LIMIT 50").all();
+  return json(c, { customers: rows.results });
+});
+
+app.post('/api/admin/customers/:id/reset-password', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid customer id.' }, 400);
+  const customer = await c.env.DB.prepare('SELECT id, name, phone, email, password_hash AS passwordHash FROM customers WHERE id = ? LIMIT 1').bind(id).first<{ id: number; name: string; phone: string; email: string | null; passwordHash: string | null }>();
+  if (!customer) return json(c, { error: 'Customer not found.' }, 404);
+  if (!customer.passwordHash) return json(c, { error: 'This customer has no account yet, so there is no password to reset.' }, 400);
+  const password = temporaryPassword();
+  await c.env.DB.prepare('UPDATE customers SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(await hashPassword(password), id).run();
+  // Every existing sign-in must stop working once the password changes.
+  await c.env.DB.prepare('DELETE FROM customer_sessions WHERE customer_id = ?').bind(id).run();
+  c.executionCtx.waitUntil(syncAccountLead(c.env, [new Date().toISOString(), 'password_reset', customer.name, customer.phone, customer.email, customer.id, `support:${actor}`, 'temporary password issued']).catch(() => undefined));
+  await createAdminNotification(c.env, { type: 'account', title: 'Customer password reset', message: `${customer.name} (${customer.phone}) was given a temporary password by ${actor}.`, entityType: 'customer', entityId: String(customer.id) });
+  // Returned once, to the agent on the call. It is not stored anywhere in readable form.
+  return json(c, { ok: true, temporaryPassword: password, customer: { id: customer.id, name: customer.name, phone: customer.phone } });
+});
+
+app.get('/api/admin/staff', async (c) => {
+  if (!await ownerPrincipal(c)) return json(c, { error: 'Only the shop owner can manage dashboard logins.' }, 403);
+  const result = await c.env.DB.prepare('SELECT id, username, display_name AS displayName, security_question AS securityQuestion, role, active, created_by AS createdBy, last_login_at AS lastLoginAt, created_at AS createdAt FROM admin_users ORDER BY created_at DESC').all();
+  return json(c, { staff: result.results, securityQuestions: SECURITY_QUESTIONS, ownerUsername: c.env.ADMIN_USERNAME ?? 'admin' });
+});
+
+app.post('/api/admin/staff', async (c) => {
+  const owner = await ownerPrincipal(c);
+  if (!owner) return json(c, { error: 'Only the shop owner can create dashboard logins.' }, 403);
+  const body = await c.req.json<Record<string, unknown>>();
+  const username = normalize(body.username).toLowerCase();
+  const password = normalize(body.password);
+  const securityQuestion = normalize(body.securityQuestion);
+  const securityAnswer = normalize(body.securityAnswer);
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) return json(c, { error: 'Username must be 3-32 characters: letters, numbers, dot, dash or underscore.' }, 400);
+  if (username === normalize(c.env.ADMIN_USERNAME ?? 'admin').toLowerCase()) return json(c, { error: 'That username belongs to the owner login.' }, 409);
+  if (password.length < 8) return json(c, { error: 'Password must be at least 8 characters.' }, 400);
+  if (!securityQuestion || securityAnswer.length < 2) return json(c, { error: 'Choose a security question and give an answer.' }, 400);
+  const existing = await c.env.DB.prepare('SELECT id FROM admin_users WHERE lower(username) = ? LIMIT 1').bind(username).first();
+  if (existing) return json(c, { error: 'That username is already taken.' }, 409);
+  const created = await c.env.DB.prepare('INSERT INTO admin_users(username, display_name, password_hash, security_question, security_answer_hash, role, created_by) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id')
+    .bind(username, normalize(body.displayName).slice(0, 80) || null, await hashPassword(password), securityQuestion.slice(0, 120), await hashPassword(securityAnswer.toLowerCase()), normalize(body.role) === 'owner' ? 'owner' : 'staff', owner)
+    .first<{ id: number }>();
+  return json(c, { ok: true, id: created?.id, username }, 201);
+});
+
+app.patch('/api/admin/staff/:id', async (c) => {
+  const owner = await ownerPrincipal(c);
+  if (!owner) return json(c, { error: 'Only the shop owner can change dashboard logins.' }, 403);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid staff id.' }, 400);
+  const body = await c.req.json<Record<string, unknown>>();
+  const staff = await c.env.DB.prepare('SELECT id FROM admin_users WHERE id = ? LIMIT 1').bind(id).first();
+  if (!staff) return json(c, { error: 'Staff account not found.' }, 404);
+  if (body.password !== undefined) {
+    const password = normalize(body.password);
+    if (password.length < 8) return json(c, { error: 'Password must be at least 8 characters.' }, 400);
+    await c.env.DB.prepare('UPDATE admin_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(await hashPassword(password), id).run();
+    // A password change must not leave old browser sessions signed in.
+    await c.env.DB.prepare('DELETE FROM admin_sessions WHERE username = (SELECT username FROM admin_users WHERE id = ?)').bind(id).run();
+  }
+  if (body.securityQuestion !== undefined || body.securityAnswer !== undefined) {
+    const question = normalize(body.securityQuestion);
+    const answer = normalize(body.securityAnswer);
+    if (!question || answer.length < 2) return json(c, { error: 'Give both the security question and its answer.' }, 400);
+    await c.env.DB.prepare('UPDATE admin_users SET security_question = ?, security_answer_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(question.slice(0, 120), await hashPassword(answer.toLowerCase()), id).run();
+  }
+  if (body.active !== undefined) {
+    await c.env.DB.prepare('UPDATE admin_users SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(body.active ? 1 : 0, id).run();
+    if (!body.active) await c.env.DB.prepare('DELETE FROM admin_sessions WHERE username = (SELECT username FROM admin_users WHERE id = ?)').bind(id).run();
+  }
+  if (body.displayName !== undefined) await c.env.DB.prepare('UPDATE admin_users SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalize(body.displayName).slice(0, 80) || null, id).run();
+  return json(c, { ok: true });
+});
+
+app.delete('/api/admin/staff/:id', async (c) => {
+  const owner = await ownerPrincipal(c);
+  if (!owner) return json(c, { error: 'Only the shop owner can remove dashboard logins.' }, 403);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid staff id.' }, 400);
+  await c.env.DB.prepare('DELETE FROM admin_sessions WHERE username = (SELECT username FROM admin_users WHERE id = ?)').bind(id).run();
+  await c.env.DB.prepare('DELETE FROM admin_users WHERE id = ?').bind(id).run();
+  return json(c, { ok: true });
 });
 
 app.get('/api/admin/session', async (c) => {
-  const username = await adminPrincipal(c);
-  return username ? json(c, { authenticated: true, username }) : json(c, { authenticated: false }, 401);
+  const session = await adminSession(c);
+  return session ? json(c, { authenticated: true, username: session.username, role: session.role }) : json(c, { authenticated: false }, 401);
 });
 
 app.post('/api/admin/logout', async (c) => {
