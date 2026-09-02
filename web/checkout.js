@@ -34,6 +34,9 @@ async function loadPaymentMethods() {
       const payload = await response.json();
       const methods = (payload.paymentMethods || []).filter((method) => method && method.id);
       if (methods.length) state.paymentMethods = methods;
+      const partner = payload.delivery?.partner;
+      const partnerName = $('#delivery-partner-name');
+      if (partner && partnerName) partnerName.textContent = partner;
     }
   } catch {
     // Keep the cash-on-delivery fallback rather than blocking checkout on a config hiccup.
