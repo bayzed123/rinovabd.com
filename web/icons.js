@@ -1,6 +1,9 @@
 (function () {
   const paths = {
     menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16" />',
+    chat: '<path d="M20 12a7.5 7.5 0 0 1-10.9 6.7L4 20l1.3-4.1A7.5 7.5 0 1 1 20 12Z" />',
+    phone: '<path d="M6.5 4h3l1.5 4-2 1.4a11 11 0 0 0 5.6 5.6L16 13l4 1.5v3a2 2 0 0 1-2.2 2A15.5 15.5 0 0 1 4 6.2 2 2 0 0 1 6 4Z" />',
+    mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2" /><path d="m4 7 8 5.5L20 7" />',
     search: '<circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" />',
     account: '<circle cx="12" cy="8" r="3.5" /><path d="M5 20c.8-3.3 3.1-5 7-5s6.2 1.7 7 5" />',
     bag: '<path d="M5.5 8.5h13l1 12h-15l1-12Z" /><path d="M9 9V6.8a3 3 0 0 1 6 0V9" />',
