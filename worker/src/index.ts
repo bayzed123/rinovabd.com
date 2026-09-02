@@ -54,15 +54,87 @@ function normalize(value: unknown) {
   return String(value ?? '').trim();
 }
 
+/** A validation failure the caller can fix — surfaced as a 400 instead of an opaque 500. */
+class RequestError extends Error {
+  readonly status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = 'RequestError';
+    this.status = status;
+  }
+}
+
+/**
+ * Stock and validation checks throw from inside `.map()` callbacks, which Hono would otherwise
+ * turn into a bare 500 "Internal Server Error" — the customer then sees no reason for the failure.
+ */
+app.onError((error, c) => {
+  const status = error instanceof RequestError ? error.status : 500;
+  if (status === 500) console.error('[rinova]', c.req.method, c.req.path, error);
+  return c.json({ error: status === 500 ? 'Something went wrong. Please try again.' : error.message }, status as 400);
+});
+
+async function readSettings(env: Bindings, keys: string[]): Promise<Record<string, string>> {
+  if (!keys.length) return {};
+  const rows = await env.DB.prepare(`SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN (${keys.map(() => '?').join(',')})`).bind(...keys).all<{ key: string; value: string }>();
+  return Object.fromEntries(rows.results.map((row) => [row.key, normalize(row.value)]));
+}
+
+const DELIVERY_FEE_DEFAULTS = { dhaka: 90, 'outside-dhaka': 150, emergency: 250 } as const;
+
+/** Delivery charges are owner-editable in Settings; the historic 90/150/250 values stay as fallbacks. */
+async function deliveryFeeTable(env: Bindings): Promise<{ dhaka: number; 'outside-dhaka': number; emergency: number }> {
+  const settings = await readSettings(env, ['delivery_inside_dhaka', 'delivery_outside_dhaka', 'delivery_emergency']);
+  const pick = (value: string | undefined, fallback: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  };
+  return {
+    dhaka: pick(settings.delivery_inside_dhaka, DELIVERY_FEE_DEFAULTS.dhaka),
+    'outside-dhaka': pick(settings.delivery_outside_dhaka, DELIVERY_FEE_DEFAULTS['outside-dhaka']),
+    emergency: pick(settings.delivery_emergency, DELIVERY_FEE_DEFAULTS.emergency),
+  };
+}
+
 async function resolveDeliveryZone(env: Bindings, district: string, upazila: string, addressFallback: string): Promise<{ zone: 'dhaka' | 'outside-dhaka'; fee: number }> {
+  const fees = await deliveryFeeTable(env);
   if (district && upazila) {
     const location = await env.DB.prepare('SELECT zone FROM location_directory WHERE district = ? AND upazila = ? LIMIT 1').bind(district, upazila).first<{ zone: 'dhaka' | 'outside-dhaka' }>();
-    if (location?.zone) return { zone: location.zone, fee: location.zone === 'dhaka' ? 90 : 150 };
+    if (location?.zone) return { zone: location.zone, fee: fees[location.zone] };
   }
   const referenceText = `${district} ${addressFallback}`;
   const insideDhaka = /\bdhaka\b/i.test(referenceText) || referenceText.includes('ঢাকা');
   const zone: 'dhaka' | 'outside-dhaka' = insideDhaka ? 'dhaka' : 'outside-dhaka';
-  return { zone, fee: zone === 'dhaka' ? 90 : 150 };
+  return { zone, fee: fees[zone] };
+}
+
+type PaymentMethodId = 'cod' | 'bkash';
+
+type PaymentMethodOption = { id: PaymentMethodId; label: string; labelBn: string; instructions: string; account: string; requiresTrxId: boolean };
+
+/**
+ * The storefront only ever offers what the owner switched on in Settings.
+ * Advance payment is a manual bKash Send Money transfer verified by transaction ID.
+ */
+async function resolvePaymentMethods(env: Bindings): Promise<PaymentMethodOption[]> {
+  const settings = await readSettings(env, ['payment_cod_enabled', 'payment_bkash_enabled', 'bkash_number', 'payment_bkash_instructions']);
+  const enabled = (value: string | undefined, fallback: boolean) => (value === undefined || value === '' ? fallback : !['0', 'false', 'off', 'no'].includes(value.toLowerCase()));
+  const methods: PaymentMethodOption[] = [];
+  if (enabled(settings.payment_cod_enabled, true)) methods.push({ id: 'cod', label: 'Cash on delivery', labelBn: 'ক্যাশ অন ডেলিভারি', instructions: '', account: '', requiresTrxId: false });
+  if (enabled(settings.payment_bkash_enabled, true)) {
+    const account = settings.bkash_number || '';
+    methods.push({
+      id: 'bkash',
+      label: 'bKash advance (Send Money)',
+      labelBn: 'বিকাশ অ্যাডভান্স (সেন্ড মানি)',
+      instructions: settings.payment_bkash_instructions || (account ? `Send Money to ${account} from your bKash app, then enter the transaction ID below.` : 'Advance payment is available through bKash Send Money only. After sending, enter the bKash transaction ID below.'),
+      account,
+      requiresTrxId: true,
+    });
+  }
+  // Never leave the storefront with nothing to pick.
+  if (!methods.length) methods.push({ id: 'cod', label: 'Cash on delivery', labelBn: 'ক্যাশ অন ডেলিভারি', instructions: '', account: '', requiresTrxId: false });
+  return methods;
 }
 
 function invoiceNumberForOrderId(orderId: unknown) {
@@ -1196,7 +1268,7 @@ app.put('/api/admin/settings', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const body = await c.req.json<Record<string, string>>();
-  const allowed = new Set(['store_name','tagline','support_phone','support_email','currency_code','currency_symbol','delivery_inside_dhaka','delivery_outside_dhaka','free_delivery_over','order_whatsapp_number','bkash_number','nagad_number','rocket_number','tax_percentage','site_description','site_logo_url','favicon_url']);
+  const allowed = new Set(['store_name','tagline','support_phone','support_email','currency_code','currency_symbol','delivery_inside_dhaka','delivery_outside_dhaka','delivery_emergency','free_delivery_over','order_whatsapp_number','bkash_number','nagad_number','rocket_number','tax_percentage','site_description','site_logo_url','favicon_url','payment_cod_enabled','payment_bkash_enabled','payment_bkash_instructions']);
   for (const [key, value] of Object.entries(body)) if (allowed.has(key)) await c.env.DB.prepare("INSERT INTO store_settings(setting_key, setting_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP").bind(key, normalize(value)).run();
   return json(c, { ok: true, updatedBy: username });
 });
@@ -1307,26 +1379,58 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
     if (error instanceof Error && /unique/i.test(error.message)) return json(c, { error: 'That phone number is already used by another customer.' }, 409);
     throw error;
   }
+  // The shipping charge follows the delivery zone, so correcting a district has to re-price the order.
+  const relocated = district !== customer.district || upazila !== customer.upazila || address !== customer.address;
+  if (relocated) {
+    const { zone, fee } = await resolveDeliveryZone(c.env, district, upazila, address);
+    await c.env.DB.prepare('UPDATE orders SET delivery_zone = ?, delivery_fee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(zone, fee, existing.id).run();
+  }
   if (body.items !== undefined) {
-    const requested = body.items.map((item) => ({ sku: normalize(item.sku), quantity: Math.floor(Number(item.quantity || 0)), details: normalize(item.details) })).filter((item) => item.sku && item.quantity > 0);
+    // The editor can list the same product on two rows; treat that as one line with the combined quantity.
+    const merged = new Map<string, { sku: string; quantity: number; details: string }>();
+    for (const item of body.items) {
+      const sku = normalize(item.sku);
+      const quantity = Math.floor(Number(item.quantity || 0));
+      if (!sku || quantity <= 0) continue;
+      const current = merged.get(sku);
+      if (current) current.quantity += quantity;
+      else merged.set(sku, { sku, quantity, details: normalize(item.details) });
+    }
+    const requested = [...merged.values()];
     if (!requested.length) return json(c, { error: 'Keep at least one order item.' }, 400);
     const oldItems = await c.env.DB.prepare('SELECT product_id AS productId, quantity FROM order_items WHERE order_id = ?').bind(existing.id).all<{ productId: number; quantity: number }>();
-    const oldByProduct = new Map(oldItems.results.map((item) => [Number(item.productId), Number(item.quantity)]));
+    const oldByProduct = new Map<number, number>();
+    for (const item of oldItems.results) oldByProduct.set(Number(item.productId), Number(oldByProduct.get(Number(item.productId)) || 0) + Number(item.quantity));
     const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, weight_grams AS weightGrams FROM products WHERE active = 1 AND sku IN (${requested.map(() => '?').join(',')})`).bind(...requested.map((item) => item.sku)).all<{ id: number; name: string; sku: string; price: number; stock: number; weightGrams: number }>();
     const bySku = new Map(products.results.map((product) => [product.sku, product]));
-    if (bySku.size !== requested.length) return json(c, { error: 'One or more selected products are unavailable.' }, 400);
+    const unavailable = requested.filter((item) => !bySku.has(item.sku)).map((item) => item.sku);
+    if (unavailable.length) return json(c, { error: `These products are no longer available: ${unavailable.join(', ')}.` }, 400);
     const newByProduct = new Map<number, number>();
-    const lines = requested.map((item) => { const product = bySku.get(item.sku)!; const available = Number(product.stock || 0) + Number(oldByProduct.get(product.id) || 0); if (item.quantity > available) throw new Error(`${product.name} does not have enough stock for this quantity.`); newByProduct.set(product.id, item.quantity); return { product, quantity: item.quantity, details: item.details }; });
+    const lines: Array<{ product: { id: number; name: string; price: number }; quantity: number; details: string }> = [];
+    for (const item of requested) {
+      const product = bySku.get(item.sku)!;
+      // Quantity already committed to this order is still reservable, so add it back before comparing.
+      const available = Number(product.stock || 0) + Number(oldByProduct.get(product.id) || 0);
+      if (item.quantity > available) return json(c, { error: `${product.name} only has ${available} in stock.` }, 400);
+      newByProduct.set(product.id, item.quantity);
+      lines.push({ product, quantity: item.quantity, details: item.details });
+    }
     const subtotal = lines.reduce((sum, line) => sum + Number(line.product.price || 0) * line.quantity, 0);
     const statements = [c.env.DB.prepare('DELETE FROM order_items WHERE order_id = ?').bind(existing.id)];
-    for (const product of products.results) { const before = Number(oldByProduct.get(product.id) || 0); const after = Number(newByProduct.get(product.id) || 0); if (before !== after) statements.push(c.env.DB.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(before - after, product.id)); }
+    // Walk both sides so a product removed from the order gets its reserved stock back.
+    for (const productId of new Set([...oldByProduct.keys(), ...newByProduct.keys()])) {
+      const before = Number(oldByProduct.get(productId) || 0);
+      const after = Number(newByProduct.get(productId) || 0);
+      if (before !== after) statements.push(c.env.DB.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(before - after, productId));
+    }
     for (const line of lines) statements.push(c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(existing.id, line.product.id, line.details || line.product.name, line.quantity, line.product.price));
     statements.push(c.env.DB.prepare('UPDATE orders SET subtotal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subtotal, existing.id));
     await c.env.DB.batch(statements);
   }
-  await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(existing.id, 'pending', `Order details edited by ${username}`).run();
-  const updated = await c.env.DB.prepare('SELECT subtotal, delivery_fee AS deliveryFee FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; deliveryFee: number }>();
-  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, deliveryFee: updated?.deliveryFee || 0, total: Number(updated?.subtotal || 0) + Number(updated?.deliveryFee || 0), updatedBy: username });
+  const currentStatus = await c.env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(existing.id).first<{ status: string }>();
+  await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(existing.id, currentStatus?.status || 'pending', `Order details edited by ${username}`).run();
+  const updated = await c.env.DB.prepare('SELECT subtotal, delivery_fee AS deliveryFee, delivery_zone AS deliveryZone FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; deliveryFee: number; deliveryZone: string }>();
+  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, deliveryFee: updated?.deliveryFee || 0, deliveryZone: updated?.deliveryZone || '', total: Number(updated?.subtotal || 0) + Number(updated?.deliveryFee || 0), updatedBy: username });
 });
 
 app.post('/api/admin/products', async (c) => {
@@ -1381,11 +1485,14 @@ app.post('/api/admin/products/sku/:sku/stock', async (c) => {
 
 app.get('/api/health', (c) => json(c, { ok: true, service: c.env.SHOP_NAME, timestamp: new Date().toISOString() }));
 
-app.get('/api/config', (c) => json(c, {
-  shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS },
-  delivery: { dhaka: 90, outsideDhaka: 150, emergency: 250, customerCanSelect: false },
-  paymentMethods: ['cod', 'bkash']
-}));
+app.get('/api/config', async (c) => {
+  const [fees, paymentMethods] = await Promise.all([deliveryFeeTable(c.env), resolvePaymentMethods(c.env)]);
+  return json(c, {
+    shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS },
+    delivery: { dhaka: fees.dhaka, outsideDhaka: fees['outside-dhaka'], emergency: fees.emergency, partner: 'Steadfast', customerCanSelect: false },
+    paymentMethods,
+  });
+});
 
 app.get('/api/customer-tracking', async (c) => {
   const orderCode = normalize(c.req.query('orderId'));
@@ -1597,8 +1704,9 @@ app.get('/api/delivery-fee', async (c) => {
   if (!district || !upazila) return json(c, { error: 'District and upazila are required.' }, 400);
   const location = await c.env.DB.prepare('SELECT district, upazila, zone FROM location_directory WHERE district = ? AND upazila = ? LIMIT 1').bind(district, upazila).first<{ district: string; upazila: string; zone: 'dhaka' | 'outside-dhaka' }>();
   const zone = emergency ? 'emergency' : location?.zone ?? (district.toLowerCase() === 'dhaka' ? 'dhaka' : 'outside-dhaka');
-  const fee = zone === 'dhaka' ? 90 : zone === 'outside-dhaka' ? 150 : 250;
-  return json(c, { district, upazila, zone, fee, label: zone === 'dhaka' ? 'Dhaka-এর ভিতরে' : zone === 'outside-dhaka' ? 'Dhaka-এর বাইরে' : 'Emergency delivery', customerCanSelect: false });
+  const fees = await deliveryFeeTable(c.env);
+  const fee = fees[zone];
+  return json(c, { district, upazila, zone, fee, partner: 'Steadfast', label: zone === 'dhaka' ? 'Dhaka-এর ভিতরে' : zone === 'outside-dhaka' ? 'Dhaka-এর বাইরে' : 'Emergency delivery', customerCanSelect: false });
 });
 
 app.get('/api/customers/:phone/trust', async (c) => {
@@ -1620,16 +1728,22 @@ app.post('/api/orders', async (c) => {
   const upazila = normalize(body.upazila);
   if (!body.name || !body.phone || !address || !district || !upazila || !body.items?.length) return json(c, { error: 'Please complete customer, district, upazila, address, and cart details.' }, 400);
   const { zone, fee: deliveryFee } = await resolveDeliveryZone(c.env, district, upazila, address);
-  const paymentMethod = ['cod', 'bkash'].includes(normalize(body.paymentMethod)) ? normalize(body.paymentMethod) : 'cod';
+  const availableMethods = await resolvePaymentMethods(c.env);
+  const requestedMethod = normalize(body.paymentMethod);
+  const selectedMethod = availableMethods.find((method) => method.id === requestedMethod) ?? availableMethods.find((method) => method.id === 'cod') ?? availableMethods[0];
+  if (requestedMethod && requestedMethod !== selectedMethod.id) return json(c, { error: 'That payment method is not available right now. Please pick another one.' }, 400);
+  const paymentMethod = selectedMethod.id;
+  const trxId = normalize(body.trxId);
+  if (selectedMethod.requiresTrxId && !trxId) return json(c, { error: 'Please enter the bKash transaction ID for an advance payment.' }, 400);
   const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
   if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
   const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
   const bySku = new Map(products.results.map((product) => [product.sku, product]));
   const lineItems = body.items.map((item) => {
     const product = bySku.get(normalize(item.sku));
-    if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A selected product is unavailable or out of stock.');
+    if (!product || item.quantity < 1 || product.stock < item.quantity) throw new RequestError('A selected product is unavailable or out of stock.');
     const minimum = Math.max(1, Number(product.minOrderQty || 1));
-    if (item.quantity < minimum) throw new Error(`${product.name} requires a minimum order quantity of ${minimum}.`);
+    if (item.quantity < minimum) throw new RequestError(`${product.name} requires a minimum order quantity of ${minimum}.`);
     const tiers = parseVolumeTiers(product.volumeTiersJson);
     const tier = tiers.filter((entry) => item.quantity >= entry.minQty).at(-1);
     const options = Object.fromEntries(Object.entries(item.options || {}).filter(([key, value]) => ['size', 'color', 'gram'].includes(key) && normalize(value))); return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? product.price, options };
@@ -1639,7 +1753,7 @@ app.post('/api/orders', async (c) => {
   const invoicePlaceholder = `PENDING-${orderCode}`;
   const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, district, upazila, address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
-  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, deliveryFee, zone, paymentMethod, body.trxId ?? null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
+  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, deliveryFee, zone, paymentMethod, trxId || null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
   const invoiceNumber = invoiceNumberForOrderId(order.id) || invoicePlaceholder;
   await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(invoiceNumber, order.id).run();
