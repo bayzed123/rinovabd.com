@@ -1,0 +1,23 @@
+{
+  "overall": "HEALTHY",
+  "counts": {
+    "PASS": 137,
+    "WARN": 0,
+    "FAIL": 0
+  },
+  "targetUrl": "https://rinovabd-worker.abdussalam8480.workers.dev",
+  "readOnly": true,
+  "startedAt": "2026-09-02T21:27:39.018Z",
+  "reportDirectory": "Doctor-report/runs/run-17-33685235764",
+  "files": [
+    "audit-report.md",
+    "sitemap-links.md",
+    "summary.json",
+    "Medicine-or-fixd/fix-report.md"
+  ],
+  "sitemap": {
+    "total": 50,
+    "reachable": 50,
+    "needsAttention": 0
+  }
+}
