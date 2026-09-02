@@ -4,8 +4,45 @@ const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
 const track = (name, params = {}) => window.rinovaAnalytics?.track ? window.rinovaAnalytics.track(name, params) : (window.dataLayer = window.dataLayer || [], window.dataLayer.push({ event: name, ...params }));
 const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.sku || item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
-const state = { deliveryFee: 0, zone: '', paymentMethod: 'cod' };
-function updatePaymentFields() { const method = $('#checkout-payment-method')?.value || 'cod'; state.paymentMethod = method; const note = $('#bkash-payment-note'); const trx = $('#checkout-trx-id'); if (note) note.hidden = method !== 'bkash'; if (trx) { trx.required = method === 'bkash'; trx.disabled = method !== 'bkash'; if (method !== 'bkash') trx.value = ''; } }
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+const COD_FALLBACK = { id: 'cod', label: 'Cash on delivery', labelBn: 'ক্যাশ অন ডেলিভারি', instructions: '', account: '', requiresTrxId: false };
+const state = { deliveryFee: 0, zone: '', paymentMethod: 'cod', paymentMethods: [COD_FALLBACK] };
+
+const selectedPaymentMethod = () => {
+  const value = $('#checkout-payment-method')?.value || '';
+  return state.paymentMethods.find((method) => method.id === value) || state.paymentMethods[0] || COD_FALLBACK;
+};
+
+function updatePaymentFields() {
+  const method = selectedPaymentMethod();
+  state.paymentMethod = method.id;
+  const note = $('#bkash-payment-note');
+  const trxField = $('#checkout-trx-field');
+  const trx = $('#checkout-trx-id');
+  if (note) { note.innerHTML = method.instructions ? escapeHtml(method.instructions) + (method.account ? ` <strong>${escapeHtml(method.account)}</strong>` : '') : ''; note.hidden = !method.instructions; }
+  if (trxField) trxField.hidden = !method.requiresTrxId;
+  if (trx) { trx.required = Boolean(method.requiresTrxId); trx.disabled = !method.requiresTrxId; if (!method.requiresTrxId) trx.value = ''; }
+}
+
+/** The owner decides in the admin dashboard which methods a customer may pick; never hard-code the list here. */
+async function loadPaymentMethods() {
+  const select = $('#checkout-payment-method');
+  if (!select) return;
+  try {
+    const response = await fetch(`${API_BASE}/config`);
+    if (response.ok) {
+      const payload = await response.json();
+      const methods = (payload.paymentMethods || []).filter((method) => method && method.id);
+      if (methods.length) state.paymentMethods = methods;
+    }
+  } catch {
+    // Keep the cash-on-delivery fallback rather than blocking checkout on a config hiccup.
+  }
+  select.innerHTML = state.paymentMethods.map((method) => `<option value="${escapeHtml(method.id)}">${escapeHtml(method.label)}${method.labelBn ? ` · ${escapeHtml(method.labelBn)}` : ''}</option>`).join('');
+  // A single method is not a choice — show it locked, the way the delivery partner is.
+  select.disabled = state.paymentMethods.length < 2;
+  updatePaymentFields();
+}
 
 function saveBag() {
   localStorage.setItem('rinova-bag', JSON.stringify(bag));
@@ -133,9 +170,10 @@ async function submitOrder(event) {
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
   data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity, options: item.options || {} }));
-    data.paymentMethod = $('#checkout-payment-method')?.value || 'cod';
-    if (data.paymentMethod === 'bkash' && !String(data.trxId || '').trim()) return $('#checkout-error').textContent = 'Please enter the bKash transaction ID for an advance payment.';
-    $('#checkout-error').textContent = '';
+  const method = selectedPaymentMethod();
+  data.paymentMethod = method.id;
+  if (method.requiresTrxId && !String(data.trxId || '').trim()) return $('#checkout-error').textContent = `Please enter the ${method.label} transaction ID for an advance payment.`;
+  $('#checkout-error').textContent = '';
   try {
     const response = await fetch(`${API_BASE}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     const payload = await response.json();
@@ -157,5 +195,6 @@ $('#checkout-form').elements.namedItem('district').addEventListener('input', onD
 $('#checkout-form').elements.namedItem('upazila').addEventListener('input', onUpazilaInput);
 $('#checkout-payment-method')?.addEventListener('change', updatePaymentFields);
 updatePaymentFields();
+loadPaymentMethods();
 renderItems();
 if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });
