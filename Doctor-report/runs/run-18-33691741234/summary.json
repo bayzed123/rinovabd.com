@@ -1,0 +1,23 @@
+{
+  "overall": "ACTION REQUIRED",
+  "counts": {
+    "PASS": 31,
+    "WARN": 0,
+    "FAIL": 15
+  },
+  "targetUrl": "Check  why https://github.com/bayzed123/rinovabd.com/actions/runs/33689766357/job/100445669998#step:7:1 ",
+  "readOnly": true,
+  "startedAt": "2026-09-02T22:43:27.924Z",
+  "reportDirectory": "Doctor-report/runs/run-18-33691741234",
+  "files": [
+    "audit-report.md",
+    "sitemap-links.md",
+    "summary.json",
+    "Medicine-or-fixd/fix-report.md"
+  ],
+  "sitemap": {
+    "total": 0,
+    "reachable": 0,
+    "needsAttention": 0
+  }
+}
