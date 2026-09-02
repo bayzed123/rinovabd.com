@@ -3,200 +3,326 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
   <title>Rinova BD · Admin ব্যবহারিক বাংলা গাইড</title>
-  <link rel="stylesheet" href="/admin/styles.css" />
+  <link rel="stylesheet" href="/admin/styles.css?v=20260902-premium-2" />
+  <link rel="stylesheet" href="/admin/premium-theme.css?v=20260902-premium-2" />
   <style>
-    .guide{max-width:980px;margin:0 auto;padding:34px 20px 90px}.guide header{display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:28px}.guide h1,.guide h2,.guide h3{font-family:'Playfair Display',Georgia,serif;letter-spacing:-.04em}.guide h1{font-size:clamp(36px,6vw,65px);margin:0}.guide h2{font-size:28px;margin:42px 0 12px;border-top:1px solid var(--line);padding-top:27px}.guide h3{font-size:21px;margin:0 0 8px}.guide p,.guide li{color:var(--muted);line-height:1.85}.guide ol,.guide ul{padding-left:23px}.guide li{margin:7px 0}.guide .guide-card{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:22px;margin:16px 0;box-shadow:0 7px 25px rgba(80,47,39,.025)}.guide .guide-card.important{background:linear-gradient(135deg,#fff7f2,#f9e5df)}.guide .guide-card h2{border:0;padding:0;margin:0 0 9px}.guide code{background:var(--cream);padding:3px 6px;border-radius:5px;color:var(--ink);font-size:.92em}.guide pre{overflow:auto;background:#292321;color:#fff;padding:16px;border-radius:10px;line-height:1.6;font-size:12px}.guide a{color:var(--accent)}.guide table{border-collapse:collapse;width:100%;margin:15px 0;background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}.guide th,.guide td{text-align:left;padding:12px;border-bottom:1px solid var(--line);font-size:12px;line-height:1.6;vertical-align:top}.guide th{background:var(--cream);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}.guide tr:last-child td{border-bottom:0}.guide .step-number{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;margin-right:6px}.guide .muted-note{font-size:12px;color:var(--muted)}@media(max-width:650px){.guide header{align-items:flex-start;flex-direction:column}.guide{padding:26px 15px 65px}.guide h2{font-size:25px}.guide table{display:block;overflow:auto;white-space:normal}.guide th,.guide td{min-width:135px}}
+    .guide{max-width:940px;margin:0 auto;padding:34px 20px 100px}
+    .guide header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:10px}
+    .guide h1,.guide h2,.guide h3{font-family:'Playfair Display',Georgia,serif;letter-spacing:-.035em;color:var(--ink)}
+    .guide h1{font-size:clamp(32px,5.5vw,54px);margin:6px 0 12px;line-height:1.05}
+    .guide h2{font-size:27px;margin:46px 0 14px;padding-top:26px;border-top:1px solid var(--line);scroll-margin-top:20px}
+    .guide h3{font-size:19px;margin:26px 0 8px}
+    .guide p,.guide li,.guide td{color:var(--muted);line-height:1.85;font-size:14.5px}
+    .guide ol,.guide ul{padding-left:22px;margin:10px 0}
+    .guide li{margin:8px 0}
+    .guide strong{color:var(--ink-soft)}
+    .guide a{color:var(--accent);font-weight:600}
+    .guide .lead{font-size:16px;line-height:1.8}
+
+    .guide-toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin:24px 0 6px;padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--white)}
+    .guide-toc a{display:block;padding:9px 12px;border-radius:9px;background:var(--paper);font-size:13px;font-weight:600;text-decoration:none;transition:background .15s ease}
+    .guide-toc a:hover{background:var(--accent-soft)}
+
+    .guide-card{border:1px solid var(--line);border-radius:16px;padding:22px;margin:18px 0;background:var(--white);box-shadow:var(--shadow-xs)}
+    .guide-card h2,.guide-card h3{border:0;padding:0;margin:0 0 10px}
+    .guide-card.important{border-color:#e7c6d8;background:linear-gradient(140deg,#fffafc,var(--accent-soft))}
+    .guide-card.warning{border-color:#e8cfa8;background:linear-gradient(140deg,#fffcf6,var(--warn-soft))}
+    .guide-card.good{border-color:#bfe0cd;background:linear-gradient(140deg,#f9fdfb,var(--ok-soft))}
+
+    .guide-steps{counter-reset:step;list-style:none;padding:0;margin:14px 0}
+    .guide-steps li{counter-increment:step;position:relative;padding:0 0 0 44px;margin:14px 0}
+    .guide-steps li::before{content:counter(step);position:absolute;left:0;top:-1px;display:grid;place-items:center;width:29px;height:29px;border-radius:50%;background:var(--accent);color:#fff;font:700 13px/1 'DM Sans',system-ui,sans-serif}
+
+    .guide table{border-collapse:collapse;width:100%;margin:16px 0;background:var(--white);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+    .guide th,.guide td{text-align:left;padding:13px;border-bottom:1px solid var(--line);font-size:13.5px;line-height:1.65;vertical-align:top}
+    .guide th{background:var(--cream);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+    .guide tr:last-child td{border-bottom:0}
+    .guide-pill{display:inline-block;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:11px;font-weight:700;white-space:nowrap}
+    .guide-key{display:inline-block;padding:2px 8px;border-radius:6px;border:1px solid var(--line-strong);background:var(--cream);color:var(--ink-soft);font-size:12.5px;font-weight:600;white-space:nowrap}
+    .guide-back{position:sticky;top:14px}
+
+    @media(max-width:650px){
+      .guide{padding:24px 15px 70px}
+      .guide header{flex-direction:column}
+      .guide h2{font-size:24px}
+      .guide table{display:block;overflow-x:auto}
+      .guide th,.guide td{min-width:140px}
+      .guide-back{position:static}
+    }
   </style>
 </head>
 <body>
   <main class="guide">
     <header>
-      <div><p class="eyebrow">RINOVA BD · OWNER HELP</p><h1>অ্যাডমিন ড্যাশবোর্ড ব্যবহারিক বাংলা গাইড</h1><p>এই গাইডটি developer-এর জন্য নয়। আপনি owner হিসেবে কোথায় ক্লিক করবেন, কোন তথ্য দেখবেন এবং কীভাবে shop-এর live পরিবর্তন করবেন—সবকিছু সহজভাবে এখানে দেওয়া আছে।</p></div>
-      <a class="button" href="/admin/">← Dashboard</a>
+      <div>
+        <p class="eyebrow">RINOVA BD · OWNER HELP</p>
+        <h1>অ্যাডমিন ড্যাশবোর্ড বাংলা গাইড</h1>
+        <p class="lead">এই গাইড ডেভেলপারের জন্য নয়। আপনি দোকানের মালিক হিসেবে কোথায় ক্লিক করবেন, কী লিখবেন এবং কাস্টমার কী দেখবে — সব সহজ বাংলায় ধাপে ধাপে দেওয়া আছে। কোনো কোড লিখতে হবে না।</p>
+      </div>
+      <a class="button guide-back" href="/admin/">← ড্যাশবোর্ডে ফিরুন</a>
     </header>
 
-    <section class="guide-card important">
-      <h2>শুরু করার আগে</h2>
-      <p>শুধু এই লিংকে যান: <a href="/admin/"><strong>Rinova Admin Dashboard</strong></a>। আপনার administrator username ও password দিয়ে Sign in করুন। Login করার পর কাজের সময় dashboard খোলা রাখুন এবং কাজ শেষ হলে অবশ্যই বাম পাশের <strong>Sign out</strong> চাপুন। Password কাউকে chat, screenshot বা product description-এ পাঠাবেন না।</p>
-    </section>
+    <nav class="guide-toc" aria-label="গাইডের সূচিপত্র">
+      <a href="#start">১ · শুরু করা</a>
+      <a href="#menu">২ · মেনু পরিচিতি</a>
+      <a href="#daily">৩ · প্রতিদিনের কাজ</a>
+      <a href="#product">৪ · নতুন প্রোডাক্ট</a>
+      <a href="#clothing">৫ · জামাকাপড়ের সাইজ ও রঙ</a>
+      <a href="#gallery">৬ · ছবি ও ভিডিও</a>
+      <a href="#stock">৭ · স্টক</a>
+      <a href="#orders">৮ · অর্ডার ও ইনভয়েস</a>
+      <a href="#payment">৯ · পেমেন্ট ও ডেলিভারি</a>
+      <a href="#campaign">১০ · অ্যাড ক্যাম্পেইন পেজ</a>
+      <a href="#content">১১ · কনটেন্ট ও ব্যানার</a>
+      <a href="#problems">১২ · সমস্যা হলে</a>
+    </nav>
 
-    <h2>১. Dashboard-এর প্রতিটি menu কী কাজে লাগে</h2>
-    <p>Login করার পর বাম পাশের menu থেকে প্রয়োজনীয় জায়গায় যান। মোবাইলে আগে <strong>☰</strong> চাপলে menu খুলবে।</p>
-    <table><thead><tr><th>Menu</th><th>কখন ব্যবহার করবেন</th><th>কী দেখতে বা করতে পারবেন</th></tr></thead><tbody>
-      <tr><td><strong>Dashboard</strong></td><td>প্রতিদিন shop-এর অবস্থা দেখতে</td><td>Sales, order, stock, restock এবং best-selling product-এর সারাংশ।</td></tr>
-      <tr><td><strong>Products</strong></td><td>Product যোগ, দাম বা তথ্য পরিবর্তন করতে</td><td>নাম, দাম, stock, ছবি, video, category, status এবং product detail edit।</td></tr>
-      <tr><td><strong>Orders</strong></td><td>Customer order process করতে</td><td>Customer, total, payment, courier status এবং order status update।</td></tr>
-      <tr><td><strong>Inventory</strong></td><td>Stock বাড়ানো বা কমানোর record রাখতে</td><td>বর্তমান stock, low-stock threshold এবং stock change ledger।</td></tr>
-      <tr><td><strong>Settings</strong></td><td>Shop-এর সাধারণ তথ্য পরিবর্তন করতে</td><td>Store name, phone, delivery fee, payment number, WhatsApp এবং site description।</td></tr>
-      <tr><td><strong>Returns</strong></td><td>Customer return request পরিচালনা করতে</td><td>Approve, pickup, receive, refund অথবা reject status।</td></tr>
-      <tr><td><strong>Reviews</strong></td><td>Buyer rating ও review যাচাই করতে</td><td>শুধু verified purchase review approve বা reject এবং product rating update।</td></tr>
-      <tr><td><strong>POS &amp; Barcodes</strong></td><td>দোকানের সরাসরি বিক্রি করতে</td><td>Barcode/search দিয়ে product যোগ, discount, payment এবং receipt print।</td></tr>
-      <tr><td><strong>Content CMS</strong></td><td>Homepage, page, blog ও offer পরিবর্তন করতে</td><td>Topbar notice, published page, journal post এবং offer।</td></tr>
-      <tr><td><strong>Admin Assistant</strong></td><td>Shop data সম্পর্কে দ্রুত প্রশ্ন করতে</td><td>Live stock, order, sales, return এবং product-wise summary।</td></tr>
-      <tr><td><strong>বাংলা গাইড</strong></td><td>এই নির্দেশনা আবার পড়তে</td><td>এই owner manual।</td></tr>
-    </tbody></table>
+    <!-- ================================================================= -->
+    <h2 id="start">১. শুরু করা</h2>
+    <div class="guide-card important">
+      <h3>লগইন</h3>
+      <ol class="guide-steps">
+        <li><a href="/admin/"><strong>rinovabd.com/admin</strong></a> লিংকে যান।</li>
+        <li>আপনার <strong>ইউজারনেম</strong> ও <strong>পাসওয়ার্ড</strong> দিয়ে <span class="guide-key">Sign in</span> চাপুন।</li>
+        <li>কাজ শেষ হলে বাম পাশের নিচে <span class="guide-key">Sign out</span> চাপুন — বিশেষ করে অন্যের কম্পিউটার বা মোবাইলে।</li>
+      </ol>
+      <p><strong>কখনোই</strong> পাসওয়ার্ড হোয়াটসঅ্যাপ, স্ক্রিনশট বা প্রোডাক্টের বর্ণনায় লিখবেন না।</p>
+    </div>
 
-    <h2>২. Dashboard-এ প্রতিদিন কীভাবে check করবেন</h2>
-    <ol>
-      <li><strong>Dashboard</strong> menu-তে যান।</li>
-      <li>উপরে <strong>7d</strong>, <strong>30d</strong> অথবা <strong>90d</strong> বেছে নিন। নতুন shop হলে 30d সবচেয়ে উপযোগী।</li>
-      <li><strong>Revenue</strong> দেখুন—নিশ্চিত/চলমান order থেকে মোট বিক্রি। Pending বা cancelled order এখানে বিক্রি হিসেবে ধরা হয় না।</li>
-      <li><strong>Orders</strong> দেখে বুঝুন কতগুলো order হয়েছে এবং <strong>Avg order value</strong> দেখে গড় order value জানুন।</li>
-      <li><strong>Stock on hand</strong>, <strong>Needs restocking</strong> এবং <strong>Top Products</strong> দেখে কোন product আগে refill করতে হবে ঠিক করুন।</li>
+    <h3>View Mode আর Edit Mode</h3>
+    <p>উপরে ডান পাশে দুইটি বাটন আছে।</p>
+    <table>
+      <thead><tr><th>বাটন</th><th>কী হয়</th><th>কখন ব্যবহার করবেন</th></tr></thead>
+      <tbody>
+        <tr><td><span class="guide-pill">View Mode</span></td><td>কেবল দেখা যায়, ভুলে কিছু বদলে যাওয়ার ভয় নেই।</td><td>রিপোর্ট দেখা, অর্ডার চেক করা।</td></tr>
+        <tr><td><span class="guide-pill">Edit Mode</span></td><td>প্রোডাক্ট ও সেটিংস বদলানো যায়।</td><td>নতুন প্রোডাক্ট, দাম বা স্টক বদলানো।</td></tr>
+      </tbody>
+    </table>
+    <p class="muted-note">মোবাইলে বাম পাশের মেনু দেখতে উপরের <span class="guide-key">☰</span> চিহ্নে চাপুন।</p>
+
+    <!-- ================================================================= -->
+    <h2 id="menu">২. বাম পাশের মেনু কী কাজে লাগে</h2>
+    <table>
+      <thead><tr><th>মেনু</th><th>কাজ</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Dashboard</strong></td><td>আজকের বিক্রি, লাভ, অর্ডার সংখ্যা ও কোন কাজটি বাকি আছে তার সারাংশ।</td></tr>
+        <tr><td><strong>Admin Assistant</strong></td><td>দোকানের হিসাব বাংলায় জিজ্ঞাসা করার সহকারী।</td></tr>
+        <tr><td><strong>Products</strong></td><td>নতুন প্রোডাক্ট যোগ করা, দাম ও ছবি বদলানো।</td></tr>
+        <tr><td><strong>Categories</strong></td><td>Face Care, Clothing-এর মতো ভাগ তৈরি ও সাজানো।</td></tr>
+        <tr><td><strong>Inventory</strong></td><td>স্টক বাড়ানো-কমানো, কারণসহ হিসাব রাখা।</td></tr>
+        <tr><td><strong>POS &amp; Barcodes</strong></td><td>দোকানে সামনাসামনি বিক্রি ও লেবেল প্রিন্ট।</td></tr>
+        <tr><td><strong>Orders</strong></td><td>অনলাইন অর্ডার দেখা, ঠিক করা, ইনভয়েস প্রিন্ট, কুরিয়ারে পাঠানো।</td></tr>
+        <tr><td><strong>Returns</strong></td><td>ফেরত আসা পণ্যের হিসাব।</td></tr>
+        <tr><td><strong>Reviews</strong></td><td>কাস্টমারের রিভিউ অনুমোদন করা।</td></tr>
+        <tr><td><strong>Content CMS</strong></td><td>হোমপেজ লেখা, ব্লগ ও পেজ।</td></tr>
+        <tr><td><strong>Marketing &amp; banners</strong></td><td>হোমপেজের ব্যানার ও অফার।</td></tr>
+        <tr><td><strong>Campaign Studio</strong> <span class="guide-pill">ADS</span></td><td>ফেসবুক/ইনস্টাগ্রাম অ্যাডের জন্য আলাদা ল্যান্ডিং পেজ।</td></tr>
+        <tr><td><strong>Traffic &amp; SEO</strong></td><td>ভিজিটর ও ট্র্যাকিং সেটআপ।</td></tr>
+        <tr><td><strong>Settings</strong></td><td>দোকানের নাম, ডেলিভারি চার্জ, পেমেন্ট মাধ্যম, কুরিয়ার।</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ================================================================= -->
+    <h2 id="daily">৩. প্রতিদিন সকালে ৫ মিনিটের কাজ</h2>
+    <ol class="guide-steps">
+      <li><strong>Dashboard</strong> খুলুন। উপরের কার্ডগুলোতে আজকের বিক্রি ও অর্ডার দেখুন।</li>
+      <li>“What needs attention?” অংশে লাল/হলুদ কিছু থাকলে সেটিতে চাপুন।</li>
+      <li><strong>Orders</strong>-এ গিয়ে নতুন <span class="guide-pill">pending</span> অর্ডারগুলো দেখুন ও কনফার্ম করুন।</li>
+      <li><strong>Inventory</strong>-তে কম স্টকের প্রোডাক্ট থাকলে স্টক বাড়ান।</li>
+      <li><strong>Reviews</strong>-এ নতুন রিভিউ থাকলে অনুমোদন দিন।</li>
     </ol>
-    <p class="muted-note">Dashboard-এর সংখ্যা দেখার জন্য; product বা order পরিবর্তনের জন্য Products, Orders অথবা Inventory menu ব্যবহার করতে হবে।</p>
 
-    <h2>৩. View Mode এবং Edit Mode কীভাবে ব্যবহার করবেন</h2>
-    <p>Dashboard-এর উপরের <strong>View Mode</strong> ও <strong>Edit Mode</strong> দিয়ে দেখার কাজ এবং পরিবর্তনের কাজ আলাদা রাখা হয়েছে। ভুল করে live price বা content বদলে ফেলা এড়াতে আগে View Mode-এ check করুন।</p>
-    <table><thead><tr><th>Mode</th><th>ব্যবহার</th><th>Product page-এ যে action দেখবেন</th></tr></thead><tbody>
-      <tr><td><strong>View Mode</strong></td><td>Live catalogue দেখে যাচাই করা</td><td><strong>View live</strong> দিয়ে customer-এর product page দেখুন; প্রয়োজন হলে <strong>Quick edit</strong> চাপুন।</td></tr>
-      <tr><td><strong>Edit Mode</strong></td><td>Live shop-এর product তথ্য পরিবর্তন করা</td><td><strong>Edit</strong> দিয়ে পুরো editor খুলুন এবং <strong>Stock</strong> দিয়ে stock adjustment করুন।</td></tr>
-    </tbody></table>
-    <ol>
-      <li>প্রথমে <strong>View Mode</strong>-এ product name, image, price ও stock দেখুন।</li>
-      <li>কোনো ভুল পেলে সেই row-এর <strong>Quick edit</strong> চাপুন। Dashboard নিজে থেকে Edit Mode-এ চলে যাবে।</li>
-      <li>পরিবর্তন করে <strong>Save changes</strong> চাপুন। Success message দেখা না পর্যন্ত page বন্ধ করবেন না।</li>
-      <li>তারপর <strong>View live</strong> খুলে customer page-এ পরিবর্তনটি ঠিক হয়েছে কি না দেখুন। View Mode storefront-এ product detail page খুললে admin session থাকা অবস্থায় <strong>Edit this product in Admin Dashboard</strong> link দিয়ে সরাসরি Edit Mode-এ ফিরে আসুন।</li>
+    <!-- ================================================================= -->
+    <h2 id="product">৪. নতুন প্রোডাক্ট যোগ করা</h2>
+    <ol class="guide-steps">
+      <li><strong>Products</strong> মেনুতে যান, ডান পাশের <span class="guide-key">+ New product</span> চাপুন।</li>
+      <li><strong>প্রোডাক্টের নাম</strong> লিখুন। SKU খালি রাখলে নিজে থেকেই তৈরি হবে।</li>
+      <li><strong>ক্যাটাগরি</strong> বাছুন — এটি খুব জরুরি, কারণ ক্যাটাগরি অনুযায়ী নিচে মানানসই অপশন দেখাবে।</li>
+      <li><strong>কেনার দাম</strong> ও <strong>বিক্রয় মূল্য</strong> দিন। আগের মূল্য দিলে সাইটে কাটা দাগ দেখাবে।</li>
+      <li><strong>শুরুর স্টক</strong> কত পিস আছে লিখুন।</li>
+      <li>ছবি যোগ করুন (নিচের ৬ নম্বর অংশ দেখুন)।</li>
+      <li><strong>স্ট্যাটাস</strong> <span class="guide-pill">Active</span> করুন — তবেই কাস্টমার দেখতে পাবে। <span class="guide-pill">Draft</span> রাখলে শুধু আপনি দেখবেন।</li>
+      <li>নিচে <span class="guide-key">Create product</span> চাপুন।</li>
     </ol>
 
-    <h2>৪. নতুন Product কীভাবে যোগ করবেন</h2>
-    <ol>
-      <li><strong>Products → Edit Mode → + New product</strong> চাপুন।</li>
-      <li><strong>Product name</strong>-এ customer যে নাম দেখবে সেটি লিখুন।</li>
-      <li><strong>SKU</strong> নিজের internal code হলে লিখুন; না জানলে খালি রাখতে পারেন, system code তৈরি করবে।</li>
-      <li><strong>Category ID</strong>-তে নিচের table অনুযায়ী সংখ্যা দিন। Clothing এখন hidden, তাই customer-facing category হিসেবে ব্যবহার করবেন না।</li>
-      <li>Short summary ও Description-এ সহজ ভাষায় product কী, কত ml/g এবং কীভাবে ব্যবহার করতে হয় লিখুন।</li>
-      <li>Cost price, Selling price, stock, low-stock threshold, minimum order quantity, weight ও barcode লিখুন।</li>
-      <li>Primary image-এর জন্য file বাছাই করে <strong>Upload primary image</strong> চাপুন; চাইলে HTTPS বা <code>/assets/</code> URL-ও দিতে পারেন। অতিরিক্ত ছবি upload করতে এক বা একাধিক file বাছাই করে <strong>Upload gallery images</strong> চাপুন। Video-এর জন্য HTTPS URL দিন।</li>
-      <li>Storefront-এ দেখাতে <strong>Status = Active</strong> দিন। Draft রাখলে customer product দেখতে পাবে না।</li>
-      <li>Homepage-এ highlight করতে <strong>Feature on homepage</strong> tick দিন। সব product-এ এটি tick করার দরকার নেই।</li>
-      <li><strong>Customer-facing product badges</strong> অংশে প্রয়োজন অনুযায়ী <strong>Hot Product</strong>, <strong>Stock Out</strong> অথবা <strong>New Product</strong> tick দিন। কোনো badge tick না করলে product card-এ আলাদা badge দেখাবে না।</li>
-      <li>শুধু <strong>Stock Out</strong> tick করা product-এর customer card-এ <strong>Stock Out</strong> badge দেখাবে। Stock থাকলেও বা না থাকলেও কোনো badge না দেখাতে চাইলে Stock Out untick রাখুন।</li>
-      <li>সবশেষে <strong>Create product</strong> চাপুন এবং Products table-এ productটি দেখা যাচ্ছে কি না check করুন।</li>
+    <div class="guide-card">
+      <h3>পরিমাণভিত্তিক ছাড় (Bulk discount)</h3>
+      <p>বেশি কিনলে কম দাম দিতে চাইলে <span class="guide-key">+ Add a bulk price</span> চাপুন এবং লিখুন: “কমপক্ষে <strong>৩</strong> টি কিনলে প্রতিটি <strong>২৫০</strong> ৳”। একাধিক ধাপ যোগ করা যায়। দরকার না হলে খালি রাখুন — তখন সবসময় একই দাম থাকবে।</p>
+    </div>
+
+    <!-- ================================================================= -->
+    <h2 id="clothing">৫. জামাকাপড়ের সাইজ ও রঙ যোগ করা</h2>
+    <div class="guide-card important">
+      <p><strong>নতুন সুবিধা।</strong> আগে জামাকাপড়ে শুধু গ্রাম দেখাতো, সাইজ বা রঙ দেওয়ার জায়গা ছিল না। এখন ক্যাটাগরিতে <strong>Clothing</strong> বাছলেই নিচে <strong>প্রোডাক্ট অপশন</strong> অংশে সাইজ ও রঙের বাটন চলে আসে।</p>
+    </div>
+    <ol class="guide-steps">
+      <li>প্রোডাক্ট ফর্মে <strong>ক্যাটাগরি</strong> থেকে <strong>Clothing</strong> বাছুন।</li>
+      <li><strong>সাইজ (Size)</strong> অংশে যে সাইজগুলো আপনার কাছে আছে সেগুলোর বাটনে চাপুন — <span class="guide-key">S</span> <span class="guide-key">M</span> <span class="guide-key">L</span> <span class="guide-key">XL</span> <span class="guide-key">XXL</span> ইত্যাদি। বাটন গোলাপি হয়ে গেলে বুঝবেন সেটি বাছাই হয়েছে।</li>
+      <li>তালিকায় না থাকলে নিচের ঘরে নিজের সাইজ লিখে <span class="guide-key">যোগ করুন</span> চাপুন (যেমন “৩৮ ইঞ্চি”)।</li>
+      <li><strong>রঙ (Colour)</strong> অংশেও একইভাবে রঙ বাছুন বা নিজের রঙ লিখুন।</li>
+      <li>চাইলে <strong>কাপড়, ফিটিং, হাতা, উপলক্ষ, ধোয়ার নিয়ম</strong> লিখে দিন — এগুলো প্রোডাক্ট পেজে কাস্টমার দেখতে পাবে।</li>
+      <li><strong>কুরিয়ার ওজন</strong> ঘরে শুধু কুরিয়ারের জন্য আনুমানিক ওজন দিন। এটি জামার মাপ নয়।</li>
+      <li>Save করুন।</li>
     </ol>
-    <table><thead><tr><th>Category ID</th><th>Category</th><th>কোন product এখানে যাবে</th></tr></thead><tbody>
-      <tr><td>1</td><td>Skin Care</td><td>Serum, sunscreen, moisturiser ও skincare routine product।</td></tr>
-      <tr><td>2</td><td>Face Care</td><td>Face wash, cleanser এবং face-care item।</td></tr>
-      <tr><td>3</td><td>Face Makeup</td><td>Blush, foundation বা মুখের makeup item।</td></tr>
-      <tr><td>4</td><td>Eyes Makeup</td><td>Eyeliner, mascara, eyeshadow ইত্যাদি।</td></tr>
-      <tr><td>5</td><td>Makeup</td><td>General makeup set বা lip/makeup collection।</td></tr>
-      <tr><td>6</td><td>Hair Care</td><td>Shampoo, hair oil, conditioner ইত্যাদি।</td></tr>
-      <tr><td>7</td><td>Perfume</td><td>Perfume, body mist ও fragrance।</td></tr>
-      <tr><td>8</td><td>Kids</td><td>শিশুদের উপযোগী product।</td></tr>
-    </tbody></table>
+    <div class="guide-card good">
+      <p><strong>কাস্টমার কী দেখবে:</strong> প্রোডাক্ট পেজে “Dress size” ও “Colour” নামে দুইটি ঘর আসবে। সাইজ ও রঙ না বেছে কাস্টমার ব্যাগে যোগ করতে পারবে না, তাই ভুল অর্ডার আসবে না। অর্ডার ও ইনভয়েসে সাইজ-রঙ লেখা থাকবে।</p>
+    </div>
+    <p class="muted-note">অন্য ক্যাটাগরিতে (যেমন Face Care) একই জায়গায় “সাইজ / পরিমাণ” লেখা আসবে — সেখানে 50ml, 150ml, 100g এভাবে লিখতে পারবেন। দরকার না হলে খালি রাখুন।</p>
 
-    <h2>৫. Product edit, দাম পরিবর্তন এবং ছবি/video যোগ করা</h2>
-    <p><strong>Products</strong> page-এ নাম, SKU বা barcode দিয়ে search করুন। Product-এর row-তে <strong>Edit</strong> চাপলে পুরনো তথ্য খুলবে। শুধু দাম পরিবর্তন করতে Selling price বদলান; পুরনো দাম দেখাতে Compare-at price রাখুন। একই editor-এ <strong>Hot Product</strong>, <strong>Stock Out</strong> ও <strong>New Product</strong> badge-এর tick পরিবর্তন করতে পারবেন। তারপর <strong>Save changes</strong> চাপুন এবং storefront-এ View live দিয়ে যাচাই করুন।</p>
-    <div class="guide-card"><h3>একাধিক ছবি ও video যোগ করার নিয়ম</h3><ol><li><strong>Primary image URL</strong>-এ প্রথম/প্রধান ছবি দিন, যেমন <code>/assets/product-front.jpg</code>।</li><li><strong>Additional images and videos</strong> box-এ নিচের মতো JSON array paste করুন।</li><li>ছবির জন্য <code>type</code> হবে <code>image</code> এবং video-র জন্য <code>video</code>।</li><li>ছবির URL অবশ্যই <code>/assets/</code> দিয়ে শুরু হওয়া repository asset অথবা <code>https://</code> URL হতে হবে।</li><li>Video হিসেবে সরাসরি playable HTTPS video URL ব্যবহার করুন, যেমন MP4/WebM link। Save করার পরে product detail page-এ thumbnail দেখা যাবে।</li></ol><pre>[{"type":"image","url":"/assets/product-side.jpg","alt":"Side view"},{"type":"image","url":"https://example.com/product-back.jpg","alt":"Back view"},{"type":"video","url":"https://example.com/product-demo.mp4"}]</pre><p class="muted-note"><strong>Direct upload:</strong> R2 storage binding active থাকলে dashboard-এর file picker দিয়ে JPG, PNG, WEBP, GIF বা AVIF image সরাসরি upload হবে। Upload শেষ হলে image URL automaticভাবে বসবে; product-এ দেখাতে অবশ্যই <strong>Save changes</strong> বা <strong>Create product</strong> চাপুন। R2 এখনও active না হলে button-এ setup message দেখাবে—তখন URL বা <code>/assets/</code> asset ব্যবহার করা যাবে।</p></div>
+    <!-- ================================================================= -->
+    <h2 id="gallery">৬. ছবি ও ভিডিও যোগ করা</h2>
+    <div class="guide-card important">
+      <p><strong>নতুন সুবিধা।</strong> আগে এখানে কোডের মতো লেখা দেখাতো। এখন আর কোনো কোড নেই — শুধু ছবি বাছাই করে আপলোড করবেন।</p>
+    </div>
+    <h3>প্রধান ছবি</h3>
+    <ol class="guide-steps">
+      <li><strong>প্রধান ছবির লিংক</strong> অংশে <span class="guide-key">Choose file</span> দিয়ে ছবি বাছুন।</li>
+      <li><span class="guide-key">Upload primary image</span> চাপুন। নিচে ছোট প্রিভিউ আসবে।</li>
+    </ol>
+    <h3>আরও ছবি ও ভিডিও</h3>
+    <ol class="guide-steps">
+      <li><strong>আরও ছবি ও ভিডিও</strong> অংশে <span class="guide-key">ছবি আপলোড করুন</span> দিয়ে একসাথে অনেক ছবি দিতে পারবেন।</li>
+      <li>প্রতিটি ছবি একটি ছোট কার্ড হিসেবে দেখাবে।</li>
+      <li>ক্রম বদলাতে কার্ডের নিচের <span class="guide-key">←</span> <span class="guide-key">→</span> তীর চাপুন। প্রথমটিই প্রধান ছবি।</li>
+      <li>কোনো ছবি বাদ দিতে <span class="guide-key">✕</span> চাপুন।</li>
+      <li>ভিডিও দিতে চাইলে <strong>ভিডিও লিংক</strong> ঘরে <code>https://</code> দিয়ে শুরু হওয়া লিংক দিয়ে <span class="guide-key">ভিডিও যোগ করুন</span> চাপুন।</li>
+      <li>শেষে অবশ্যই <span class="guide-key">Save changes</span> চাপুন — নাহলে পরিবর্তন সংরক্ষণ হবে না।</li>
+    </ol>
+    <div class="guide-card warning">
+      <p><strong>ছবির সঠিক মাপ:</strong> স্কয়ার (১০৮০×১০৮০ পিক্সেল), সাইজ ৫০০ KB-এর নিচে, ফরম্যাট WebP বা JPG। বড় ছবি দিলে সাইট ধীর হয়ে যায়।</p>
+    </div>
 
-    <h2>৬. Stock কীভাবে বাড়াবেন বা কমাবেন</h2>
-    <p>Stock পরিবর্তনের জন্য <strong>Inventory</strong> page অথবা Products table-এর <strong>Stock</strong> button ব্যবহার করুন। Button চাপলে প্রথমে quantity এবং পরে reason চাইবে।</p>
-    <table><thead><tr><th>যা করবেন</th><th>Quantity কীভাবে দেবেন</th><th>Reason</th></tr></thead><tbody>
-      <tr><td>নতুন মাল এসেছে</td><td>Positive number, যেমন <code>+20</code> বা <code>20</code></td><td>restock</td></tr>
-      <tr><td>Damage হয়েছে</td><td>Negative number, যেমন <code>-2</code></td><td>damage</td></tr>
-      <tr><td>Return পাওয়া গেছে</td><td>Positive number</td><td>return</td></tr>
-      <tr><td>ভুল count ঠিক করা</td><td>প্রয়োজন অনুযায়ী positive/negative</td><td>adjustment</td></tr>
-    </tbody></table>
-    <p>Reason-এর পরে ছোট note লিখুন, যেমন “Supplier delivery 25 August”। এতে পরে কে, কখন এবং কেন stock বদলেছে বোঝা যাবে। Order বা return থেকে system stock update করলে একই item আবার manually যোগ করবেন না।</p>
+    <!-- ================================================================= -->
+    <h2 id="stock">৭. স্টক বাড়ানো ও কমানো</h2>
+    <ol class="guide-steps">
+      <li><strong>Inventory</strong> মেনুতে যান।</li>
+      <li>প্রোডাক্টের পাশে স্টক বদলানোর বাটনে চাপুন।</li>
+      <li>বাড়াতে <strong>10</strong>, কমাতে <strong>-10</strong> এভাবে লিখুন।</li>
+      <li>কারণ লিখুন (যেমন “নতুন মাল এসেছে”, “ভাঙা মাল বাদ”)। প্রতিটি পরিবর্তনের হিসাব থেকে যায়।</li>
+    </ol>
+    <p>স্টক শেষ হলে প্রোডাক্ট এডিটরে <strong>স্টক শেষ (Stock Out)</strong> টিক দিন — কাস্টমার কার্ডে “Stock Out” লেখা দেখবে।</p>
 
-    <h2>৭. Customer Order কীভাবে process করবেন</h2>
-    <ol><li><strong>Orders</strong> page খুলুন।</li><li>Order code, customer name অথবা phone দিয়ে search করুন। প্রয়োজনে status filter ব্যবহার করুন।</li><li>Customer-এর নাম, phone, district/upazila, product, total এবং payment status মিলিয়ে দেখুন।</li><li>Customer-এর payment যাচাই করে order status ধাপে ধাপে update করুন।</li><li>Courier booking বা shipment-এর পরে courier status check করুন।</li><li>Customer-কে update দেওয়ার আগে invoice print করে product, quantity, weight এবং delivery fee মিলিয়ে নিন।</li></ol>
-    <table><thead><tr><th>Status</th><th>কখন ব্যবহার করবেন</th></tr></thead><tbody>
-      <tr><td>pending</td><td>নতুন order এসেছে, এখনো যাচাই হয়নি।</td></tr>
-      <tr><td>confirmed</td><td>Customer/order/payment তথ্য যাচাই হয়েছে।</td></tr>
-      <tr><td>processing</td><td>Product pack বা order প্রস্তুত হচ্ছে।</td></tr>
-      <tr><td>shipped</td><td>Courier-এর কাছে দেওয়া হয়েছে।</td></tr>
-      <tr><td>delivered</td><td>Customer product গ্রহণ করেছে।</td></tr>
-      <tr><td>returned</td><td>Product ফেরত এসেছে বা return process সম্পন্ন হয়েছে।</td></tr>
-      <tr><td>customer_cancelled / admin_cancelled</td><td>Cancel হওয়ার প্রকৃত কারণ অনুযায়ী সঠিক status দিন।</td></tr>
-    </tbody></table>
+    <!-- ================================================================= -->
+    <h2 id="orders">৮. অর্ডার, ঠিকানা সংশোধন ও ইনভয়েস</h2>
+    <ol class="guide-steps">
+      <li><strong>Orders</strong> মেনুতে যান। নতুন অর্ডার সবার উপরে থাকে।</li>
+      <li>যে অর্ডারে কাজ করবেন তার <span class="guide-key">Edit / details</span> চাপুন।</li>
+      <li><strong>Edit customer information</strong>-এ নাম, নম্বর বা ঠিকানার ভুল ঠিক করে <span class="guide-key">Save customer details</span> চাপুন।</li>
+      <li><strong>Courier copy block</strong>-এ <span class="guide-key">Copy to Clipboard</span> চাপলে নাম-নম্বর-ঠিকানা একসাথে কপি হয় — কুরিয়ারের ওয়েবসাইটে সরাসরি পেস্ট করতে পারবেন।</li>
+      <li>পণ্য বদলাতে <strong>Modify order items</strong>-এ পরিমাণ বাড়ান/কমান, নতুন পণ্য দিতে <span class="guide-key">Add product</span> চাপুন, বাদ দিতে <span class="guide-key">Remove</span>।</li>
+      <li><span class="guide-key">Save items &amp; recalculate</span> চাপুন — মোট টাকা নিজে থেকেই ঠিক হয়ে যাবে।</li>
+    </ol>
+    <div class="guide-card good">
+      <p><strong>মনে রাখবেন:</strong> জেলা বদলালে ডেলিভারি চার্জও নিজে থেকেই ঠিক হয়ে যায় (ঢাকার ভিতরে/বাইরে অনুযায়ী)। আপনাকে হাতে হিসাব করতে হবে না।</p>
+    </div>
 
-    <h2>৮. Invoice কীভাবে print করবেন</h2>
-    <p><strong>Orders</strong> page-এ যে order-এর invoice দরকার, তার পাশে <strong>Print invoice</strong> চাপুন। Print window খুললে product name, quantity, unit price, weight, total package weight, payment method, order source, delivery fee এবং customer address check করুন। তারপর printer নির্বাচন করে print করুন অথবা Save as PDF বেছে নিন। ভুল থাকলে print করার আগে order তথ্য ঠিক করুন।</p>
+    <h3>ইনভয়েস নম্বর</h3>
+    <p>ইনভয়েস নম্বর এখন <strong>INV-000001</strong> এভাবে শুরু হয় (আগে RNV ছিল)। অর্ডার নম্বর আলাদা — সেটি <strong>RNV-</strong> দিয়ে শুরু হয়। দুইটি মিলিয়ে ফেলবেন না:</p>
+    <table>
+      <thead><tr><th>নম্বর</th><th>উদাহরণ</th><th>কী বোঝায়</th></tr></thead>
+      <tbody>
+        <tr><td>ইনভয়েস নম্বর</td><td><strong>INV-000012</strong></td><td>বিলের নম্বর। কাস্টমারকে এটি বলবেন।</td></tr>
+        <tr><td>অর্ডার নম্বর</td><td><strong>RNV-MTKI0NQQ</strong></td><td>সিস্টেমের ভিতরের অর্ডার আইডি।</td></tr>
+      </tbody>
+    </table>
+    <p>ইনভয়েস প্রিন্ট করতে অর্ডারের পাশে <span class="guide-key">Print invoice</span> চাপুন। ইনভয়েসের উপরে <strong>Ship From</strong>-এ আপনার দোকানের নাম, নম্বর ও ঠিকানা এবং নিচে <strong>Ship To</strong>-তে কাস্টমারের তথ্য থাকে। একদম নিচে ডেলিভারির সময় পণ্য দেখার নিয়ম লেখা থাকে।</p>
 
-    <h2>৯. Return কীভাবে পরিচালনা করবেন</h2>
-    <ol><li><strong>Returns</strong> page খুলুন। <strong>requested</strong> filter দিয়ে নতুন request দেখুন।</li><li>Order code, customer, phone, reason এবং amount মিলিয়ে নিন।</li><li>Return গ্রহণযোগ্য হলে <strong>approved</strong> দিন। Courier pickup হলে <strong>picked_up</strong> দিন।</li><li>Product হাতে পাওয়ার পরে condition check করে <strong>received</strong> দিন।</li><li>টাকা ফেরত দেওয়ার পর <strong>refunded</strong> দিন। গ্রহণযোগ্য না হলে <strong>rejected</strong> দিন।</li></ol>
-    <p class="muted-note">Received status-এর সময় system stock ledger-এ product ফেরত যোগ করে। একই return বারবার update করলে stock double-count হওয়ার কথা নয়; তবুও ledger দেখে নিশ্চিত হোন।</p>
+    <!-- ================================================================= -->
+    <h2 id="payment">৯. পেমেন্ট মাধ্যম ও ডেলিভারি পার্টনার</h2>
+    <p>সব কিছু <strong>Settings</strong> মেনুতে। এখানে বদলালে চেকআউট পেজে সাথে সাথে পরিবর্তন আসে।</p>
 
-    <h2>১০. Customer Rating ও Review approve করা</h2>
-    <p>Customer product page-এ ১ থেকে ৫ star rating এবং review দিতে পারবে। তবে review তখনই submit হবে যখন customer-এর purchase system-এ পাওয়া যাবে—account login থাকলে তার account-এর shipped/delivered order থেকে, আর login না থাকলে phone number-এর সঙ্গে Order Number অথবা Invoice Number মিলিয়ে। তাই fake buyer বা product না-কেনা visitor review submit করতে পারবে না।</p>
-    <ol><li>Admin menu থেকে <strong>Reviews</strong> খুলুন।</li><li><strong>Pending</strong> filter নির্বাচন করে নতুন review দেখুন। Product name, buyer name, star rating, review text, Order Number এবং Invoice Number মিলিয়ে নিন।</li><li>Review স্বাভাবিক এবং purchase তথ্য সঠিক হলে status <strong>Approved</strong> দিন অথবা <strong>Approve</strong> button চাপুন।</li><li>ভুল, অশালীন, অসম্পূর্ণ বা সন্দেহজনক review হলে status <strong>Rejected</strong> দিন। সন্দেহ হলে approve না করে আগে order ও invoice check করুন।</li><li>Approved review customer product page-এ প্রকাশ পাবে এবং product-এর average rating ও review count automatic update হবে।</li></ol>
-    <p class="muted-note">কোনো product-এর approved rating ৪.৫ বা তার বেশি হলে সেটি manual featured না হলেও Top Collection-এ automatic যোগ হওয়ার জন্য eligible হবে। Rating কমে গেলে বা review reject করলে Top Collection eligibility-ও update হবে।</p>
+    <h3>পেমেন্ট মাধ্যম</h3>
+    <ol class="guide-steps">
+      <li><strong>Settings → Payment methods</strong> অংশে যান।</li>
+      <li><strong>Cash on delivery</strong> ও <strong>bKash advance</strong> — প্রতিটির জন্য <span class="guide-pill">Active · চালু</span> বা <span class="guide-pill">Hidden · বন্ধ</span> বাছুন। যেটি বন্ধ, সেটি কাস্টমার চেকআউটে দেখবেই না।</li>
+      <li><strong>bKash Send Money number</strong> ঘরে আপনার বিকাশ নম্বর দিন — কাস্টমার এই নম্বরেই টাকা পাঠাবে।</li>
+      <li>চাইলে <strong>bKash instructions</strong> ঘরে নিজের ভাষায় নির্দেশনা লিখুন।</li>
+      <li>নিচে <span class="guide-key">Save settings</span> চাপুন।</li>
+    </ol>
+    <div class="guide-card">
+      <p><strong>অ্যাডভান্স পেমেন্ট কীভাবে কাজ করে:</strong> কাস্টমার বিকাশে <em>Send Money</em> করে ট্রানজেকশন আইডি লিখে অর্ডার দেয়। আইডি না দিলে অর্ডার হবে না। আপনি Orders → <span class="guide-key">Edit / details</span> → <strong>Payment</strong> কার্ডে সেই আইডি দেখতে পাবেন এবং <span class="guide-key">Copy transaction ID</span> দিয়ে কপি করে বিকাশ স্টেটমেন্টে মিলিয়ে নিতে পারবেন। মিলে যাওয়ার পরই মাল পাঠাবেন।</p>
+    </div>
 
-    <h2>১১. দোকানের POS sale ও barcode</h2>
-    <ol><li><strong>POS &amp; Barcodes</strong> page খুলুন।</li><li>Barcode scanner থাকলে cursor search box-এ রেখে barcode scan করুন; না হলে product name বা barcode লিখে <strong>Find</strong> চাপুন।</li><li>Product row-তে <strong>Add</strong> চাপুন। একাধিক item হলে প্রত্যেকটি যোগ করুন।</li><li>প্রয়োজনে discount দিন এবং Cash, bKash, Nagad, Rocket অথবা Card payment বেছে নিন।</li><li>Receipt preview-এ product ও total মিলিয়ে <strong>Complete sale &amp; print receipt</strong> চাপুন।</li></ol>
-    <p>POS sale complete হলে shop stock কমে এবং আলাদা POS হিসাব তৈরি হয়। ভুল sale হলে নিজে থেকে stock কম-বেশি না করে Inventory ledger-এ পরিষ্কার adjustment note দিন।</p>
+    <h3>ডেলিভারি পার্টনার ও চার্জ</h3>
+    <ol class="guide-steps">
+      <li><strong>Settings → Delivery &amp; courier</strong> অংশে যান।</li>
+      <li><strong>Delivery partner</strong> থেকে কুরিয়ার বাছুন — Steadfast, Pathao, RedX, Paperfly, Sundarban বা নিজের ডেলিভারি।</li>
+      <li>ঢাকার ভিতরে ও বাইরের চার্জ লিখুন।</li>
+      <li>Save করুন।</li>
+    </ol>
+    <p>কাস্টমার চেকআউট পেজে <strong>Place order</strong> বাটনের ঠিক উপরে ছোট করে দেখবে: <em>🔒 Delivery Partner: Steadfast — Fixed by the shop</em>। এটি তালাবদ্ধ, কাস্টমার বদলাতে পারবে না। আপনি Settings-এ বদলালে ওখানেও নতুন নাম দেখাবে।</p>
 
-    <h2>১২. Homepage, page, blog ও offer পরিবর্তন</h2>
-    <p><strong>Content CMS</strong> page-এ চারটি কাজ আছে।</p>
-    <table><thead><tr><th>অংশ</th><th>কীভাবে ব্যবহার করবেন</th></tr></thead><tbody>
-      <tr><td>Topbar notice</td><td>উপরের announcement text লিখে <strong>Save banner</strong> চাপুন।</td></tr>
-      <tr><td>Create or update page</td><td>Slug, title, body লিখুন। Customer-কে দেখাতে Status = published দিন।</td></tr>
-      <tr><td>Create blog post</td><td>Journal-এর জন্য slug, title, excerpt, body লিখুন। Publish করার আগে বানান ও image link check করুন।</td></tr>
-      <tr><td>Create offer</td><td>Code, title, description, discount type, value এবং minimum subtotal দিন।</td></tr>
-    </tbody></table>
-    <p>Draft content public site-এ customer দেখতে পাবে না। Save করার পরে storefront refresh করে banner বা page দেখা যাচ্ছে কি না check করুন। Clothing category backend-এ প্রস্তুত আছে, কিন্তু এখন customer menu-তে hidden থাকবে।</p>
+    <!-- ================================================================= -->
+    <h2 id="campaign">১০. অ্যাড ক্যাম্পেইন পেজ তৈরি করা</h2>
+    <div class="guide-card important">
+      <p>ফেসবুক বা ইনস্টাগ্রাম অ্যাডের জন্য আলাদা একটি পেজ বানানো যায়। এর নিজস্ব লিংক থাকে এবং এটি আপনার মূল দোকানের কোনো কিছু বদলায় না।</p>
+    </div>
+    <ol class="guide-steps">
+      <li>বাম মেনু থেকে <strong>Campaign Studio</strong>-তে যান।</li>
+      <li><strong>Campaign name</strong> ঘরে নাম লিখুন (যেমন “Winter Glow Edit”)।</li>
+      <li>নিচে <strong>Page link</strong> নিজে থেকেই তৈরি হয়ে যাবে এবং পুরো লিংকটি গোলাপি ঘরে দেখাবে। এটিই আপনার অ্যাডের লিংক। চাইলে ছোট করতে পারেন।</li>
+      <li><strong>Small headline</strong> ও <strong>Description</strong> লিখুন।</li>
+      <li><strong>Main picture</strong>-এ <span class="guide-key">Upload picture</span> দিয়ে ছবি দিন (স্কয়ার ১০৮০×১০৮০)।</li>
+      <li><strong>Products on this page</strong> অংশে যে পণ্যগুলো এই অ্যাডে বিক্রি করতে চান সেগুলোতে টিক দিন। উপরের সার্চ বক্সে নাম লিখে খুঁজতে পারবেন। কোনো টিক না দিলে আপনার ফিচার্ড পণ্য দেখাবে।</li>
+      <li>চাইলে <strong>Start date</strong> ও <strong>End date</strong> দিন।</li>
+      <li><strong>Status</strong> এখন <span class="guide-pill">Paused</span> রাখুন এবং <span class="guide-key">Create campaign</span> চাপুন।</li>
+      <li>ডান পাশের তালিকায় নতুন ক্যাম্পেইন আসবে। <span class="guide-key">Open page</span> চেপে দেখে নিন সব ঠিক আছে কি না।</li>
+      <li>সব ঠিক থাকলে <span class="guide-key">Activate</span> চাপুন। এখন কাস্টমার লিংকটি খুলতে পারবে।</li>
+      <li><span class="guide-key">Copy link</span> চেপে লিংকটি কপি করে Meta Ads Manager-এ পেস্ট করুন।</li>
+    </ol>
+    <table>
+      <thead><tr><th>বাটন</th><th>কাজ</th></tr></thead>
+      <tbody>
+        <tr><td><span class="guide-key">Copy link</span></td><td>অ্যাডের লিংক কপি হয়।</td></tr>
+        <tr><td><span class="guide-key">Open page</span></td><td>পেজটি নতুন ট্যাবে খোলে।</td></tr>
+        <tr><td><span class="guide-key">Edit</span></td><td>নাম, ছবি, লেখা বা পণ্য বদলানো যায়। তারপর <strong>Save changes</strong>।</td></tr>
+        <tr><td><span class="guide-key">Pause</span> / <span class="guide-key">Activate</span></td><td>অ্যাড বন্ধ বা চালু করা। বন্ধ থাকলে কাস্টমার পেজটি খুলতে পারবে না।</td></tr>
+        <tr><td><span class="guide-key">Delete</span></td><td>ক্যাম্পেইন মুছে ফেলা। লিংকটি আর কাজ করবে না।</td></tr>
+      </tbody>
+    </table>
+    <div class="guide-card good">
+      <p><strong>Paused অবস্থায় পেজ দেখা:</strong> বন্ধ ক্যাম্পেইনের পেজ কাস্টমার খুলতে পারে না, কিন্তু আপনি ড্যাশবোর্ড থেকে <span class="guide-key">Open page</span> চাপলে দেখতে পাবেন। উপরে কালো একটি লাইনে লেখা থাকবে যে এটি এখনো বন্ধ আছে।</p>
+    </div>
+    <div class="guide-card warning">
+      <p><strong>ফেসবুকে লিংক শেয়ার করলে ছবি না এলে:</strong> ক্যাম্পেইন <strong>Activate</strong> করা আছে কি না দেখুন, এবং <strong>Main picture</strong> দেওয়া আছে কি না দেখুন। চাইলে <em>Facebook / Instagram share card</em> অংশ খুলে আলাদা শিরোনাম ও বর্ণনা দিতে পারেন।</p>
+    </div>
 
-    <h2>১৩. Store Settings কীভাবে পরিবর্তন করবেন</h2>
-    <p><strong>Settings</strong> page-এ যে field পরিবর্তন করবেন সেটি লিখে নিচে <strong>Save settings</strong> চাপুন।</p>
-    <table><thead><tr><th>Field</th><th>কী লিখবেন</th></tr></thead><tbody>
-      <tr><td>Store name / Tagline</td><td>Customer-facing shop name ও ছোট পরিচিতি।</td></tr>
-      <tr><td>Support phone / email</td><td>Customer support-এর contact।</td></tr>
-      <tr><td>Delivery inside Dhaka</td><td>Dhaka delivery fee: বর্তমানে ৳90।</td></tr>
-      <tr><td>Delivery outside Dhaka</td><td>Dhaka-এর বাইরে delivery fee: বর্তমানে ৳150।</td></tr>
-      <tr><td>Free delivery over</td><td>যে amount-এর উপরে free delivery দিতে চান।</td></tr>
-      <tr><td>Order WhatsApp number</td><td>বর্তমান order support number: +880 1738-745949।</td></tr>
-      <tr><td>bKash / Nagad / Rocket number</td><td>Customer payment-এর জন্য ব্যবহার করা merchant/personal number।</td></tr>
-      <tr><td>Site description</td><td>Homepage ও search preview-এর জন্য ছোট shop description।</td></tr>
-    </tbody></table>
-    <p>Customer নিজে delivery fee বেছে নেবে না; location অনুযায়ী fee automatic থাকবে। Emergency fee ৳250 admin-side প্রয়োজন হলে ব্যবহার করবেন, customer checkout-এ selection option থাকবে না।</p>
+    <!-- ================================================================= -->
+    <h2 id="content">১১. হোমপেজ, ব্যানার ও রিভিউ</h2>
+    <ul>
+      <li><strong>Marketing &amp; banners</strong> — হোমপেজের ব্যানার ও অফার যোগ বা বন্ধ করা।</li>
+      <li><strong>Content CMS</strong> — পেজের লেখা, ব্লগ ও জার্নাল।</li>
+      <li><strong>Reviews</strong> — নতুন রিভিউ <span class="guide-pill">approved</span> করলে তবেই সাইটে দেখাবে। অশোভন হলে <span class="guide-pill">rejected</span> করুন।</li>
+      <li><strong>Returns</strong> — ফেরত অনুরোধ এলে অবস্থা বদলে দিন; স্টকের হিসাব নিজে থেকেই ঠিক থাকে।</li>
+    </ul>
 
-    <h2>১৪. Customer account, invoice ও tracking</h2>
-    <p>Customer <code>/account.html</code> থেকে account খুলে order history দেখতে, invoice খুলতে এবং eligible delivered/shipped order-এর return request করতে পারে। Owner হিসেবে customer-এর password দেখার প্রয়োজন নেই এবং password dashboard-এ দেখা যায় না। Customer order জানতে চাইলে order code বা phone দিয়ে tracking তথ্য check করে সহায়তা করুন।</p>
+    <!-- ================================================================= -->
+    <h2 id="problems">১২. সমস্যা হলে কী করবেন</h2>
+    <table>
+      <thead><tr><th>সমস্যা</th><th>সমাধান</th></tr></thead>
+      <tbody>
+        <tr><td>পরিবর্তন সাইটে দেখা যাচ্ছে না</td><td>Save চেপেছেন কি না দেখুন। তারপর পেজ রিফ্রেশ করুন (<span class="guide-key">Ctrl</span>+<span class="guide-key">Shift</span>+<span class="guide-key">R</span>)।</td></tr>
+        <tr><td>প্রোডাক্ট কাস্টমার দেখছে না</td><td>স্ট্যাটাস <strong>Active</strong> আছে কি না দেখুন। Draft হলে কেউ দেখবে না।</td></tr>
+        <tr><td>ক্যাম্পেইনের লিংক খুলছে না</td><td>ক্যাম্পেইনটি <strong>Activate</strong> করা আছে কি না দেখুন। তারিখ দিলে সেই সময়ের মধ্যে আছে কি না দেখুন।</td></tr>
+        <tr><td>Clothing ক্যাটাগরি সাইটে দেখা যাচ্ছে না</td><td><strong>Categories</strong> মেনুতে গিয়ে দেখুন সেটিতে <span class="guide-pill">Archived</span> লেখা আছে কি না। থাকলে পাশের <span class="guide-key">Restore</span> চাপুন — তখনই কাস্টমার দেখতে পাবে।</td></tr><tr><td>সাইজ/রঙের ঘর আসছে না</td><td>প্রোডাক্টের ক্যাটাগরি <strong>Clothing</strong> আছে কি না এবং অন্তত একটি সাইজ ও রঙ বাছাই করা আছে কি না দেখুন।</td></tr>
+        <tr><td>অর্ডার সেভ হচ্ছে না, স্টকের কথা লিখছে</td><td>যত পিস আছে তার বেশি দেওয়া যাবে না। Inventory-তে আগে স্টক বাড়িয়ে নিন।</td></tr>
+        <tr><td>ভুল করে কিছু মুছে ফেলেছেন</td><td>নিজে ঠিক করার চেষ্টা করার আগে ডেভেলপারকে জানান। প্রতিটি পরিবর্তনের হিসাব রাখা থাকে।</td></tr>
+      </tbody>
+    </table>
 
-    <h2>১৫. SmartGen দিয়ে দ্রুত shop data check</h2>
-    <p>Dashboard-এর উপরের SmartGen button অথবা Dashboard-এর Top Products card-এর গোল SmartGen button চাপুন। এটি private admin assistant; এখানে সরাসরি প্রশ্ন লিখলে live shop data অনুযায়ী summary পাওয়া যাবে।</p>
-    <table><thead><tr><th>আপনি লিখতে পারেন</th><th>যে তথ্য পাবেন</th></tr></thead><tbody>
-      <tr><td>“কতগুলো active product আছে?”</td><td>Active product count।</td></tr>
-      <tr><td>“মোট stock কত এবং কোনগুলো low stock?”</td><td>Stock units, value এবং restock দরকার এমন product।</td></tr>
-      <tr><td>“Online ও POS মিলিয়ে কত টাকার sale হয়েছে?”</td><td>Online sales, POS sales এবং combined sales summary।</td></tr>
-      <tr><td>“কোন product কতটি বিক্রি হয়েছে?”</td><td>Product-wise units ও revenue।</td></tr>
-      <tr><td>“কতগুলো return pending?”</td><td>Return status অনুযায়ী count।</td></tr>
-      <tr><td>“আজ কোন order আগে process করব?”</td><td>Recent order ও status দেখে operational suggestion।</td></tr>
-    </tbody></table>
-    <p>Customer-facing SmartGen product link চাইলে active catalogue থেকে verified colorful product card দেখায়। Admin assistant-কে password, payment secret, API key বা কোনো confidential credential লিখবেন না।</p>
+    <div class="guide-card important">
+      <h3>নিরাপত্তার শেষ কথা</h3>
+      <ul>
+        <li>পাসওয়ার্ড কারও সাথে শেয়ার করবেন না।</li>
+        <li>কাজ শেষে সবসময় <strong>Sign out</strong> করুন।</li>
+        <li>API key, টোকেন বা সিক্রেট কোথাও লিখে রাখবেন না — এগুলো ডেভেলপার নিরাপদে সংরক্ষণ করেন।</li>
+        <li>নিশ্চিত না হলে <strong>View Mode</strong>-এ থেকে দেখুন, বদলাবেন না।</li>
+      </ul>
+    </div>
 
-    <h2>১৬. প্রতিদিন সকালের Shortcut Checklist</h2>
-    <div class="guide-card important"><h3>Dashboard খুললেই “আজকের shop check” দেখবেন</h3><p>এই checklist Dashboard-এর মাঝখানে থাকবে। প্রতিটি কাজ শেষ হলে বাম পাশের ছোট box-এ click করে tick দিন। <strong>Open</strong> চাপলে সংশ্লিষ্ট Orders, Inventory, Returns, POS অথবা storefront page সরাসরি খুলবে। কাজ শেষ হলে তালিকাটি আজকের জন্য মনে থাকবে এবং পরদিন নতুন করে শুরু হবে।</p><table><thead><tr><th>ক্রম</th><th>সকালে কী check করবেন</th><th>কী করবেন</th></tr></thead><tbody><tr><td>১</td><td>Dashboard numbers</td><td>30d নির্বাচন করে Revenue, Orders, Stock on hand, Needs restocking এবং Top Products দেখুন।</td></tr><tr><td>২</td><td>Pending orders</td><td>Orders খুলে নতুন order, customer phone/address, payment status ও total মিলিয়ে confirmed বা processing করুন।</td></tr><tr><td>৩</td><td>Low stock</td><td>Inventory খুলে threshold-এর নিচের product লিখে রাখুন এবং মাল এলে restock reason দিয়ে stock update করুন।</td></tr><tr><td>৪</td><td>Return requests</td><td>Returns খুলে requested item review করুন; approved, picked_up, received, refunded বা rejected status সঠিকভাবে দিন।</td></tr><tr><td>৫</td><td>গতকালের POS sale</td><td>POS &amp; Barcodes খুলে গতকালের sale, receipt এবং payment মিলিয়ে নিন।</td></tr><tr><td>৬</td><td>Live storefront</td><td>View storefront খুলে প্রধান product-এর দাম, image, stock, Add to Cart এবং product detail ঠিক আছে কি না দেখুন।</td></tr></tbody></table><p class="muted-note"><strong>সবচেয়ে জরুরি ক্রম:</strong> আগে Orders, তারপর Low stock, তারপর Returns। সময় থাকলে POS এবং storefront check সম্পূর্ণ করুন।</p></div>
-
-    <h2>১৭. ভুল হলে কী করবেন</h2>
-    <table><thead><tr><th>সমস্যা</th><th>প্রথমে কী check করবেন</th></tr></thead><tbody>
-      <tr><td>Product storefront-এ দেখা যাচ্ছে না</td><td>Status Active কি না, stock ও category ঠিক আছে কি না দেখুন; তারপর page refresh করুন।</td></tr>
-      <tr><td>দাম বদলেছে কিন্তু customer page-এ পুরনো দাম</td><td>Save changes হয়েছে কি না দেখুন, তারপর View live খুলে hard refresh করুন।</td></tr>
-      <tr><td>ছবি দেখা যাচ্ছে না</td><td>URL <code>/assets/</code> বা <code>https://</code> দিয়ে শুরু হয়েছে কি না এবং spelling ঠিক আছে কি না দেখুন।</td></tr>
-      <tr><td>Stock ভুল দেখাচ্ছে</td><td>Inventory ledger-এর latest movement দেখুন; একই sale/return দ্বিতীয়বার manually যোগ করবেন না।</td></tr>
-      <tr><td>Order status নিয়ে সন্দেহ</td><td>Payment, courier status ও customer confirmation মিলিয়ে তারপর status পরিবর্তন করুন।</td></tr>
-      <tr><td>Dashboard খুলছে না</td><td>সঠিক admin link ব্যবহার করুন, session শেষ হলে আবার login করুন, এবং browser refresh করুন।</td></tr>
-    </tbody></table>
-
-    <section class="guide-card important"><h2>নিরাপত্তার শেষ কথা</h2><p>Admin dashboard-এর link ও credentials আলাদা রাখুন। Product archive করা ভালো; পুরনো order history নষ্ট করার মতো delete কাজ করবেন না। কোনো price, stock, return বা order status change করার আগে তথ্য মিলিয়ে নিন। সন্দেহ হলে আগে View Mode-এ check করুন, পরে Edit Mode-এ পরিবর্তন করুন।</p>    </section>
-
-    <h2>নতুন managed system: Invoice barcode</h2>
-    <div class="guide-card important"><h3>একটি invoice-এ এখন একটি barcode</h3><p>আগে invoice-এ Invoice ID এবং প্রতিটি product SKU আলাদা barcode হিসেবে দেখানোর কারণে দুইটি product থাকলে মোট তিনটি barcode দেখা যেত। এটি ঠিক করা হয়েছে। এখন প্রতিটি invoice-এ <strong>একটি মাত্র Code 128 barcode</strong> থাকবে। সেই এক barcode-এর ভিতরে Invoice number এবং সব purchased product-এর SKU থাকবে। উদাহরণ: <code>INV:RNV-INV-MT7YG740|SKU:RNV-00003,RNV-00001</code>। Store scanner এই payload পড়লে invoice এবং product SKU দুটোই পাওয়া যাবে।</p><p>Barcode তৈরি হলে invoice print করার সময় barcode-টি দৃশ্যমান থাকবে। Barcode-এ হাত দিয়ে লেখা বা আলাদা product barcode যোগ করার দরকার নেই। POS-এর product label barcode workflow আলাদা; invoice-এর নিয়মটি শুধু invoice output-এর জন্য প্রযোজ্য।</p></div>
-
-    <h2>নতুন managed system: SteadFast Courier</h2>
-    <p>Courier setup করার জন্য <strong>Settings → Courier Integrations</strong> খুলুন। এখানে masked API key, masked Secret key, masked webhook token, API base URL, callback URL, courier service selector এবং connection test button থাকবে। Full key কখনো browser বা normal store setting-এ দেখা যাবে না।</p>
-    <ol><li>SteadFast merchant account থেকে API key এবং Secret key সংগ্রহ করুন। Website নিজে SteadFast account credential generate করতে পারে না।</li><li>Cloudflare Worker secrets-এ <code>STEADFAST_API_KEY</code>, <code>STEADFAST_SECRET_KEY</code> এবং একটি strong random <code>STEADFAST_WEBHOOK_TOKEN</code> যোগ করুন।</li><li>Admin Settings-এ ফিরে status <strong>Configured</strong> হয়েছে কি না দেখুন এবং <strong>Test SteadFast connection</strong> চাপুন। এই test কোনো shipment তৈরি করে না।</li><li>SteadFast account-এর webhook area-তে এই callback URL দিন: <code>https://rinovabd.com/api/webhooks/steadfast</code> এবং একই bearer token ব্যবহার করুন।</li><li>Orders page-এ customer name, 11-digit phone, complete address, COD amount এবং package weight যাচাই করে তারপর <strong>Send to SteadFast</strong> চাপুন। Confirm dialog না দেখে live shipment তৈরি হবে না।</li></ol>
-    <table><thead><tr><th>নতুন control</th><th>কাজ</th></tr></thead><tbody><tr><td>Courier service</td><td>SteadFast, Pathao, RedX, Paperfly, Sundarban বা Local delivery বাছাই করা।</td></tr><tr><td>Connection test</td><td>SteadFast balance endpoint দিয়ে credential যাচাই করা; shipment তৈরি করে না।</td></tr><tr><td>Send to SteadFast</td><td>নির্দিষ্ট confirmed order courier-এ পাঠানো; confirmation-এর পরে booking হয়।</td></tr><tr><td>Webhook callback</td><td>Courier status update পেলে order-এর courier status ও order history update করা।</td></tr></tbody></table>
-
-    <h2>নতুন managed system: Admin chatbot এবং premium navigation</h2>
-    <p>Admin dashboard-এর SmartGen chatbot এখন সব admin view-তে একটি ছোট premium dock হিসেবে visible থাকবে। এটি workspace ঢেকে ফেলবে না; প্রয়োজন হলে assistant view খুলে বড় conversation panel ব্যবহার করা যাবে। Dashboard, Products, Orders, Inventory, Settings, POS এবং অন্যান্য view বদলালেও chatbot dock হারিয়ে যাবে না। API key, password বা payment secret chatbot-এ লিখবেন না।</p>
-    <p>Admin navigation এখন group করা: Overview, Catalogue, Orders &amp; Care, Growth এবং Workspace। মোবাইলে ☰ চাপলে menu খুলবে এবং কাজ শেষ হলে close করা যাবে। Storefront-এর mobile bottom navigation customer-facing pages-এ থাকবে; Checkout page-এ এটি intentionally hide থাকবে যাতে address form এবং mobile keyboard-এর সঙ্গে overlap না করে।</p>
-
-    <h2>Managed systems status</h2>
-    <table><thead><tr><th>System</th><th>বর্তমান অবস্থা</th></tr></thead><tbody><tr><td>Product catalogue</td><td>Product, SKU, barcode, image/gallery, video URL, stock, badge এবং category manage করা যায়।</td></tr><tr><td>Invoice</td><td>একটি combined Invoice + SKU scanner barcode, product links এবং branded invoice seal আছে।</td></tr><tr><td>POS &amp; labels</td><td>Barcode search, sale receipt, product label queue এবং print workflow আছে।</td></tr><tr><td>Orders</td><td>Payment, order status, courier state, invoice print এবং SteadFast booking controls আছে।</td></tr><tr><td>Inventory</td><td>Stock adjustment এবং reason-based record রাখা যায়।</td></tr><tr><td>Returns ও Reviews</td><td>Return processing এবং verified buyer review moderation আছে।</td></tr><tr><td>Marketing ও CMS</td><td>Homepage banner, offer, page, journal এবং newsletter management আছে।</td></tr><tr><td>Analytics</td><td>Traffic ও SEO setup area আছে; connected credentials অনুযায়ী live report দেখা যাবে।</td></tr><tr><td>SmartGen</td><td>Customer storefront-এ all-page support এবং admin dashboard-এ persistent private assistant আছে।</td></tr><tr><td>Cloudflare delivery</td><td>Worker, D1, R2 এবং public storefront deployment GitHub workflow দিয়ে managed।</td></tr></tbody></table>
-
-</main>
+    <p style="margin-top:34px"><a class="button button-dark" href="/admin/">← ড্যাশবোর্ডে ফিরুন</a></p>
+  </main>
 </body>
 </html>

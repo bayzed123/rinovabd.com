@@ -46,7 +46,7 @@ type App = Hono<{ Bindings: Bindings }>;
 type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'customer_cancelled' | 'refused' | 'delivery_failed' | 'returned' | 'admin_cancelled';
 
 const app: App = new Hono();
-app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'https://www.rinovabd.com', 'http://rinovabd.com', 'http://www.rinovabd.com', 'https://bayzed123.github.io', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS'] }));
+app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'https://www.rinovabd.com', 'http://rinovabd.com', 'http://www.rinovabd.com', 'https://bayzed123.github.io', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] }));
 
 const json = (c: { json: (body: unknown, status?: number) => Response }, body: unknown, status = 200) => c.json(body, status);
 
@@ -108,6 +108,22 @@ async function resolveDeliveryZone(env: Bindings, district: string, upazila: str
   return { zone, fee: fees[zone] };
 }
 
+const COURIER_PARTNERS: Record<string, string> = {
+  steadfast: 'Steadfast',
+  pathao: 'Pathao',
+  redx: 'RedX',
+  paperfly: 'Paperfly',
+  sundarban: 'Sundarban Courier',
+  local: 'Local delivery / pickup',
+};
+
+/** The courier is chosen once by the owner in Settings and shown locked at checkout. */
+async function resolveDeliveryPartner(env: Bindings): Promise<{ id: string; name: string }> {
+  const settings = await readSettings(env, ['delivery_partner']);
+  const id = (settings.delivery_partner || 'steadfast').toLowerCase();
+  return { id: COURIER_PARTNERS[id] ? id : 'steadfast', name: COURIER_PARTNERS[id] || COURIER_PARTNERS.steadfast };
+}
+
 type PaymentMethodId = 'cod' | 'bkash';
 
 type PaymentMethodOption = { id: PaymentMethodId; label: string; labelBn: string; instructions: string; account: string; requiresTrxId: boolean };
@@ -137,9 +153,13 @@ async function resolvePaymentMethods(env: Bindings): Promise<PaymentMethodOption
   return methods;
 }
 
+/**
+ * Invoice numbers read INV-000001 so the shop owner never mistakes one for an order code.
+ * Orders placed before the rename carry RNV-000001; every lookup below still accepts that form.
+ */
 function invoiceNumberForOrderId(orderId: unknown) {
   const id = Number(orderId);
-  return Number.isInteger(id) && id > 0 ? `RNV-${String(id).padStart(6, '0')}` : '';
+  return Number.isInteger(id) && id > 0 ? `INV-${String(id).padStart(6, '0')}` : '';
 }
 
 function slugifyCategory(value: unknown) {
@@ -871,7 +891,7 @@ app.post('/api/account/returns', async (c) => {
 app.get('/api/admin/invoices/:invoiceNumber', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const invoiceNumber = normalize(c.req.param('invoiceNumber'));
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(invoiceNumber, invoiceNumber).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(invoiceNumber, invoiceNumber, invoiceNumber).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
   if (!order) return json(c, { error: 'Invoice not found.' }, 404);
   const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || invoiceNumber;
   if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
@@ -884,7 +904,7 @@ app.get('/api/orders/:orderIdentifier/invoice', async (c) => {
   const admin = await adminPrincipal(c);
   const customerSession = admin ? null : await customerPrincipal(c);
   const identifier = normalize(c.req.param('orderIdentifier'));
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('RNV-%06d', o.id) = ?").bind(identifier, identifier, identifier).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ?").bind(identifier, identifier, identifier, identifier).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
   if (!order || (!admin && (!customerSession || customerSession.customerId !== order.customerId))) return json(c, { error: 'Order not found.' }, 404);
   const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || order.orderCode;
   if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
@@ -1241,21 +1261,125 @@ app.post('/api/admin/tracking/verify', async (c) => {
   const results = await trackingHealth(c.env, new URL(c.req.url).origin);
   return json(c, { results, verifiedAt: new Date().toISOString() });
 });
+const CAMPAIGN_COLUMNS = 'id, slug, title, eyebrow, description, image_url AS imageUrl, meta_title AS metaTitle, meta_description AS metaDescription, cta_label AS ctaLabel, cta_url AS ctaUrl, product_ids_json AS productIdsJson, active, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt';
+
+type CampaignRow = { id: number; slug: string; title: string; eyebrow: string | null; description: string | null; imageUrl: string | null; metaTitle: string | null; metaDescription: string | null; ctaLabel: string | null; ctaUrl: string | null; productIdsJson: string | null; active: number; startsAt: string | null; endsAt: string | null };
+
+/**
+ * Cloudflare Assets answers a ".html" path with a 307 to its extensionless form.
+ * Forwarding that redirect is what made campaign pages bounce instead of render,
+ * so follow it here and hand back the real document.
+ */
+async function fetchAssetHtml(env: Bindings, requestUrl: string, path: string): Promise<Response> {
+  if (!env.ASSETS) return new Response('Storefront assets are unavailable.', { status: 503 });
+  let response = await env.ASSETS.fetch(new Request(new URL(path, requestUrl)));
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get('Location');
+    if (location) response = await env.ASSETS.fetch(new Request(new URL(location, requestUrl)));
+  }
+  return response;
+}
+
+function campaignSlug(value: unknown) {
+  return normalize(value).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+}
+
+function campaignImageOk(value: string) {
+  return !value || /^(https:\/\/|\/assets\/|\/media\/)/i.test(value);
+}
+
+/** Product ids the owner picked for a campaign, as a clean integer list. */
+function parseCampaignProductIds(value: unknown): number[] {
+  let parsed: unknown = value;
+  if (typeof value === 'string') { try { parsed = JSON.parse(value || '[]'); } catch { parsed = []; } }
+  if (!Array.isArray(parsed)) return [];
+  return [...new Set(parsed.map((item) => Math.floor(Number(item))).filter((item) => Number.isInteger(item) && item > 0))].slice(0, 48);
+}
+
+function campaignIsLive(campaign: Pick<CampaignRow, 'active' | 'startsAt' | 'endsAt'>, now = Date.now()) {
+  if (Number(campaign.active) !== 1) return false;
+  if (campaign.startsAt && new Date(campaign.startsAt).getTime() > now) return false;
+  if (campaign.endsAt && new Date(campaign.endsAt).getTime() < now) return false;
+  return true;
+}
+
 app.get('/api/admin/campaigns', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const result = await c.env.DB.prepare('SELECT id, slug, title, eyebrow, description, image_url AS imageUrl, cta_label AS ctaLabel, cta_url AS ctaUrl, product_ids_json AS productIdsJson, active, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt FROM campaign_pages ORDER BY updated_at DESC, id DESC').all();
-  return json(c, { campaigns: result.results });
+  const result = await c.env.DB.prepare(`SELECT ${CAMPAIGN_COLUMNS} FROM campaign_pages ORDER BY updated_at DESC, id DESC`).all<CampaignRow>();
+  const origin = new URL(c.req.url).origin;
+  // The owner needs the finished ad URL in front of them, not a slug to assemble by hand.
+  return json(c, { campaigns: result.results.map((campaign) => ({ ...campaign, productIds: parseCampaignProductIds(campaign.productIdsJson), url: `${origin}/campaign/${campaign.slug}`, live: campaignIsLive(campaign) })) });
 });
+
+app.get('/api/admin/campaigns/:id', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid campaign id.' }, 400);
+  const campaign = await c.env.DB.prepare(`SELECT ${CAMPAIGN_COLUMNS} FROM campaign_pages WHERE id = ? LIMIT 1`).bind(id).first<CampaignRow>();
+  if (!campaign) return json(c, { error: 'Campaign not found.' }, 404);
+  const origin = new URL(c.req.url).origin;
+  return json(c, { campaign: { ...campaign, productIds: parseCampaignProductIds(campaign.productIdsJson), url: `${origin}/campaign/${campaign.slug}`, live: campaignIsLive(campaign) } });
+});
+
 app.post('/api/admin/campaigns', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const body = await c.req.json<Record<string, unknown>>(); const slug = normalize(body.slug).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
-  if (!slug || !normalize(body.title)) return json(c, { error: 'Campaign title and slug are required.' }, 400);
-  const imageUrl = normalize(body.imageUrl); if (imageUrl && !/^(https:\/\/|\/assets\/|\/media\/)/i.test(imageUrl)) return json(c, { error: 'Campaign image must use https://, /assets/ or /media/.' }, 400);
-  try { await c.env.DB.prepare('INSERT INTO campaign_pages(slug,title,eyebrow,description,image_url,cta_label,cta_url,product_ids_json,active,starts_at,ends_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(slug, normalize(body.title).slice(0, 160), normalize(body.eyebrow).slice(0, 100), normalize(body.description).slice(0, 1200), imageUrl || null, normalize(body.ctaLabel).slice(0, 80) || 'Shop now', normalize(body.ctaUrl).slice(0, 240) || '/#shop', JSON.stringify(Array.isArray(body.productIds) ? body.productIds : []), body.active ? 1 : 0, normalize(body.startsAt) || null, normalize(body.endsAt) || null).run(); } catch { return json(c, { error: 'Campaign slug already exists or could not be saved.' }, 400); }
-  return json(c, { ok: true, slug });
+  const body = await c.req.json<Record<string, unknown>>();
+  const title = normalize(body.title).slice(0, 160);
+  if (!title) return json(c, { error: 'Campaign title is required.' }, 400);
+  // The owner names the campaign; the ad URL is derived for them.
+  const slug = campaignSlug(body.slug) || campaignSlug(title) || `campaign-${Date.now().toString(36)}`;
+  const imageUrl = normalize(body.imageUrl);
+  if (!campaignImageOk(imageUrl)) return json(c, { error: 'Campaign image must use https://, /assets/ or /media/.' }, 400);
+  const existing = await c.env.DB.prepare('SELECT id FROM campaign_pages WHERE slug = ? LIMIT 1').bind(slug).first();
+  if (existing) return json(c, { error: `The link /campaign/${slug} is already used by another campaign. Pick a different name.` }, 409);
+  const created = await c.env.DB.prepare('INSERT INTO campaign_pages(slug,title,eyebrow,description,image_url,meta_title,meta_description,cta_label,cta_url,product_ids_json,active,starts_at,ends_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id')
+    .bind(slug, title, normalize(body.eyebrow).slice(0, 100), normalize(body.description).slice(0, 1200), imageUrl || null, normalize(body.metaTitle).slice(0, 160) || null, normalize(body.metaDescription).slice(0, 320) || null, normalize(body.ctaLabel).slice(0, 80) || 'Shop now', normalize(body.ctaUrl).slice(0, 240) || '#campaign-products', JSON.stringify(parseCampaignProductIds(body.productIds)), body.active ? 1 : 0, normalize(body.startsAt) || null, normalize(body.endsAt) || null)
+    .first<{ id: number }>();
+  return json(c, { ok: true, id: created?.id, slug, url: `${new URL(c.req.url).origin}/campaign/${slug}` }, 201);
 });
+
 app.patch('/api/admin/campaigns/:id', async (c) => {
-  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401); const id = Number(c.req.param('id')); if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid campaign id.' }, 400); const body = await c.req.json<Record<string, unknown>>(); const active = body.active ? 1 : 0; await c.env.DB.prepare('UPDATE campaign_pages SET title=COALESCE(?,title), description=COALESCE(?,description), image_url=COALESCE(?,image_url), cta_label=COALESCE(?,cta_label), cta_url=COALESCE(?,cta_url), active=?, starts_at=?, ends_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(normalize(body.title) || null, normalize(body.description) || null, normalize(body.imageUrl) || null, normalize(body.ctaLabel) || null, normalize(body.ctaUrl) || null, active, normalize(body.startsAt) || null, normalize(body.endsAt) || null, id).run(); return json(c, { ok: true });
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid campaign id.' }, 400);
+  const body = await c.req.json<Record<string, unknown>>();
+  const campaign = await c.env.DB.prepare(`SELECT ${CAMPAIGN_COLUMNS} FROM campaign_pages WHERE id = ? LIMIT 1`).bind(id).first<CampaignRow>();
+  if (!campaign) return json(c, { error: 'Campaign not found.' }, 404);
+  // Only the fields present in the request change — a pause toggle must not wipe the schedule.
+  const keep = <T>(key: string, current: T, next: T) => (body[key] === undefined ? current : next);
+  const slug = body.slug === undefined ? campaign.slug : campaignSlug(body.slug) || campaign.slug;
+  if (slug !== campaign.slug) {
+    const clash = await c.env.DB.prepare('SELECT id FROM campaign_pages WHERE slug = ? AND id <> ? LIMIT 1').bind(slug, id).first();
+    if (clash) return json(c, { error: `The link /campaign/${slug} is already used by another campaign.` }, 409);
+  }
+  const imageUrl = keep('imageUrl', campaign.imageUrl, normalize(body.imageUrl) || null);
+  if (imageUrl && !campaignImageOk(imageUrl)) return json(c, { error: 'Campaign image must use https://, /assets/ or /media/.' }, 400);
+  await c.env.DB.prepare('UPDATE campaign_pages SET slug=?, title=?, eyebrow=?, description=?, image_url=?, meta_title=?, meta_description=?, cta_label=?, cta_url=?, product_ids_json=?, active=?, starts_at=?, ends_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    .bind(
+      slug,
+      keep('title', campaign.title, normalize(body.title).slice(0, 160) || campaign.title),
+      keep('eyebrow', campaign.eyebrow, normalize(body.eyebrow).slice(0, 100) || null),
+      keep('description', campaign.description, normalize(body.description).slice(0, 1200) || null),
+      imageUrl,
+      keep('metaTitle', campaign.metaTitle, normalize(body.metaTitle).slice(0, 160) || null),
+      keep('metaDescription', campaign.metaDescription, normalize(body.metaDescription).slice(0, 320) || null),
+      keep('ctaLabel', campaign.ctaLabel, normalize(body.ctaLabel).slice(0, 80) || 'Shop now'),
+      keep('ctaUrl', campaign.ctaUrl, normalize(body.ctaUrl).slice(0, 240) || '#campaign-products'),
+      keep('productIds', campaign.productIdsJson || '[]', JSON.stringify(parseCampaignProductIds(body.productIds))),
+      keep('active', Number(campaign.active) ? 1 : 0, body.active ? 1 : 0),
+      keep('startsAt', campaign.startsAt, normalize(body.startsAt) || null),
+      keep('endsAt', campaign.endsAt, normalize(body.endsAt) || null),
+      id,
+    ).run();
+  return json(c, { ok: true, id, slug, url: `${new URL(c.req.url).origin}/campaign/${slug}` });
+});
+
+app.delete('/api/admin/campaigns/:id', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid campaign id.' }, 400);
+  await c.env.DB.prepare('DELETE FROM campaign_pages WHERE id = ?').bind(id).run();
+  return json(c, { ok: true });
 });
 
 app.get('/api/admin/settings', async (c) => {
@@ -1268,7 +1392,7 @@ app.put('/api/admin/settings', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const body = await c.req.json<Record<string, string>>();
-  const allowed = new Set(['store_name','tagline','support_phone','support_email','currency_code','currency_symbol','delivery_inside_dhaka','delivery_outside_dhaka','delivery_emergency','free_delivery_over','order_whatsapp_number','bkash_number','nagad_number','rocket_number','tax_percentage','site_description','site_logo_url','favicon_url','payment_cod_enabled','payment_bkash_enabled','payment_bkash_instructions']);
+  const allowed = new Set(['store_name','tagline','support_phone','support_email','currency_code','currency_symbol','delivery_inside_dhaka','delivery_outside_dhaka','delivery_emergency','delivery_partner','free_delivery_over','order_whatsapp_number','bkash_number','nagad_number','rocket_number','tax_percentage','site_description','site_logo_url','favicon_url','payment_cod_enabled','payment_bkash_enabled','payment_bkash_instructions']);
   for (const [key, value] of Object.entries(body)) if (allowed.has(key)) await c.env.DB.prepare("INSERT INTO store_settings(setting_key, setting_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP").bind(key, normalize(value)).run();
   return json(c, { ok: true, updatedBy: username });
 });
@@ -1344,7 +1468,7 @@ app.get('/api/admin/orders', async (c) => {
   const values: string[] = [];
   if (status) { condition.push('o.status = ?'); values.push(status); }
   if (query) { condition.push('(o.order_code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
-  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, printf('RNV-%06d', o.id) AS invoiceNumber, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
   return json(c, { orders: result.results });
 });
 
@@ -1486,10 +1610,10 @@ app.post('/api/admin/products/sku/:sku/stock', async (c) => {
 app.get('/api/health', (c) => json(c, { ok: true, service: c.env.SHOP_NAME, timestamp: new Date().toISOString() }));
 
 app.get('/api/config', async (c) => {
-  const [fees, paymentMethods] = await Promise.all([deliveryFeeTable(c.env), resolvePaymentMethods(c.env)]);
+  const [fees, paymentMethods, partner] = await Promise.all([deliveryFeeTable(c.env), resolvePaymentMethods(c.env), resolveDeliveryPartner(c.env)]);
   return json(c, {
     shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS },
-    delivery: { dhaka: fees.dhaka, outsideDhaka: fees['outside-dhaka'], emergency: fees.emergency, partner: 'Steadfast', customerCanSelect: false },
+    delivery: { dhaka: fees.dhaka, outsideDhaka: fees['outside-dhaka'], emergency: fees.emergency, partner: partner.name, partnerId: partner.id, customerCanSelect: false },
     paymentMethods,
   });
 });
@@ -1502,7 +1626,7 @@ app.get('/api/customer-tracking', async (c) => {
   const order = orderCode
     ? await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>()
     : invoiceNumber
-      ? await c.env.DB.prepare("SELECT o.order_code AS orderCode, printf('RNV-%06d', o.id) AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('RNV-%06d', o.id) = ?").bind(invoiceNumber, invoiceNumber).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>()
+      ? await c.env.DB.prepare("SELECT o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ?").bind(invoiceNumber, invoiceNumber, invoiceNumber).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>()
       : await c.env.DB.prepare('SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.courier_provider AS courierProvider, o.courier_tracking_code AS trackingCode, o.courier_last_status AS courierStatus, o.courier_last_updated AS lastUpdated, o.created_at AS createdAt, c.phone FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.phone = ? ORDER BY o.created_at DESC LIMIT 1').bind(phone).first<{ orderCode: string; invoiceNumber: string; status: string; courierProvider: string | null; trackingCode: string | null; courierStatus: string | null; lastUpdated: string | null; createdAt: string; phone: string }>();
   if (!order || (orderCode && phone && order.phone !== phone)) return json(c, { error: 'Order not found.' }, 404);
   const courierStatus = order.courierStatus ?? (order.status === 'delivered' ? 'delivered' : order.status);
@@ -1616,9 +1740,66 @@ function applyProductSeo(html: string, origin: string, product: { name: string; 
 
 
 app.get('/campaign/:slug', async (c) => {
-  const slug = normalize(c.req.param('slug')).toLowerCase(); const campaign = await c.env.DB.prepare('SELECT id, slug, title, eyebrow, description, image_url AS imageUrl, cta_label AS ctaLabel, cta_url AS ctaUrl, product_ids_json AS productIdsJson, active, starts_at AS startsAt, ends_at AS endsAt FROM campaign_pages WHERE slug = ? LIMIT 1').bind(slug).first<any>();
-  const now = Date.now(); const active = campaign && Number(campaign.active) === 1 && (!campaign.startsAt || new Date(campaign.startsAt).getTime() <= now) && (!campaign.endsAt || new Date(campaign.endsAt).getTime() >= now);
-  if (!active) return c.text('Campaign not available.', 404); if (!c.env.ASSETS) return c.text('Storefront assets are unavailable.', 503); const asset = await c.env.ASSETS.fetch(new Request(new URL('/campaign.html', c.req.url), c.req.raw)); if (!asset.ok) return asset; const html = await asset.text(); const safe = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' } as Record<string,string>)[char]); const settings = await c.env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('tracking_gtm_id','tracking_ga4_measurement_id','tracking_meta_pixel_id')").all<{ key: string; value: string }>(); const tracking = Object.fromEntries(settings.results.map((row) => [row.key, row.value])); const products = await c.env.DB.prepare('SELECT id, name, slug, sku, price, image_url AS imageUrl FROM products WHERE active = 1 ORDER BY featured DESC, updated_at DESC LIMIT 48').all(); const payload = { campaign: { slug: campaign.slug, title: campaign.title, eyebrow: campaign.eyebrow, description: campaign.description, imageUrl: campaign.imageUrl, ctaLabel: campaign.ctaLabel, ctaUrl: campaign.ctaUrl }, products: products.results, tracking }; const output = html.replace('<title>Rinova BD Campaign</title>', '<title>' + safe(campaign.title) + ' · Rinova BD</title>').replace('<script id="campaign-data" type="application/json"></script>', '<script id="campaign-data" type="application/json">' + safe(JSON.stringify(payload)) + '</script>'); return new Response(output, { headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' } });
+  const slug = normalize(c.req.param('slug')).toLowerCase();
+  const campaign = await c.env.DB.prepare(`SELECT ${CAMPAIGN_COLUMNS} FROM campaign_pages WHERE slug = ? LIMIT 1`).bind(slug).first<CampaignRow>();
+  if (!campaign) return c.text('Campaign not available.', 404);
+  // A paused campaign still has to be openable by the owner, otherwise it cannot be checked before going live.
+  const preview = c.req.query('preview') === '1' && Boolean(await adminPrincipal(c));
+  if (!campaignIsLive(campaign) && !preview) return c.text('Campaign not available.', 404);
+  if (!c.env.ASSETS) return c.text('Storefront assets are unavailable.', 503);
+  const asset = await fetchAssetHtml(c.env, c.req.url, '/campaign-template.html');
+  if (!asset.ok) return asset;
+  const html = await asset.text();
+  const safe = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' } as Record<string, string>)[char]);
+  const settings = await c.env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('tracking_gtm_id','tracking_ga4_measurement_id','tracking_meta_pixel_id')").all<{ key: string; value: string }>();
+  const tracking = Object.fromEntries(settings.results.map((row) => [row.key, row.value]));
+
+  // Show the products the owner picked, in the order they picked them; fall back to the
+  // featured catalogue only when no selection was made.
+  const chosenIds = parseCampaignProductIds(campaign.productIdsJson);
+  const products = chosenIds.length
+    ? await c.env.DB.prepare(`SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, image_url AS imageUrl FROM products WHERE active = 1 AND id IN (${chosenIds.map(() => '?').join(',')})`).bind(...chosenIds).all()
+    : await c.env.DB.prepare('SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, image_url AS imageUrl FROM products WHERE active = 1 ORDER BY featured DESC, updated_at DESC LIMIT 24').all();
+  const ordered = chosenIds.length
+    ? chosenIds.map((id) => products.results.find((product) => Number((product as { id: number }).id) === id)).filter(Boolean)
+    : products.results;
+
+  const origin = new URL(c.req.url).origin;
+  const canonical = `${origin}/campaign/${campaign.slug}`;
+  const metaTitle = normalize(campaign.metaTitle) || `${campaign.title} · ${c.env.SHOP_NAME}`;
+  const metaDescription = normalize(campaign.metaDescription) || normalize(campaign.description).slice(0, 200) || `Shop the ${campaign.title} edit from ${c.env.SHOP_NAME}.`;
+  const rawImage = normalize(campaign.imageUrl);
+  const socialImage = rawImage ? (/^https?:\/\//i.test(rawImage) ? rawImage : `${origin}${rawImage}`) : `${origin}/assets/rinova-bd-hero-pink.png`;
+  // Meta's ad crawler does not run JavaScript, so the social card has to be in the served HTML.
+  const head = [
+    `<title>${safe(metaTitle)}</title>`,
+    `<meta name="description" content="${safe(metaDescription)}">`,
+    `<link rel="canonical" href="${safe(canonical)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="${safe(c.env.SHOP_NAME)}">`,
+    `<meta property="og:title" content="${safe(metaTitle)}">`,
+    `<meta property="og:description" content="${safe(metaDescription)}">`,
+    `<meta property="og:url" content="${safe(canonical)}">`,
+    `<meta property="og:image" content="${safe(socialImage)}">`,
+    `<meta property="og:image:width" content="1080">`,
+    `<meta property="og:image:height" content="1080">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${safe(metaTitle)}">`,
+    `<meta name="twitter:description" content="${safe(metaDescription)}">`,
+    `<meta name="twitter:image" content="${safe(socialImage)}">`,
+  ].join('');
+
+  const payload = {
+    campaign: { slug: campaign.slug, title: campaign.title, eyebrow: campaign.eyebrow, description: campaign.description, imageUrl: campaign.imageUrl, ctaLabel: campaign.ctaLabel || 'Shop now', ctaUrl: campaign.ctaUrl || '#campaign-products', url: canonical, preview: preview && !campaignIsLive(campaign) },
+    products: ordered,
+    tracking,
+  };
+  const output = html
+    .replace('<title>Rinova BD Campaign</title>', head)
+    // An ad landing page has to be indexable for the crawler to fetch its card.
+    .replace('<meta name="robots" content="noindex,nofollow">', preview ? '<meta name="robots" content="noindex,nofollow">' : '<meta name="robots" content="index,follow">')
+    .replace('<script id="campaign-data" type="application/json"></script>', '<script id="campaign-data" type="application/json">' + safe(JSON.stringify(payload)) + '</script>');
+  return new Response(output, { headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': preview ? 'no-store' : 'public, max-age=60' } });
 });
 
 app.get('/products/:slug', async (c) => {
@@ -1706,7 +1887,7 @@ app.get('/api/delivery-fee', async (c) => {
   const zone = emergency ? 'emergency' : location?.zone ?? (district.toLowerCase() === 'dhaka' ? 'dhaka' : 'outside-dhaka');
   const fees = await deliveryFeeTable(c.env);
   const fee = fees[zone];
-  return json(c, { district, upazila, zone, fee, partner: 'Steadfast', label: zone === 'dhaka' ? 'Dhaka-এর ভিতরে' : zone === 'outside-dhaka' ? 'Dhaka-এর বাইরে' : 'Emergency delivery', customerCanSelect: false });
+  return json(c, { district, upazila, zone, fee, partner: (await resolveDeliveryPartner(c.env)).name, label: zone === 'dhaka' ? 'Dhaka-এর ভিতরে' : zone === 'outside-dhaka' ? 'Dhaka-এর বাইরে' : 'Emergency delivery', customerCanSelect: false });
 });
 
 app.get('/api/customers/:phone/trust', async (c) => {
@@ -1789,7 +1970,7 @@ app.patch('/api/orders/:orderCode/status', async (c) => {
 
 app.get('/api/orders/:orderIdentifier', async (c) => {
   const identifier = normalize(c.req.param('orderIdentifier'));
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, printf('RNV-%06d', o.id) AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(identifier, identifier, identifier).first();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(identifier, identifier, identifier, identifier).first();
   if (!order) return json(c, { error: 'Order not found.' }, 404);
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku AS sku FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id').bind((order as { id: number }).id).all();
   return json(c, { order, items: items.results });
