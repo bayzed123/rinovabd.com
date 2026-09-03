@@ -39,7 +39,7 @@ async function copyToClipboard(text, successMessage = 'Copied to clipboard') {
 // Product editor helpers: gallery tiles, bulk-price rows and category-aware
 // option fields. The owner never sees or types JSON — hidden inputs carry it.
 // ---------------------------------------------------------------------------
-const editorState = { media: [], tiers: [], options: { size: [], color: [] }, details: {}, variantPrices: {}, faq: [] };
+const editorState = { media: [], tiers: [], options: { size: [], color: [] }, details: {}, variantPrices: {}, variantStock: {}, faq: [] };
 
 const CLOTHING_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Free size'];
 const CLOTHING_COLORS = ['Black', 'White', 'Red', 'Maroon', 'Pink', 'Blue', 'Navy', 'Green', 'Yellow', 'Beige', 'Brown', 'Grey', 'Golden', 'Multicolour'];
@@ -225,28 +225,56 @@ function renderVariantPrices() {
   if (!host) return;
   const sizes = editorState.options.size || [];
   if (!sizes.length) {
-    host.innerHTML = '<p class="muted">সাইজ যোগ করলে এখানে প্রতিটি সাইজের দাম বসানোর ঘর আসবে। (Add a size above to set its price.)</p>';
+    host.innerHTML = '<p class="muted">সাইজ যোগ করলে এখানে প্রতিটি সাইজের দাম ও স্টক বসানোর ঘর আসবে। (Add a size above to set its price and stock.)</p>';
     return;
   }
   const base = Number(document.querySelector('#product-form [name="price"]')?.value || 0);
-  host.innerHTML = `<div class="variant-price-grid">${sizes.map((label) => {
-    const value = editorState.variantPrices[label];
-    return `<label class="variant-price-row"><span>${escapeHtml(label)}</span><input type="number" min="0" step="1" inputmode="numeric" data-variant-price="${escapeHtml(label)}" value="${value === undefined || value === null || value === '' ? '' : Number(value)}" placeholder="${base || 'দাম'}" /></label>`;
-  }).join('')}</div><p class="muted">খালি রাখলে প্রোডাক্টের মূল দাম প্রযোজ্য হবে। (Empty = the product's base price.)</p>`;
+  host.innerHTML = `<div class="variant-price-grid variant-price-grid-stock"><span class="variant-price-head">সাইজ</span><span class="variant-price-head">দাম (৳)</span><span class="variant-price-head">স্টক (Qty)</span>${sizes.map((label) => {
+    const price = editorState.variantPrices[label];
+    const stock = editorState.variantStock[label];
+    return `<span class="variant-price-label">${escapeHtml(label)}</span><input type="number" min="0" step="1" inputmode="numeric" data-variant-price="${escapeHtml(label)}" aria-label="Price for ${escapeHtml(label)}" value="${price === undefined || price === null || price === '' ? '' : Number(price)}" placeholder="${base || 'দাম'}" /><input type="number" min="0" step="1" inputmode="numeric" data-variant-stock="${escapeHtml(label)}" aria-label="Stock for ${escapeHtml(label)}" value="${stock === undefined || stock === null || stock === '' ? '' : Number(stock)}" placeholder="0" />`;
+  }).join('')}</div><p class="muted">দাম খালি রাখলে প্রোডাক্টের মূল দাম প্রযোজ্য হবে। স্টক দিলে সেই সাইজ শেষ হলে কাস্টমার আর অর্ডার দিতে পারবে না; সব সাইজ ০ রাখলে শুধু মূল স্টক গোনা হবে। (Empty price = the base price. Enter stock to count each size on its own.)</p>`;
   host.querySelectorAll('[data-variant-price]').forEach((input) => input.addEventListener('input', () => {
     const label = input.dataset.variantPrice;
     const raw = input.value.trim();
     if (raw === '') delete editorState.variantPrices[label];
     else editorState.variantPrices[label] = Math.max(0, Number(raw) || 0);
   }));
+  host.querySelectorAll('[data-variant-stock]').forEach((input) => input.addEventListener('input', () => {
+    const label = input.dataset.variantStock;
+    const raw = input.value.trim();
+    if (raw === '') delete editorState.variantStock[label];
+    else editorState.variantStock[label] = Math.max(0, Math.floor(Number(raw) || 0));
+  }));
 }
 
-/** What the API stores: one row per size (with its price) and one per colour. */
+/** What the API stores: one row per size (with its price and stock) and one per colour. */
 function editorVariantsPayload() {
-  const sizes = (editorState.options.size || []).map((label) => ({ kind: 'size', label, price: editorState.variantPrices[label] ?? null }));
-  const colors = (editorState.options.color || []).map((label) => ({ kind: 'color', label, price: null }));
+  const sizes = (editorState.options.size || []).map((label) => ({ kind: 'size', label, price: editorState.variantPrices[label] ?? null, stock: editorState.variantStock[label] ?? 0 }));
+  const colors = (editorState.options.color || []).map((label) => ({ kind: 'color', label, price: null, stock: 0 }));
   return [...sizes, ...colors];
 }
+
+/**
+ * Shows what the offer does to the price before it is saved. A percentage the owner cannot see
+ * the effect of is a percentage they will get wrong once.
+ */
+function renderOfferPreview() {
+  const node = document.getElementById('product-offer-preview');
+  if (!node) return;
+  const percent = Math.max(0, Math.min(99, Math.round(Number(document.getElementById('product-discount-percent')?.value || 0))));
+  const price = Math.max(0, Number(document.querySelector('#product-form [name="price"]')?.value || 0));
+  const ends = String(document.getElementById('product-discount-ends')?.value || '').trim();
+  if (!percent) { node.textContent = 'অফার বন্ধ আছে। (No offer — the product sells at its normal price.)'; node.className = 'offer-preview muted'; return; }
+  const now = Math.max(0, Math.round((price * (100 - percent)) / 100));
+  const expired = ends && Date.parse(`${ends}T23:59:59Z`) < Date.now();
+  node.textContent = expired
+    ? `এই তারিখ পেরিয়ে গেছে, তাই অফারটি এখন বন্ধ। (The end date has passed, so this offer is not running.)`
+    : `কাস্টমার দেখবে ${money(now)} (আগের দাম ${money(price)}), ${percent}% ছাড়${ends ? `, ${ends} পর্যন্ত` : ''}।`;
+  node.className = expired ? 'offer-preview warn' : 'offer-preview ok';
+}
+['product-discount-percent', 'product-discount-label', 'product-discount-ends'].forEach((id) => document.getElementById(id)?.addEventListener('input', renderOfferPreview));
+document.querySelector('#product-form [name="price"]')?.addEventListener('input', renderOfferPreview);
 
 /** The product FAQ used to be the same four hard-coded questions on every product. */
 function renderFaqRows() {
@@ -265,13 +293,22 @@ document.querySelector('#product-form [name="price"]')?.addEventListener('input'
 /** Pull saved variants and FAQ back when an existing product is opened. */
 async function loadEditorExtras(sku) {
   editorState.variantPrices = {};
+  editorState.variantStock = {};
   editorState.faq = [];
   if (sku) {
     try {
       const data = await api(`/admin/products/sku/${encodeURIComponent(sku)}/detail`);
       for (const variant of data.variants || []) {
-        if (variant.kind === 'size' && variant.price !== null && variant.price !== undefined) editorState.variantPrices[variant.label] = Number(variant.price);
+        const group = variant.kind === 'color' ? 'color' : 'size';
+        // A size saved as a priced variant might never have reached specs_json. The storefront
+        // already merges both lists; without this the editor showed no row for it, so its price
+        // and stock were invisible and a save would have deleted them.
+        if (variant.label && !editorState.options[group].includes(variant.label)) editorState.options[group].push(variant.label);
+        if (variant.kind !== 'size') continue;
+        if (variant.price !== null && variant.price !== undefined) editorState.variantPrices[variant.label] = Number(variant.price);
+        if (Number(variant.stock || 0) > 0) editorState.variantStock[variant.label] = Number(variant.stock);
       }
+      renderProductOptions();
       editorState.faq = (data.faq || []).map((row) => ({ question: row.question || '', answer: row.answer || '' }));
     } catch {
       // A new product, or the detail call failed; the editor still opens with empty extras.
@@ -429,7 +466,7 @@ async function loadOrders() {
     const narrowed = Boolean(query.trim() || status);
     const shown = narrowed ? all : all.slice(0, ORDER_PAGE_SIZE);
     const statuses = Object.keys(ORDER_STATUS_LOOK);
-    $('#orders-table').innerHTML = shown.map((order) => `<tr><td><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><small>Order ${escapeHtml(order.orderCode)}</small><small>${escapeHtml(order.createdAt)}</small></td><td><strong>${escapeHtml(order.name)}</strong><small>${escapeHtml(order.phone)}</small></td><td>${money(Math.max(0, Number(order.subtotal) - Number(order.discount || 0)) + Number(order.deliveryFee))}${Number(order.discount || 0) ? `<small>after -${money(order.discount)}${order.offerCode ? ` ${escapeHtml(order.offerCode)}` : ''}</small>` : ''}</td><td>${escapeHtml(order.paymentMethod)}<small>${escapeHtml(order.paymentStatus)}</small></td><td>${escapeHtml(order.courierStatus || 'not booked')}</td><td><div class="order-status-cell">${orderStatusPill(order.status)}<select class="order-status-select" data-order-code="${escapeHtml(order.orderCode)}" aria-label="Change status for ${escapeHtml(order.orderCode)}">${statuses.map((value) => `<option value="${value}" ${value === order.status ? 'selected' : ''}>${escapeHtml(ORDER_STATUS_LOOK[value].label)}</option>`).join('')}</select></div></td><td>${escapeHtml(order.address || order.district || '')}${order.customerNote ? `<small>Note: ${escapeHtml(order.customerNote)}</small>` : ''}<div class="order-row-actions"><button class="icon-action" type="button" data-order-details="${escapeHtml(order.orderCode)}">Edit / details</button><button class="icon-action" type="button" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No orders found.</td></tr>';
+    $('#orders-table').innerHTML = shown.map((order) => `<tr><td><button type="button" class="order-invoice-button" data-order-copy="${escapeHtml(order.orderCode)}" title="Show customer details to copy"><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><span class="order-invoice-hint">tap to copy details</span></button><small>Order ${escapeHtml(order.orderCode)}</small><small>${escapeHtml(order.createdAt)}</small></td><td><strong>${escapeHtml(order.name)}</strong><small>${escapeHtml(order.phone)}</small></td><td>${money(Math.max(0, Number(order.subtotal) - Number(order.discount || 0)) + Number(order.deliveryFee))}${Number(order.discount || 0) ? `<small>after -${money(order.discount)}${order.offerCode ? ` ${escapeHtml(order.offerCode)}` : ''}</small>` : ''}</td><td>${escapeHtml(order.paymentMethod)}<small>${escapeHtml(order.paymentStatus)}</small></td><td>${escapeHtml(order.courierStatus || 'not booked')}</td><td><div class="order-status-cell">${orderStatusPill(order.status)}<select class="order-status-select" data-order-code="${escapeHtml(order.orderCode)}" aria-label="Change status for ${escapeHtml(order.orderCode)}">${statuses.map((value) => `<option value="${value}" ${value === order.status ? 'selected' : ''}>${escapeHtml(ORDER_STATUS_LOOK[value].label)}</option>`).join('')}</select></div></td><td>${escapeHtml(order.address || order.district || '')}${order.customerNote ? `<small>Note: ${escapeHtml(order.customerNote)}</small>` : ''}<div class="order-row-actions"><button class="icon-action" type="button" data-order-details="${escapeHtml(order.orderCode)}">Edit / details</button><button class="icon-action" type="button" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No orders found.</td></tr>';
     const hint = $('#orders-hint');
     if (hint) {
       hint.textContent = narrowed
@@ -712,8 +749,8 @@ async function loadSettings() {
 }
 
 function parseProductBadges(value) { let parsed = []; try { parsed = Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch {} return Array.isArray(parsed) ? parsed.map((item) => String(item).toLowerCase()).filter((item) => ['hot', 'stockout', 'out', 'instock', 'new'].includes(item)) : []; }
-function openProductEditor(product) { setAdminMode('edit'); const form = $('#product-form'); form.reset(); form.dataset.sku = product?.sku || ''; setEditorMedia(product?.mediaJson || '[]'); setEditorTiers(product?.volumeTiersJson || '[]'); setEditorOptions(product?.specsJson || '[]'); $('#editor-heading').textContent = product ? 'Edit product' : 'Create a product'; $('#product-submit').innerHTML = product ? 'Save changes <span>→</span>' : 'Create product <span>→</span>'; $('#product-form-message').textContent = ''; if ($('#upload-message')) $('#upload-message').textContent = ''; if (product) { for (const [key, value] of Object.entries({ name: product.name, sku: product.sku, brand: product.brand, categoryId: product.categoryId, shortDescription: product.shortDescription, description: product.description, editorNote: product.editorNote, costPrice: product.costPrice, price: product.price, compareAtPrice: product.compareAtPrice, stock: product.stock, lowStockThreshold: product.lowStockThreshold, minOrderQty: product.minOrderQty, weightGrams: product.weightGrams, barcode: product.barcode, imageUrl: product.imageUrl, status: product.status })) { const field = form.elements.namedItem(key); if (field) field.value = value ?? ''; } form.elements.namedItem('featured').checked = Boolean(product.featured); const badges = parseProductBadges(product.badgesJson || product.badges); form.elements.namedItem('badgeHot').checked = badges.includes('hot'); form.elements.namedItem('badgeStockOut').checked = badges.includes('stockout') || badges.includes('out') || badges.includes('instock'); form.elements.namedItem('badgeNew').checked = badges.includes('new'); } else { form.elements.namedItem('badgeHot').checked = false; form.elements.namedItem('badgeStockOut').checked = false; form.elements.namedItem('badgeNew').checked = false; } updateImagePreview(); renderProductOptions(); loadEditorExtras(product?.sku || ''); $('#product-editor').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-async function saveProduct(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.featured = form.elements.namedItem('featured').checked; data.badges = ['hot', 'stockout', 'new'].filter((badge) => form.elements.namedItem(`badge${badge === 'hot' ? 'Hot' : badge === 'stockout' ? 'StockOut' : 'New'}`).checked); data.volumeTiers = $('#product-volume-tiers')?.value || '[]'; data.mediaJson = JSON.stringify(editorState.media); data.specs = editorSpecsPayload(); data.variants = editorVariantsPayload(); data.faq = editorState.faq.filter((row) => String(row.question || '').trim() && String(row.answer || '').trim()); for (const key of ['categoryId','costPrice','price','stock','lowStockThreshold','minOrderQty','weightGrams']) data[key] = Number(data[key] || 0); data.compareAtPrice = optionalNumber(data.compareAtPrice); const sku = form.dataset.sku; try { if (sku) await api(`/admin/products/sku/${encodeURIComponent(sku)}`, { method: 'PATCH', body: JSON.stringify(data) }); else await api('/admin/products', { method: 'POST', body: JSON.stringify(data) }); $('#product-form-message').textContent = sku ? 'Product updated successfully.' : 'Product created successfully.'; toast(sku ? 'Product updated' : 'Product created'); await loadProducts(); } catch (error) { $('#product-form-message').textContent = error.message; } }
+function openProductEditor(product) { setAdminMode('edit'); const form = $('#product-form'); form.reset(); form.dataset.sku = product?.sku || ''; setEditorMedia(product?.mediaJson || '[]'); setEditorTiers(product?.volumeTiersJson || '[]'); setEditorOptions(product?.specsJson || '[]'); $('#editor-heading').textContent = product ? 'Edit product' : 'Create a product'; $('#product-submit').innerHTML = product ? 'Save changes <span>→</span>' : 'Create product <span>→</span>'; $('#product-form-message').textContent = ''; if ($('#upload-message')) $('#upload-message').textContent = ''; if (product) { for (const [key, value] of Object.entries({ name: product.name, sku: product.sku, brand: product.brand, categoryId: product.categoryId, shortDescription: product.shortDescription, description: product.description, editorNote: product.editorNote, costPrice: product.costPrice, price: product.price, compareAtPrice: product.compareAtPrice, stock: product.stock, lowStockThreshold: product.lowStockThreshold, minOrderQty: product.minOrderQty, weightGrams: product.weightGrams, barcode: product.barcode, imageUrl: product.imageUrl, status: product.status, discountPercent: Number(product.discountPercent || 0), discountLabel: product.discountLabel, discountEndsAt: product.discountEndsAt })) { const field = form.elements.namedItem(key); if (field) field.value = value ?? ''; } form.elements.namedItem('featured').checked = Boolean(product.featured); const badges = parseProductBadges(product.badgesJson || product.badges); form.elements.namedItem('badgeHot').checked = badges.includes('hot'); form.elements.namedItem('badgeStockOut').checked = badges.includes('stockout') || badges.includes('out') || badges.includes('instock'); form.elements.namedItem('badgeNew').checked = badges.includes('new'); } else { form.elements.namedItem('badgeHot').checked = false; form.elements.namedItem('badgeStockOut').checked = false; form.elements.namedItem('badgeNew').checked = false; for (const key of ['discountPercent', 'discountLabel', 'discountEndsAt']) { const field = form.elements.namedItem(key); if (field) field.value = key === 'discountPercent' ? '0' : ''; } } updateImagePreview(); renderProductOptions(); renderOfferPreview(); loadEditorExtras(product?.sku || ''); $('#product-editor').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+async function saveProduct(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.featured = form.elements.namedItem('featured').checked; data.badges = ['hot', 'stockout', 'new'].filter((badge) => form.elements.namedItem(`badge${badge === 'hot' ? 'Hot' : badge === 'stockout' ? 'StockOut' : 'New'}`).checked); data.volumeTiers = $('#product-volume-tiers')?.value || '[]'; data.mediaJson = JSON.stringify(editorState.media); data.specs = editorSpecsPayload(); data.variants = editorVariantsPayload(); data.faq = editorState.faq.filter((row) => String(row.question || '').trim() && String(row.answer || '').trim()); for (const key of ['categoryId','costPrice','price','stock','lowStockThreshold','minOrderQty','weightGrams']) data[key] = Number(data[key] || 0); data.discountPercent = Math.max(0, Math.min(99, Math.round(Number(data.discountPercent || 0)))); data.discountLabel = String(data.discountLabel || '').trim(); data.discountEndsAt = String(data.discountEndsAt || '').trim(); data.compareAtPrice = optionalNumber(data.compareAtPrice); const sku = form.dataset.sku; try { if (sku) await api(`/admin/products/sku/${encodeURIComponent(sku)}`, { method: 'PATCH', body: JSON.stringify(data) }); else await api('/admin/products', { method: 'POST', body: JSON.stringify(data) }); $('#product-form-message').textContent = sku ? 'Product updated successfully.' : 'Product created successfully.'; toast(sku ? 'Product updated' : 'Product created'); await loadProducts(); } catch (error) { $('#product-form-message').textContent = error.message; } }
 async function adjustStock(sku, name) { const quantity = window.prompt(`Stock change for ${name}. Use a positive or negative number:`); if (quantity === null) return; const reason = window.prompt('Reason: restock, return, damage, adjustment, sale or cancellation', 'adjustment'); if (reason === null) return; try { const data = await api(`/admin/products/sku/${encodeURIComponent(sku)}/stock`, { method: 'POST', body: JSON.stringify({ mode: 'delta', quantity: Number(quantity), reason, note: `Updated from dashboard for ${name}` }) }); toast(`Stock updated to ${data.stock}`); await loadProducts(); } catch (error) { toast(error.message); } }
 async function updateOrderStatus(orderCode, status) { try { await api(`/orders/${encodeURIComponent(orderCode)}/status`, { method: 'PATCH', body: JSON.stringify({ status, reason: 'Updated from admin dashboard' }) }); toast(`${orderCode} marked ${status}`); await loadOrders(); } catch (error) { toast(error.message); await loadOrders(); } }
 async function loadReturns() { try { const data = await api(`/admin/returns?status=${encodeURIComponent($('#return-status').value || '')}`); $('#returns-table').innerHTML = (data.returns || []).map((item) => `<tr><td><strong>${escapeHtml(item.returnCode)}</strong><small>${escapeHtml(item.createdAt)}</small></td><td>${escapeHtml(item.orderCode)}</td><td>${escapeHtml(item.name)}<small>${escapeHtml(item.phone)}</small></td><td>${escapeHtml(item.reason)}</td><td>${money(item.amount)}</td><td><select class="return-status-select" data-return-id="${item.id}">${['requested','approved','picked_up','received','refunded','rejected','cancelled'].map((status) => `<option ${status === item.status ? 'selected' : ''}>${status}</option>`).join('')}</select></td><td><button class="icon-action" data-print-order="${escapeHtml(item.orderCode)}">Invoice</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No returns found.</td></tr>'; } catch (error) { toast(error.message); } }
@@ -751,7 +788,10 @@ function editMarketingBanner(id) { const banner = (state.marketingBanners || [])
 async function saveMarketingBanner(event) { event.preventDefault(); const form = event.target; const values = marketingFormValues(form); const id = form.dataset.id; try { await api(id ? `/admin/marketing-banners/${id}` : '/admin/marketing-banners', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(values) }); $('#marketing-banner-message').textContent = id ? 'Banner updated.' : 'Banner saved.'; toast(id ? 'Banner updated' : 'Banner saved'); resetMarketingBanner(); await loadCms(); } catch (error) { $('#marketing-banner-message').textContent = error.message; } }
 async function uploadMarketingImage() { const input = $('#marketing-banner-file'); const file = input?.files?.[0]; const message = $('#marketing-upload-message'); if (!file) return toast('Choose a banner image first.'); message.textContent = 'Uploading banner image…'; try { const media = await uploadBlogMedia(file); if (media.type !== 'image') throw new Error('Banner image must be JPG, PNG or WEBP.'); $('#marketing-banner-form').elements.namedItem('imageUrl').value = media.url; updateMarketingPreview(); message.textContent = 'Banner image uploaded. Save the banner to apply it.'; input.value = ''; } catch (error) { message.textContent = error.message; } }
 function exportNewsletterCsv() { const leads = state.newsletterLeads || []; if (!leads.length) return toast('There are no newsletter leads to export.'); const csv = ['email,source,status,created_at,last_seen_at', ...leads.map((lead) => [lead.email, lead.source, lead.status, lead.createdAt, lead.lastSeenAt].map((value) => `"${String(value || '').replace(/"/g, '""')}"`).join(','))].join('\n'); const blob = new Blob([`\\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `rinova-newsletter-leads-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url); $('#newsletter-message').textContent = `Exported ${leads.length} lead${leads.length === 1 ? '' : 's'}.`; }
-async function loadCms() { try { const data = await api('/admin/content'); state.cmsPosts = data.posts || []; state.marketingBanners = data.banners || []; state.newsletterLeads = data.newsletter || []; const categorySelect = $('#marketing-category-select'); if (categorySelect) categorySelect.innerHTML = '<option value="">All categories</option>' + (data.categories || []).filter((category) => category.active !== 0 && category.active !== false).map((category) => `<option value="${escapeHtml(category.slug)}">${escapeHtml(category.name)}</option>`).join(''); const banner = data.content?.find((item) => item.key === 'topbar_notice'); if (banner) { const body = JSON.parse(banner.body || '{}'); $('#cms-banner-form [name="text"]').value = body.text || ''; } $('#cms-summary').innerHTML = `<div class="list-row"><span><strong>${(data.pages || []).length}</strong><small>Pages</small></span><span><strong>${(data.posts || []).length}</strong><small>Blog posts</small></span><span><strong>${(data.offers || []).length}</strong><small>Offers</small></span><span><strong>${(data.content || []).length}</strong><small>CMS blocks</small></span></div>`; $('#cms-post-list').innerHTML = (data.posts || []).map((post) => `<div class="list-row"><span><strong>${escapeHtml(post.title)}</strong><small>${escapeHtml(post.category || 'Uncategorised')} · ${escapeHtml(post.status)}</small></span><button type="button" class="icon-action" data-edit-post="${escapeHtml(post.slug)}">Edit</button></div>`).join('') || '<p class="muted">No blog posts yet.</p>'; renderMarketingBanners(); renderNewsletterLeads(); renderOfferList(data.offers || []); await loadMediaLibrary(); updateCmsSeoReadiness(); } catch (error) { toast(error.message); } }
+async function loadCms() { try { const data = await api('/admin/content');
+  // The offer form searches the catalogue, so it needs one even when Products was never opened.
+  if (!(state.products || []).length) { try { state.products = (await api('/admin/products')).products || []; } catch { state.products = state.products || []; } }
+  renderOfferProductChoices(); state.cmsPosts = data.posts || []; state.marketingBanners = data.banners || []; state.newsletterLeads = data.newsletter || []; const categorySelect = $('#marketing-category-select'); if (categorySelect) categorySelect.innerHTML = '<option value="">All categories</option>' + (data.categories || []).filter((category) => category.active !== 0 && category.active !== false).map((category) => `<option value="${escapeHtml(category.slug)}">${escapeHtml(category.name)}</option>`).join(''); const banner = data.content?.find((item) => item.key === 'topbar_notice'); if (banner) { const body = JSON.parse(banner.body || '{}'); $('#cms-banner-form [name="text"]').value = body.text || ''; } $('#cms-summary').innerHTML = `<div class="list-row"><span><strong>${(data.pages || []).length}</strong><small>Pages</small></span><span><strong>${(data.posts || []).length}</strong><small>Blog posts</small></span><span><strong>${(data.offers || []).length}</strong><small>Offers</small></span><span><strong>${(data.content || []).length}</strong><small>CMS blocks</small></span></div>`; $('#cms-post-list').innerHTML = (data.posts || []).map((post) => `<div class="list-row"><span><strong>${escapeHtml(post.title)}</strong><small>${escapeHtml(post.category || 'Uncategorised')} · ${escapeHtml(post.status)}</small></span><button type="button" class="icon-action" data-edit-post="${escapeHtml(post.slug)}">Edit</button></div>`).join('') || '<p class="muted">No blog posts yet.</p>'; renderMarketingBanners(); renderNewsletterLeads(); renderOfferList(data.offers || []); await loadMediaLibrary(); updateCmsSeoReadiness(); } catch (error) { toast(error.message); } }
 async function saveCmsBanner(event) { event.preventDefault(); try { await api('/admin/content/topbar_notice', { method: 'PUT', body: JSON.stringify({ type: 'banner', title: 'Topbar notice', body: { text: event.target.elements.text.value }, status: 'published' }) }); $('#cms-banner-message').textContent = 'Banner saved.'; } catch (error) { $('#cms-banner-message').textContent = error.message; } }
 async function saveCmsPage(event) { event.preventDefault(); const values = Object.fromEntries(new FormData(event.target).entries()); try { await api('/admin/pages', { method: 'POST', body: JSON.stringify(values) }); $('#cms-page-message').textContent = 'Page saved.'; loadCms(); } catch (error) { $('#cms-page-message').textContent = error.message; } }
 async function saveCmsPost(event) { event.preventDefault(); const form = event.target; const values = Object.fromEntries(new FormData(form).entries()); const action = event.submitter?.dataset.postAction || 'draft'; values.status = action === 'publish' ? 'published' : 'draft'; values.priority = Number(values.priority || 0); values.allowSearchEngines = form.elements.namedItem('allowSearchEngines').checked; values.imageUrl = values.coverImageUrl; const seo = blogSeoValues(form); if (action === 'publish' && !seo.ready) { $('#cms-post-message').textContent = 'Complete every SEO readiness item before publishing.'; updateCmsSeoReadiness(); return; } try { const data = await api('/admin/posts', { method: 'POST', body: JSON.stringify(values) }); $('#cms-post-message').textContent = action === 'publish' ? 'Post published successfully.' : 'Draft saved successfully.'; if (data.seo) updateCmsSeoReadiness(); await loadCms(); } catch (error) { $('#cms-post-message').textContent = error.message; if (error.seo) updateCmsSeoReadiness(); } }
@@ -767,16 +807,74 @@ async function saveCmsOffer(event) {
   if (values.discountType === 'percentage' && (values.discountValue <= 0 || values.discountValue > 100)) { $('#cms-offer-message').textContent = 'শতকরা ছাড় ১ থেকে ১০০ এর মধ্যে দিন। (A percentage must be between 1 and 100.)'; return; }
   if (values.discountType === 'fixed' && values.discountValue <= 0) { $('#cms-offer-message').textContent = 'ছাড়ের পরিমাণ শূন্যের বেশি দিন। (A fixed discount needs an amount above zero.)'; return; }
   if (!String(values.code || '').trim() && !values.autoApply) { $('#cms-offer-message').textContent = 'কুপন কোড দিন, অথবা "নিজে থেকেই" বেছে নিন। (Give a code, or set it to apply automatically.)'; return; }
+  values.productIds = offerProducts.chosen.map((product) => Number(product.id));
   try {
     await api('/admin/offers', { method: 'POST', body: JSON.stringify(values) });
-    $('#cms-offer-message').textContent = 'Offer saved and live.';
+    $('#cms-offer-message').textContent = values.productIds.length ? `Offer saved — it covers ${values.productIds.length} product${values.productIds.length === 1 ? '' : 's'}.` : 'Offer saved and live across the shop.';
     toast('Offer saved');
     event.target.reset();
+    offerProducts.chosen = [];
+    renderOfferProductChoices();
     loadCms();
   } catch (error) { $('#cms-offer-message').textContent = error.message; }
 }
 
+/**
+ * Choosing which products an offer covers.
+ *
+ * An offer used to be all-or-nothing across the whole shop, so "20% off face wash" was not
+ * expressible: the owner had to discount everything or nothing. Searching the catalogue here
+ * and picking the products keeps that decision next to the offer that makes it.
+ */
+const offerProducts = { chosen: [] };
+function renderOfferProductChoices() {
+  const node = document.getElementById('offer-product-chosen');
+  if (!node) return;
+  node.innerHTML = offerProducts.chosen.length
+    ? offerProducts.chosen.map((product) => `<button type="button" class="offer-chip" data-offer-product-remove="${product.id}">${escapeHtml(product.name)}<span aria-hidden="true">✕</span><span class="sr-only">Remove</span></button>`).join('')
+      + '<p class="muted">শুধু এই প্রোডাক্টগুলোতেই ছাড় প্রযোজ্য হবে। (The discount applies only to these.)</p>'
+    : '<p class="muted">কোনো প্রোডাক্ট বাছা হয়নি — অফারটি পুরো দোকানে চলবে। (Nothing chosen: the offer covers the whole shop.)</p>';
+}
+function renderOfferProductResults(query) {
+  const node = document.getElementById('offer-product-results');
+  if (!node) return;
+  const term = String(query || '').trim().toLowerCase();
+  if (!term) { node.innerHTML = ''; return; }
+  const matches = (state.products || [])
+    .filter((product) => `${product.name} ${product.sku}`.toLowerCase().includes(term))
+    .filter((product) => !offerProducts.chosen.some((chosen) => Number(chosen.id) === Number(product.id)))
+    .slice(0, 8);
+  node.innerHTML = matches.length
+    ? matches.map((product) => `<button type="button" class="offer-result" data-offer-product-add="${product.id}"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.sku || '')} · ${money(product.price)}</small></button>`).join('')
+    : '<p class="muted">এই নামে কিছু পাওয়া যায়নি। (No product matches that.)</p>';
+}
+document.getElementById('offer-product-search')?.addEventListener('input', (event) => renderOfferProductResults(event.target.value));
+document.addEventListener('click', (event) => {
+  const add = event.target.closest('[data-offer-product-add]');
+  if (add) {
+    const product = (state.products || []).find((item) => Number(item.id) === Number(add.dataset.offerProductAdd));
+    if (product && !offerProducts.chosen.some((chosen) => Number(chosen.id) === Number(product.id))) offerProducts.chosen.push({ id: Number(product.id), name: product.name });
+    const search = document.getElementById('offer-product-search');
+    if (search) search.value = '';
+    renderOfferProductResults('');
+    renderOfferProductChoices();
+  }
+  const remove = event.target.closest('[data-offer-product-remove]');
+  if (remove) {
+    offerProducts.chosen = offerProducts.chosen.filter((chosen) => Number(chosen.id) !== Number(remove.dataset.offerProductRemove));
+    renderOfferProductChoices();
+  }
+});
+
 /** Shows how much of a coupon's allowance is gone, and lets the owner act on it. */
+function offerScopeText(offer) {
+  let ids = [];
+  try { ids = JSON.parse(offer.productIdsJson || '[]'); } catch { ids = []; }
+  if (!Array.isArray(ids) || !ids.length) return 'Whole shop';
+  const names = ids.map((id) => (state.products || []).find((product) => Number(product.id) === Number(id))?.name).filter(Boolean);
+  return escapeHtml(names.length ? `Only: ${names.join(', ')}` : `${ids.length} selected product${ids.length === 1 ? '' : 's'}`);
+}
+
 function renderOfferList(offers) {
   const node = $('#cms-offer-list');
   if (!node) return;
@@ -785,7 +883,7 @@ function renderOfferList(offers) {
     const used = Number(offer.usedCount || 0);
     const spent = limit > 0 && used >= limit;
     const discount = offer.discountType === 'percentage' ? `${offer.discountValue}%` : offer.discountType === 'free_delivery' ? 'Free delivery' : money(offer.discountValue);
-    return `<tr><td><strong>${escapeHtml(offer.code || 'Automatic')}</strong><small>${escapeHtml(offer.title || '')}</small>${Number(offer.minSubtotal) ? `<small>Minimum ${money(offer.minSubtotal)}</small>` : ''}</td><td>${escapeHtml(discount)}</td><td>${used}${limit > 0 ? ` / ${limit}` : ''}${spent ? ' <span class="order-pill order-pill-stop">Used up</span>' : ''}</td><td>${Number(offer.active) ? '<span class="order-pill order-pill-done">Active</span>' : '<span class="order-pill order-pill-wait">Paused</span>'}${Number(offer.autoApply) ? ' <span class="order-pill order-pill-info">Automatic</span>' : ''}</td><td><div class="order-row-actions"><button class="icon-action" type="button" data-offer-toggle="${offer.id}" data-active="${Number(offer.active) ? '0' : '1'}">${Number(offer.active) ? 'Pause' : 'Activate'}</button>${used ? `<button class="icon-action" type="button" data-offer-reset="${offer.id}">Reset count</button>` : ''}<button class="icon-action" type="button" data-offer-delete="${offer.id}" data-label="${escapeHtml(offer.code || offer.title || 'this offer')}">Delete</button></div></td></tr>`;
+    return `<tr><td><strong>${escapeHtml(offer.code || 'Automatic')}</strong><small>${escapeHtml(offer.title || '')}</small>${Number(offer.minSubtotal) ? `<small>Minimum ${money(offer.minSubtotal)}</small>` : ''}<small>${offerScopeText(offer)}</small></td><td>${escapeHtml(discount)}</td><td>${used}${limit > 0 ? ` / ${limit}` : ''}${spent ? ' <span class="order-pill order-pill-stop">Used up</span>' : ''}</td><td>${Number(offer.active) ? '<span class="order-pill order-pill-done">Active</span>' : '<span class="order-pill order-pill-wait">Paused</span>'}${Number(offer.autoApply) ? ' <span class="order-pill order-pill-info">Automatic</span>' : ''}</td><td><div class="order-row-actions"><button class="icon-action" type="button" data-offer-toggle="${offer.id}" data-active="${Number(offer.active) ? '0' : '1'}">${Number(offer.active) ? 'Pause' : 'Activate'}</button>${used ? `<button class="icon-action" type="button" data-offer-reset="${offer.id}">Reset count</button>` : ''}<button class="icon-action" type="button" data-offer-delete="${offer.id}" data-label="${escapeHtml(offer.code || offer.title || 'this offer')}">Delete</button></div></td></tr>`;
   }).join('')}</tbody></table>` : '<p class="muted">No offers yet. Create one on the left — give it a code, or set it to apply automatically.</p>';
 }
 
@@ -840,3 +938,48 @@ function renderStockHint() {
 document.querySelector('#product-form [name="stock"]')?.addEventListener('input', renderStockHint);
 $('#new-product')?.addEventListener('click', () => setTimeout(renderStockHint, 0));
 document.addEventListener('click', (event) => { if (event.target.closest('[data-edit-sku], [data-quick-edit-sku]')) setTimeout(renderStockHint, 0); });
+
+
+/**
+ * Packing an order needs the customer's name, phone and address to paste into the courier's
+ * form — nothing else. That used to mean opening the whole edit form, which invites accidental
+ * edits to a customer who has not made a mistake. Tapping the invoice number now shows just
+ * the copy block; editing stays one button further on, for when something is actually wrong.
+ */
+function courierCopyText(order) {
+  return [order.name, order.phone, [order.address, order.upazila, order.district].map((part) => String(part || '').trim()).filter(Boolean).join(', ')]
+    .map((line) => String(line || '').trim()).filter(Boolean).join('\n');
+}
+
+function showOrderCopy(orderCode) {
+  const order = (state.orders || []).find((entry) => String(entry.orderCode) === String(orderCode));
+  if (!order) return;
+  let panel = document.getElementById('order-copy-popover');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'order-copy-popover';
+    panel.className = 'order-copy-popover';
+    document.body.appendChild(panel);
+  }
+  const text = courierCopyText(order);
+  panel.innerHTML = `<div class="order-copy-card" role="dialog" aria-label="Customer details for ${escapeHtml(order.orderCode)}">
+    <div class="order-copy-head"><div><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><small>${escapeHtml(order.orderCode)}</small></div><button type="button" class="icon-action" data-copy-close>Close</button></div>
+    <pre class="order-copy-block" id="order-copy-quick">${escapeHtml(text)}</pre>
+    <div class="order-copy-actions">
+      <button type="button" class="button button-dark" data-copy-quick>Copy details</button>
+      <button type="button" class="icon-action" data-order-details="${escapeHtml(order.orderCode)}" data-copy-close>Edit details</button>
+      <button type="button" class="icon-action" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button>
+    </div>
+  </div>`;
+  panel.classList.add('open');
+}
+
+document.addEventListener('click', (event) => {
+  const open = event.target.closest('[data-order-copy]');
+  if (open) showOrderCopy(open.dataset.orderCopy);
+  if (event.target.closest('[data-copy-quick]')) copyToClipboard(document.getElementById('order-copy-quick')?.textContent || '', 'Customer details copied');
+  const panel = document.getElementById('order-copy-popover');
+  if (!panel || !panel.classList.contains('open')) return;
+  if (event.target.closest('[data-copy-close]') || event.target === panel) panel.classList.remove('open');
+});
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.getElementById('order-copy-popover')?.classList.remove('open'); });
