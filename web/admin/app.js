@@ -444,7 +444,20 @@ function settingsFieldMarkup(field, value) {
 // Team & support: staff dashboard logins, customer sign-in help, and the two
 // Google Sheets the shop writes to.
 // ---------------------------------------------------------------------------
-const teamState = { role: 'owner', questions: [], customers: [] };
+// The same list the Worker validates against. It is kept here as well so the dropdown is
+// never empty: it used to be filled only from the staff API, so any failure of that one
+// call left the question blank and every "Create staff login" was rejected by the server.
+const DEFAULT_SECURITY_QUESTIONS = ["Mother's name", 'Village or home town', 'First school name', 'Favourite colour', 'Pet name'];
+const teamState = { role: 'owner', questions: DEFAULT_SECURITY_QUESTIONS.slice(), customers: [] };
+
+function renderSecurityQuestions() {
+  const select = $('#staff-security-question');
+  if (!select) return;
+  const questions = teamState.questions.length ? teamState.questions : DEFAULT_SECURITY_QUESTIONS;
+  const chosen = select.value;
+  select.innerHTML = questions.map((question) => `<option value="${escapeHtml(question)}">${escapeHtml(question)}</option>`).join('');
+  if (chosen && questions.includes(chosen)) select.value = chosen;
+}
 
 async function loadTeamView() {
   await Promise.all([loadStaff(), loadSheets()]);
@@ -469,9 +482,8 @@ async function loadStaff() {
   try {
     const data = await api('/admin/staff');
     setTeamRole('owner', data.ownerUsername);
-    teamState.questions = data.securityQuestions || [];
-    const select = $('#staff-security-question');
-    if (select && !select.options.length) select.innerHTML = teamState.questions.map((question) => `<option value="${escapeHtml(question)}">${escapeHtml(question)}</option>`).join('');
+    if (Array.isArray(data.securityQuestions) && data.securityQuestions.length) teamState.questions = data.securityQuestions;
+    renderSecurityQuestions();
     const staff = data.staff || [];
     if (!list) return;
     list.innerHTML = staff.length ? staff.map((member) => `<article class="staff-row"><div class="staff-row-main"><div class="staff-row-title"><strong>${escapeHtml(member.username)}</strong><span class="status-pill ${Number(member.active) ? 'active' : 'archived'}">${Number(member.active) ? 'Active' : 'Disabled'}</span><span class="status-pill">${escapeHtml(member.role)}</span></div><small>${escapeHtml(member.displayName || 'No name set')} · security question: ${escapeHtml(member.securityQuestion)}</small><small>Created ${escapeHtml(String(member.createdAt || '').slice(0, 10))}${member.lastLoginAt ? ` · last signed in ${escapeHtml(String(member.lastLoginAt).slice(0, 10))}` : ' · never signed in'}</small></div><div class="staff-row-actions"><button class="icon-action" type="button" data-staff-password="${member.id}" data-username="${escapeHtml(member.username)}">New password</button><button class="icon-action" type="button" data-staff-toggle="${member.id}" data-active="${Number(member.active) ? '0' : '1'}">${Number(member.active) ? 'Disable' : 'Enable'}</button><button class="icon-action" type="button" data-staff-delete="${member.id}" data-username="${escapeHtml(member.username)}">Remove</button></div></article>`).join('') : '<p class="muted">No staff logins yet. Only your owner account can sign in.</p>';
@@ -493,8 +505,13 @@ async function loadStaff() {
     }));
   } catch (error) {
     // A staff member gets a 403 here; that is expected, not an error to shout about.
-    if (/owner/i.test(error.message)) { setTeamRole('staff'); if (list) list.innerHTML = ''; return; }
-    if (list) list.innerHTML = `<p class="form-message">${escapeHtml(error.message)}</p>`;
+    if (/only the shop owner/i.test(error.message)) { setTeamRole('staff'); if (list) list.innerHTML = ''; return; }
+    // Anything else is a real fault. The dropdown still has its built-in questions, so the
+    // form stays usable, but say plainly next to the button that the list could not load.
+    renderSecurityQuestions();
+    if (list) list.innerHTML = `<p class="form-message">Could not load the staff list: ${escapeHtml(error.message)}</p>`;
+    const message = $('#staff-message');
+    if (message) message.textContent = `Staff list unavailable (${error.message}). You can still try creating a login.`;
   }
 }
 
@@ -503,6 +520,14 @@ async function createStaff(event) {
   const form = event.target;
   const message = $('#staff-message');
   const values = Object.fromEntries(new FormData(form).entries());
+  // Check here what the Worker checks, so a rejection reads as plain advice rather than
+  // arriving as a bare 400 the owner has to interpret.
+  values.username = String(values.username || '').trim().toLowerCase();
+  if (!values.securityQuestion) { renderSecurityQuestions(); values.securityQuestion = $('#staff-security-question')?.value || ''; }
+  if (!/^[a-z0-9._-]{3,32}$/.test(values.username)) { message.textContent = 'Username must be 3-32 characters, using only letters, numbers, dot, dash or underscore — no spaces.'; return; }
+  if (String(values.password || '').length < 8) { message.textContent = 'Password must be at least 8 characters.'; return; }
+  if (!values.securityQuestion) { message.textContent = 'Choose a security question.'; return; }
+  if (String(values.securityAnswer || '').trim().length < 2) { message.textContent = 'Write the answer to the security question.'; return; }
   message.textContent = 'Creating…';
   try {
     await api('/admin/staff', { method: 'POST', body: JSON.stringify(values) });
@@ -648,3 +673,18 @@ $('#offline-label-download-json')?.addEventListener('click', () => downloadOffli
 $('#offline-label-print')?.addEventListener('click', printOfflineLabels);
 document.addEventListener('click', (event) => { const remove = event.target.closest('[data-offline-remove]'); if (remove) removeOfflineLabel(remove.dataset.offlineRemove); });
 document.addEventListener('change', (event) => { const quantity = event.target.closest('[data-offline-quantity]'); if (quantity) updateOfflineQuantity(quantity.dataset.offlineQuantity, quantity.value); });
+
+// A product saved with zero stock still appears in the shop, but "Add to bag" and "Buy now"
+// are disabled and the page reads "Stock out". That is correct behaviour and easy to hit by
+// accident on a brand-new product, so say it at the point the number is typed.
+function renderStockHint() {
+  const field = document.querySelector('#product-form [name="stock"]');
+  const hint = $('#stock-hint');
+  if (!field || !hint) return;
+  const empty = Number(field.value || 0) <= 0;
+  hint.textContent = empty ? 'Stock is 0 — customers will see "Stock out" and cannot buy this product. Set the quantity you have.' : '';
+  hint.classList.toggle('warn', empty);
+}
+document.querySelector('#product-form [name="stock"]')?.addEventListener('input', renderStockHint);
+$('#new-product')?.addEventListener('click', () => setTimeout(renderStockHint, 0));
+document.addEventListener('click', (event) => { if (event.target.closest('[data-edit-sku], [data-quick-edit-sku]')) setTimeout(renderStockHint, 0); });

@@ -105,8 +105,12 @@
     viewer.className = 'media-viewer';
     viewer.hidden = true;
     viewer.setAttribute('aria-hidden', 'true');
-    viewer.innerHTML = `<div class="media-viewer-backdrop" data-media-close></div><div class="media-viewer-dialog" role="dialog" aria-modal="true" aria-label="Product image viewer"><header class="media-viewer-head"><strong class="media-viewer-title"></strong><button type="button" class="media-viewer-close" data-media-close aria-label="Close image viewer"><span data-rinova-icon="close"></span></button></header><div class="media-viewer-stage"><button type="button" class="media-viewer-arrow media-viewer-prev" aria-label="Previous image"><span data-rinova-icon="arrowLeft"></span></button><div class="media-viewer-track"></div><button type="button" class="media-viewer-arrow media-viewer-next" aria-label="Next image"><span data-rinova-icon="arrowRight"></span></button></div><footer class="media-viewer-tools"><button type="button" data-media-zoom="out" aria-label="Zoom out"><span data-rinova-icon="minus"></span></button><span class="media-viewer-zoom">100%</span><button type="button" data-media-zoom="in" aria-label="Zoom in"><span data-rinova-icon="plus"></span></button><button type="button" data-media-zoom="reset">Reset</button><span class="media-viewer-hint">Swipe between images \u00b7 double-tap to zoom</span></footer></div>`;
+    viewer.innerHTML = `<div class="media-viewer-backdrop" data-media-close></div><div class="media-viewer-dialog" role="dialog" aria-modal="true" aria-label="Product image viewer"><header class="media-viewer-head"><strong class="media-viewer-title"></strong><button type="button" class="media-viewer-close" data-media-close aria-label="Close image viewer"><span data-rinova-icon="close"></span><span class="media-viewer-close-text">Close</span></button></header><div class="media-viewer-stage"><button type="button" class="media-viewer-arrow media-viewer-prev" aria-label="Previous image"><span data-rinova-icon="arrowLeft"></span></button><div class="media-viewer-track"></div><button type="button" class="media-viewer-arrow media-viewer-next" aria-label="Next image"><span data-rinova-icon="arrowRight"></span></button></div><footer class="media-viewer-tools"><button type="button" data-media-zoom="out" aria-label="Zoom out"><span data-rinova-icon="minus"></span></button><span class="media-viewer-zoom">100%</span><button type="button" data-media-zoom="in" aria-label="Zoom in"><span data-rinova-icon="plus"></span></button><button type="button" data-media-zoom="reset">Reset</button><span class="media-viewer-hint">Swipe between images \u00b7 double-tap to zoom</span></footer></div>`;
     document.body.appendChild(viewer);
+    // icons.js only hydrates [data-rinova-icon] once, at DOMContentLoaded. This markup is
+    // built lazily on first open, so without this call the close, arrow and zoom buttons
+    // render as empty shapes and the viewer looks like it has trapped the page.
+    window.RinovaIcons?.hydrate(viewer);
     track = viewer.querySelector('.media-viewer-track');
     title = viewer.querySelector('.media-viewer-title');
     zoomLabel = viewer.querySelector('.media-viewer-zoom');
@@ -213,7 +217,12 @@
   function updateControls() {
     viewer.querySelector('.media-viewer-prev').disabled = current <= 0;
     viewer.querySelector('.media-viewer-next').disabled = current >= slides.length - 1;
-    viewer.querySelector('.media-viewer-hint').textContent = slides.length > 1 ? `Image ${current + 1} of ${slides.length} \u00b7 Swipe or double-tap to zoom` : 'Click outside or press Esc to close';
+    // "Click" and "Esc" mean nothing on a phone, which is where most customers are.
+    const touch = window.matchMedia('(hover: none)').matches;
+    const dismiss = touch ? 'Tap Close when you are done' : 'Click outside or press Esc to close';
+    viewer.querySelector('.media-viewer-hint').textContent = slides.length > 1
+      ? `Image ${current + 1} of ${slides.length} \u00b7 ${touch ? 'Swipe or double-tap to zoom' : 'Use the arrows or double-click to zoom'}`
+      : dismiss;
   }
 
   /* Warm the adjacent images so paging never shows a decode flash. */

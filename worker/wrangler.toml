@@ -16,6 +16,9 @@ R2_ACCOUNT_ID = "710931da3f3edc974589714c31e1d1a2"
 R2_BUCKET_NAME = "rinovaimagesbuket"
 R2_PUBLIC_URL = "https://media.rinovabd.com"
 SHOP_ADDRESS = "Rajshahi Malopara Police Fhari, Rajshahi, Bangladesh - 6100"
+# Campaign pages are reached through the ads.rinovabd.com proxy Worker, which lives in the
+# account that owns the zone. This is the link the dashboard hands the owner for Meta ads.
+CAMPAIGN_PUBLIC_ORIGIN = "https://ads.rinovabd.com"
 
 [[d1_databases]]
 binding = "DB"

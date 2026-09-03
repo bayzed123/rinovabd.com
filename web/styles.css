@@ -329,3 +329,28 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
 /* Keep the sign-off clear of the floating chat button. */
 .footer-bottom{ padding-right:64px; }
 @media(max-width:520px){ .footer-bottom{ padding-right:0; padding-bottom:56px; } }
+
+/* Image viewer close control ------------------------------------------------ */
+/* The viewer builds its markup lazily, so its icons are hydrated on creation. The button
+   also carries a written label: a bare circle gave no clue that the viewer could be shut,
+   which read as the page being stuck. */
+.media-viewer-close{display:inline-flex;align-items:center;gap:7px;width:auto;min-height:42px;padding:0 15px 0 12px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.media-viewer-close .rinova-icon{width:1.05em;height:1.05em;flex:0 0 auto}
+.media-viewer-close-text{line-height:1}
+.media-viewer-head{gap:12px}
+.media-viewer-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:420px){.media-viewer-close{padding:0 13px 0 11px;font-size:12px}}
+
+/* The dialog is a grid with no explicit column, so the implicit "auto" track sized itself to
+   the longest product name (538px inside a 414px dialog). Header, stage and footer inherited
+   that width and the close button landed off the right edge, where overflow:hidden clipped
+   it — the viewer looked like it had locked the page with no way out. Pin the column to the
+   dialog width and let the title be the part that truncates. */
+.media-viewer-dialog{grid-template-columns:minmax(0,1fr)}
+.media-viewer-head,.media-viewer-stage,.media-viewer-tools{min-width:0;max-width:100%}
+.media-viewer-title{flex:1 1 auto;min-width:0}
+.media-viewer-close{flex:0 0 auto}
+
+/* The bottom tab bar sits at z-index 999, above the image viewer, so it covered the viewer's
+   zoom controls. While a full-screen image is open the viewer is the only thing on screen. */
+.media-viewer-open .global-mobile-nav{display:none!important}

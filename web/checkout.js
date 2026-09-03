@@ -184,8 +184,26 @@ async function submitOrder(event) {
     if (payload.customerToken) localStorage.setItem('rinova-customer-token', payload.customerToken);
     localStorage.removeItem('rinova-bag');
     $('#checkout-grid').hidden = true;
-    $('#success').hidden = false;
-    $('#success').innerHTML = `<strong>অর্ডার সফল হয়েছে।</strong><br>Order ID: <strong>${payload.order.orderCode}</strong><br>Invoice: <strong>${payload.order.invoiceNumber || '—'}</strong><br>Total: ${money(payload.order.total)}<br><a class="button" href="/invoice.html?order=${encodeURIComponent(payload.order.orderCode)}">View printable invoice</a> <a class="button" href="/track.html?orderId=${encodeURIComponent(payload.order.orderCode)}&invoiceNumber=${encodeURIComponent(payload.order.invoiceNumber || '')}">Track order</a>`;
+    const success = $('#success');
+    success.hidden = false;
+    success.innerHTML = `<p class="success-mark" aria-hidden="true">✓</p>
+      <h2>অর্ডার সফল হয়েছে!</h2>
+      <p class="success-sub">Order confirmed. আমরা শীঘ্রই আপনাকে কল করে ডেলিভারি নিশ্চিত করব।</p>
+      <dl class="success-facts">
+        <div><dt>Order ID</dt><dd>${payload.order.orderCode}</dd></div>
+        <div><dt>Invoice</dt><dd>${payload.order.invoiceNumber || '—'}</dd></div>
+        <div><dt>Total</dt><dd>${money(payload.order.total)}</dd></div>
+      </dl>
+      <div class="success-actions">
+        <a class="button button-dark" href="/invoice.html?order=${encodeURIComponent(payload.order.orderCode)}">View printable invoice</a>
+        <a class="button" href="/track.html?orderId=${encodeURIComponent(payload.order.orderCode)}&invoiceNumber=${encodeURIComponent(payload.order.invoiceNumber || '')}">Track order</a>
+        <a class="button" href="/">Continue shopping</a>
+      </div>`;
+    // The customer taps Place order at the bottom of a long page, so the confirmation has to
+    // come to them. Without this it renders above the fold and nothing appears to happen.
+    success.setAttribute('tabindex', '-1');
+    success.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    success.focus({ preventScroll: true });
     track('purchase', { transaction_id: payload.order.orderCode || payload.order.invoiceNumber, currency: 'BDT', value: Number(payload.order.total || 0), shipping: Number(payload.order.deliveryFee || 0), payment_type: payload.order.paymentMethod || 'cod', items: bag.map(itemPayload) });
   } catch (error) {
     $('#checkout-error').textContent = error.message;
