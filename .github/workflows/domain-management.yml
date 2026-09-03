@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - inspect
+          - inspect-worker-routing
           - remove-cross-account-cname
         default: inspect
       confirmation:
@@ -108,6 +109,58 @@ jobs:
           if [[ "$OPERATION" == "inspect" ]]; then
             echo "Read-only inspection complete. No DNS or Worker changes were made."
           fi
+
+      - name: Report what the zone can do with the Worker
+        if: inputs.operation == 'inspect-worker-routing'
+        shell: bash
+        env:
+          ZONE_ID: ${{ steps.inspect.outputs.zone_id }}
+          WORKER_ACCOUNT_ID: 46bf056399139631a967566fdb0413fa
+          WORKER_NAME: rinovabd-worker
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4"
+          auth_header="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+
+          # Worker routes only fire for traffic Cloudflare proxies, and they can only be
+          # created when the zone lives in the same account as the Worker. Report both
+          # facts as plain booleans so the secret account id is never printed.
+          if [[ "$DOMAIN_ACCOUNT_ID" == "$WORKER_ACCOUNT_ID" ]]; then
+            echo "zone_account_matches_worker=yes  (Worker routes and custom domains are possible)"
+          else
+            echo "zone_account_matches_worker=NO   (zone is in a different Cloudflare account from the Worker)"
+          fi
+
+          echo "--- apex proxy status (a Worker route needs proxied=true) ---"
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -H "$auth_header" --get "$api/zones/${ZONE_ID}/dns_records" \
+            --data-urlencode 'per_page=100' \
+          | jq -r --arg d "$DOMAIN_NAME" '.result[] | select(.name == $d or .name == ("www." + $d) or (.name | startswith("shop-v2.")) or (.name | startswith("api-v2."))) | "\(.type) \(.name) proxied=\(.proxied) -> \(.content)"'
+
+          echo "--- existing Worker routes on this zone ---"
+          routes="$(curl --silent --show-error --max-time 30 -H "$auth_header" "$api/zones/${ZONE_ID}/workers/routes" || echo '{}')"
+          if [[ "$(jq -r '.success // false' <<<"$routes")" == "true" ]]; then
+            jq -r '.result[]? | "route: \(.pattern) -> \(.script // "none")"' <<<"$routes"
+            [[ "$(jq -r '.result | length' <<<"$routes")" == "0" ]] && echo "(no Worker routes on this zone)"
+          else
+            echo "Could not read Worker routes with the domain token:"
+            jq -c '{success,errors}' <<<"$routes"
+          fi
+
+          echo "--- Worker custom domains in the Worker account ---"
+          domains="$(curl --silent --show-error --max-time 30 -H "$auth_header" "$api/accounts/${WORKER_ACCOUNT_ID}/workers/domains" || echo '{}')"
+          if [[ "$(jq -r '.success // false' <<<"$domains")" == "true" ]]; then
+            jq -r '.result[]? | "custom domain: \(.hostname) -> \(.service)"' <<<"$domains"
+            [[ "$(jq -r '.result | length' <<<"$domains")" == "0" ]] && echo "(no Worker custom domains)"
+          else
+            echo "Could not read Worker custom domains with this token (expected if it is scoped to the domain account only)."
+          fi
+
+          echo "--- zone SSL mode (matters when proxying GitHub Pages) ---"
+          curl --silent --show-error --max-time 30 -H "$auth_header" "$api/zones/${ZONE_ID}/settings/ssl" \
+          | jq -r '"ssl=" + (.result.value // "unreadable")'
+
+          echo "Read-only inspection complete. No DNS or Worker changes were made."
 
       - name: Remove only the known cross-account CNAME
         if: inputs.operation == 'remove-cross-account-cname'
