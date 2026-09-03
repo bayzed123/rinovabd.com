@@ -1119,3 +1119,23 @@ label{ color:var(--muted); }
 .faq-row{ display:grid; gap:8px; padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--paper); }
 .faq-row label{ display:grid; gap:5px; font-size:12px; font-weight:600; color:var(--ink-soft); }
 .faq-row .icon-action{ justify-self:start; }
+
+/* 7f. Order status pills ---------------------------------------------------- */
+/* Statuses were plain words in a grey column, so "processing" and "delivered" looked the
+   same at a glance. Each state now carries its own colour. */
+.order-status-cell{ display:grid; gap:7px; min-width:150px; }
+.order-pill{
+  display:inline-flex; align-items:center; gap:6px; justify-self:start;
+  padding:4px 11px; border-radius:var(--r-pill);
+  font-size:11px; font-weight:700; letter-spacing:.02em; white-space:nowrap;
+}
+.order-pill::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.order-pill-wait{ background:#FFF3D6; color:#8A5B00; }
+.order-pill-info{ background:#E3F0FF; color:#14538A; }
+.order-pill-work{ background:#EDE4FF; color:#5B3AA6; }
+.order-pill-ship{ background:#DDF3F7; color:#0F6675; }
+.order-pill-done{ background:#DCF5E7; color:#146B41; }
+.order-pill-warn{ background:#FFE9D9; color:#8A4318; }
+.order-pill-stop{ background:#FBE0E0; color:#96262C; }
+.orders-hint{ margin:0 0 10px; font-size:12.5px; }
+@media(max-width:700px){ .order-status-cell{ min-width:0; } }
