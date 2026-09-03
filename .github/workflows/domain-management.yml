@@ -10,10 +10,11 @@ on:
         options:
           - inspect
           - inspect-worker-routing
+          - deploy-campaign-edge
           - remove-cross-account-cname
         default: inspect
       confirmation:
-        description: "Required only for remove-cross-account-cname: type REMOVE_RINOVA_CNAME"
+        description: "remove-cross-account-cname: REMOVE_RINOVA_CNAME · deploy-campaign-edge: DEPLOY_CAMPAIGN_EDGE"
         required: false
         type: string
         default: ""
@@ -161,6 +162,42 @@ jobs:
           | jq -r '"ssl=" + (.result.value // "unreadable")'
 
           echo "Read-only inspection complete. No DNS or Worker changes were made."
+
+      - name: Deploy the campaign proxy Worker onto ads.rinovabd.com
+        if: inputs.operation == 'deploy-campaign-edge'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "DEPLOY_CAMPAIGN_EDGE" ]]; then
+            echo "Nothing was deployed. Dispatch again with confirmation DEPLOY_CAMPAIGN_EDGE to proceed."
+            exit 1
+          fi
+          echo "Confirmation accepted."
+
+      - name: Checkout the proxy Worker
+        if: inputs.operation == 'deploy-campaign-edge' && env.CONFIRMATION == 'DEPLOY_CAMPAIGN_EDGE'
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: inputs.operation == 'deploy-campaign-edge' && env.CONFIRMATION == 'DEPLOY_CAMPAIGN_EDGE'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy to the domain account
+        if: inputs.operation == 'deploy-campaign-edge' && env.CONFIRMATION == 'DEPLOY_CAMPAIGN_EDGE'
+        working-directory: edge
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DOMAIN_CLOUD_FLARE_ID }}
+        run: |
+          set -euo pipefail
+          # The custom domain for ads.rinovabd.com is created as part of this deploy, so
+          # Cloudflare owns the DNS record. If the domain token lacks Workers Scripts:Edit or
+          # DNS:Edit, Wrangler reports exactly that, which is the useful failure.
+          npx --yes wrangler@4.125.0 deploy
+          echo "Campaign pages are now reachable at https://ads.rinovabd.com/campaign/<slug>"
+          echo "The storefront Worker keeps answering the API on its workers.dev host; that must stay enabled."
 
       - name: Remove only the known cross-account CNAME
         if: inputs.operation == 'remove-cross-account-cname'
