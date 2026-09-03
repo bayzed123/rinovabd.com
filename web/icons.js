@@ -22,7 +22,23 @@
     sparkle: '<path d="m12 3 1.4 5.6L19 10l-5.6 1.4L12 17l-1.4-5.6L5 10l5.6-1.4L12 3Z" /><path d="m19 16 .6 2.4L22 19l-2.4.6L19 22l-.6-2.4L16 19l2.4-.6L19 16Z" />',
   };
   const svg = (name, className = '') => `<svg class="rinova-icon ${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ''}</svg>`;
-  const hydrate = (root = document) => root.querySelectorAll('[data-rinova-icon]').forEach((node) => { const name = node.dataset.rinovaIcon; node.innerHTML = svg(name, node.dataset.rinovaIconClass || ''); node.setAttribute('aria-hidden', 'true'); });
+  const fill = (node) => { if (node.firstElementChild) return; node.innerHTML = svg(node.dataset.rinovaIcon, node.dataset.rinovaIconClass || ''); node.setAttribute('aria-hidden', 'true'); };
+  const hydrate = (root = document) => { if (root.matches?.('[data-rinova-icon]')) fill(root); root.querySelectorAll?.('[data-rinova-icon]').forEach(fill); };
   window.RinovaIcons = { svg, hydrate };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => hydrate()); else hydrate();
+
+  /**
+   * Icons used to be drawn once, at DOMContentLoaded. Anything rendered after that — the
+   * checkout basket, the account panels, the blog pager, the image viewer — came out as empty
+   * boxes, which is how the viewer's close button went missing and how the checkout stepper
+   * lost its minus. Watching the document fills them in whichever script writes them, so a
+   * page never has to remember to ask.
+   */
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType === 1) hydrate(node);
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
 }());
