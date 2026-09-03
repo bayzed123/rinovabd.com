@@ -1084,3 +1084,26 @@ label{ color:var(--muted); }
   .main-panel{ margin:0; padding:0; }
   .panel{ box-shadow:none; border-color:#ccc; }
 }
+
+/* 7d. Who-changes-what note in Team & support ------------------------------- */
+/* The owner asked to be told plainly that staff passwords are theirs to set while
+   their own owner password is a Worker secret only the developer can change. */
+.owner-key-note{
+  margin:0 0 18px; padding:14px 16px;
+  background:var(--accent-tint); border:1px solid var(--accent-soft);
+  border-left:4px solid var(--accent); border-radius:var(--r-md);
+}
+.owner-key-note p{ margin:0 0 8px; font-size:13px; color:var(--ink); }
+.owner-key-note ul{ margin:0; padding-left:18px; display:grid; gap:8px; }
+.owner-key-note li{ font-size:13px; line-height:1.55; color:var(--ink-soft); }
+.owner-key-note li strong{ color:var(--ink); }
+.owner-key-note code{
+  padding:1px 6px; border-radius:var(--r-xs);
+  background:var(--paper); border:1px solid var(--line);
+  font-size:12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.owner-key-note .bn{ display:block; margin-top:2px; color:var(--muted); font-size:12px; }
+
+/* Zero-stock warning under the product editor's stock field. */
+.stock-hint{ display:block; margin-top:4px; font-size:12px; line-height:1.45; color:var(--muted); }
+.stock-hint.warn{ color:var(--danger); font-weight:600; }
