@@ -135,12 +135,12 @@
             <p><strong>Who can change which password?</strong> · <strong>কোন পাসওয়ার্ড কে বদলাতে পারে?</strong></p>
             <ul>
               <li><strong>Staff passwords — you.</strong> Create them below, and use <em>New password</em> on any staff row to change one. You never need your developer for this. <span class="bn">স্টাফ পাসওয়ার্ড আপনি নিজেই তৈরি ও পরিবর্তন করতে পারবেন।</span></li>
-              <li><strong>Your own owner password — your developer.</strong> It is kept as a protected Worker secret (<code>ADMIN_PASSWORD</code>), not in this dashboard, so it cannot be read or changed from here. Ask your developer to change it. <span class="bn">আপনার নিজের ওনার পাসওয়ার্ড শুধু ডেভেলপার পরিবর্তন করতে পারবেন।</span></li>
+              <li><strong>Your own owner password — your shop owner rinova.</strong> It is kept as a protected Worker secret (<code>ADMIN_PASSWORD</code>), not in this dashboard, so it cannot be read or changed from here. Ask your shop owner to change it. <span class="bn">আপনার নিজের ওনার পাসওয়ার্ড শুধু shop owner  পরিবর্তন করতে পারবেন।</span></li>
             </ul>
           </div>
           <form id="staff-form" class="form-grid">
             <label>Username · ইউজারনেম<input name="username" autocomplete="off" placeholder="e.g. rahim" required /><small>Letters, numbers, dot, dash or underscore.</small></label>
-            <label>Full name · পুরো নাম<input name="displayName" autocomplete="off" placeholder="Rahim Uddin" /></label>
+            <label>Full name · পুরো নাম<input name="displayName" autocomplete="off" placeholder="Rinova Akter" /></label>
             <label>Password · পাসওয়ার্ড<input name="password" type="text" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required /><small>Write it down for the staff member; it cannot be read back later.</small></label>
             <label>Security question · নিরাপত্তা প্রশ্ন<select name="securityQuestion" id="staff-security-question"></select></label>
             <label class="wide">Answer · উত্তর<input name="securityAnswer" autocomplete="off" placeholder="e.g. mother's name" required /><small>Used to confirm identity if this staff member forgets their password.</small></label>
