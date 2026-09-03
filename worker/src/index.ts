@@ -1002,10 +1002,10 @@ app.get('/api/account/me', async (c) => {
 app.get('/api/account/orders', async (c) => {
   const session = await customerPrincipal(c);
   if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
-  const result = await c.env.DB.prepare('SELECT id, order_code AS orderCode, invoice_number AS invoiceNumber, subtotal, delivery_fee AS deliveryFee, status, payment_status AS paymentStatus, courier_status AS courierStatus, created_at AS createdAt FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50').bind(session.customerId).all<{ id: number; orderCode: string; invoiceNumber: string; subtotal: number; deliveryFee: number; status: string; paymentStatus: string | null; courierStatus: string | null; createdAt: string }>();
+  const result = await c.env.DB.prepare('SELECT id, order_code AS orderCode, invoice_number AS invoiceNumber, subtotal, discount_amount AS discount, delivery_fee AS deliveryFee, status, payment_status AS paymentStatus, courier_status AS courierStatus, created_at AS createdAt FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50').bind(session.customerId).all<{ id: number; orderCode: string; invoiceNumber: string; subtotal: number; discount: number; deliveryFee: number; status: string; paymentStatus: string | null; courierStatus: string | null; createdAt: string }>();
   const orders = await Promise.all(result.results.map(async (order) => {
     const items = await c.env.DB.prepare('SELECT product_id AS productId, product_name AS productName, quantity, unit_price AS unitPrice FROM order_items WHERE order_id = ? ORDER BY id').bind(order.id).all();
-    return { ...order, total: Number(order.subtotal || 0) + Number(order.deliveryFee || 0), items: items.results };
+    return { ...order, discount: Number(order.discount || 0), total: Math.max(0, Number(order.subtotal || 0) - Number(order.discount || 0)) + Number(order.deliveryFee || 0), items: items.results };
   }));
   return json(c, { orders });
 });
@@ -1047,41 +1047,41 @@ app.post('/api/account/returns', async (c) => {
   const session = await customerPrincipal(c);
   if (!session) return json(c, { error: 'Unauthorized account request.' }, 401);
   const body = await c.req.json<{ orderCode?: string; reason?: string; notes?: string }>();
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.status, c.name AS customerName, c.phone AS customerPhone, c.email AS customerEmail FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? AND o.customer_id = ?").bind(normalize(body.orderCode), session.customerId).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; paymentMethod: string; status: OrderStatus; customerName: string; customerPhone: string; customerEmail: string | null }>();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.discount_amount AS discount, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.status, c.name AS customerName, c.phone AS customerPhone, c.email AS customerEmail FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? AND o.customer_id = ?").bind(normalize(body.orderCode), session.customerId).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; discount: number; deliveryFee: number; paymentMethod: string; status: OrderStatus; customerName: string; customerPhone: string; customerEmail: string | null }>();
   if (!order) return json(c, { error: 'Order not found.' }, 404);
   if (!['delivered', 'shipped'].includes(order.status)) return json(c, { error: 'A return can be requested after shipment or delivery.' }, 400);
   const returnCode = `RET-${Date.now().toString(36).toUpperCase()}`;
-  const result = await c.env.DB.prepare("INSERT INTO returns(order_id, return_code, reason, amount, notes, created_by) VALUES (?, ?, ?, ?, ?, 'customer') RETURNING id, return_code AS returnCode, status").bind(order.id, returnCode, normalize(body.reason), order.subtotal, normalize(body.notes) || null).first();
+  const result = await c.env.DB.prepare("INSERT INTO returns(order_id, return_code, reason, amount, notes, created_by) VALUES (?, ?, ?, ?, ?, 'customer') RETURNING id, return_code AS returnCode, status").bind(order.id, returnCode, normalize(body.reason), Math.max(0, Number(order.subtotal || 0) - Number(order.discount || 0)), normalize(body.notes) || null).first();
   await c.env.DB.prepare("UPDATE orders SET return_status = 'requested', return_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(normalize(body.reason), order.id).run();
   await createAdminNotification(c.env, { type: 'return', title: 'New return request', message: `Return ${result?.returnCode || returnCode} was requested for order ${order.orderCode}.`, entityType: 'return', entityId: returnCode });
-  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'return', order.orderCode, order.invoiceNumber, order.customerName, order.customerPhone, order.customerEmail || null, 'requested', order.paymentMethod, order.subtotal, order.deliveryFee, Number(order.subtotal || 0) + Number(order.deliveryFee || 0), null, returnCode, normalize(body.reason), normalize(body.notes) || null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Return lead ${returnCode} could not be added to the activity sheet.`, entityType: 'return', entityId: returnCode }); }));
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'return', order.orderCode, order.invoiceNumber, order.customerName, order.customerPhone, order.customerEmail || null, 'requested', order.paymentMethod, order.subtotal, order.deliveryFee, Math.max(0, Number(order.subtotal || 0) - Number(order.discount || 0)) + Number(order.deliveryFee || 0), null, returnCode, normalize(body.reason), normalize(body.notes) || null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Return lead ${returnCode} could not be added to the activity sheet.`, entityType: 'return', entityId: returnCode }); }));
   return json(c, { ok: true, return: result }, 201);
 });
 
 app.get('/api/admin/invoices/:invoiceNumber', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const invoiceNumber = normalize(c.req.param('invoiceNumber'));
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(invoiceNumber, invoiceNumber, invoiceNumber).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.discount_amount AS discount, o.offer_code AS offerCode, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(invoiceNumber, invoiceNumber, invoiceNumber).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; discount: number; offerCode: string | null; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
   if (!order) return json(c, { error: 'Invoice not found.' }, 404);
   const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || invoiceNumber;
   if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
   order.invoiceNumber = cleanInvoiceNumber;
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku AS sku, p.barcode AS barcode, p.slug AS productSlug, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
-  return json(c, { shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS }, invoice: { ...order, total: order.subtotal + order.deliveryFee }, items: items.results });
+  return json(c, { shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS }, invoice: { ...order, total: Math.max(0, order.subtotal - Number(order.discount || 0)) + order.deliveryFee }, items: items.results });
 });
 
 app.get('/api/orders/:orderIdentifier/invoice', async (c) => {
   const admin = await adminPrincipal(c);
   const customerSession = admin ? null : await customerPrincipal(c);
   const identifier = normalize(c.req.param('orderIdentifier'));
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ?").bind(identifier, identifier, identifier, identifier).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
+  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.subtotal, o.discount_amount AS discount, o.offer_code AS offerCode, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.order_source AS orderSource, o.package_weight_grams AS packageWeightGrams, o.created_at AS createdAt, c.id AS customerId, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ?").bind(identifier, identifier, identifier, identifier).first<{ id: number; orderCode: string; invoiceNumber: string | null; subtotal: number; discount: number; offerCode: string | null; deliveryFee: number; deliveryZone: string; paymentMethod: string; paymentStatus: string; status: string; orderSource: string; packageWeightGrams: number; createdAt: string; customerId: number; name: string; phone: string; email: string | null; district: string; upazila: string; address: string }>();
   if (!order || (!admin && (!customerSession || customerSession.customerId !== order.customerId))) return json(c, { error: 'Order not found.' }, 404);
   const cleanInvoiceNumber = invoiceNumberForOrderId(order.id) || order.invoiceNumber || order.orderCode;
   if (order.invoiceNumber !== cleanInvoiceNumber) await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(cleanInvoiceNumber, order.id).run();
   order.invoiceNumber = cleanInvoiceNumber;
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.id AS productId, p.slug AS productSlug, p.sku AS sku, p.barcode AS barcode, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id ASC').bind(order.id).all();
   const computedWeight = items.results.reduce((sum, item) => sum + Number((item as { quantity: number; weightGrams: number }).quantity) * Number((item as { quantity: number; weightGrams: number }).weightGrams), 0);
-  return json(c, { shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS }, invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: order.subtotal + order.deliveryFee }, items: items.results });
+  return json(c, { shop: { name: c.env.SHOP_NAME, phone: c.env.SHOP_PHONE, address: c.env.SHOP_ADDRESS }, invoice: { ...order, packageWeightGrams: Math.max(order.packageWeightGrams || 0, computedWeight), total: Math.max(0, order.subtotal - Number(order.discount || 0)) + order.deliveryFee }, items: items.results });
 });
 
 app.get('/api/admin/reviews', async (c) => {
@@ -1203,7 +1203,7 @@ app.get('/api/admin/content', async (c) => {
     c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
     c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
-    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active FROM offers ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active, usage_limit AS usageLimit, used_count AS usedCount, auto_apply AS autoApply FROM offers ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all(),
     c.env.DB.prepare('SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, active, sort_order AS sortOrder, marquee_speed AS marqueeSpeed, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt FROM marketing_banners ORDER BY placement, sort_order ASC, updated_at DESC, id DESC').all(),
     c.env.DB.prepare('SELECT id, email, source, status, created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt FROM newsletter_leads ORDER BY created_at DESC LIMIT 500').all(),
@@ -1307,11 +1307,57 @@ app.post('/api/admin/posts', async (c) => {
 app.post('/api/admin/offers', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean }>();
+  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean; usageLimit?: number; autoApply?: boolean }>();
   if (!normalize(body.title)) return json(c, { error: 'Offer title is required.' }, 400);
   const type = ['fixed','percentage','free_delivery'].includes(normalize(body.discountType)) ? normalize(body.discountType) : 'fixed';
-  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(normalize(body.code) || null, normalize(body.title), normalize(body.description), type, Math.max(0, Number(body.discountValue) || 0), Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, actor).run();
+  const value = Math.max(0, Number(body.discountValue) || 0);
+  // A percentage over 100 would hand money back, and a percentage of nothing is a dead offer.
+  if (type === 'percentage' && (value <= 0 || value > 100)) return json(c, { error: 'A percentage discount must be between 1 and 100.' }, 400);
+  if (type === 'fixed' && value <= 0) return json(c, { error: 'A fixed discount needs an amount above zero.' }, 400);
+  const code = normalize(body.code).toUpperCase();
+  const autoApply = body.autoApply === true;
+  if (!code && !autoApply) return json(c, { error: 'Give the offer a coupon code, or mark it as applied automatically.' }, 400);
+  if (code) {
+    const clash = await c.env.DB.prepare('SELECT id FROM offers WHERE upper(code) = ? LIMIT 1').bind(code).first();
+    if (clash) return json(c, { error: 'That coupon code already exists.' }, 409);
+  }
+  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, usage_limit, auto_apply, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(code || null, normalize(body.title), normalize(body.description), type, value, Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, Math.max(0, Number(body.usageLimit) || 0), autoApply ? 1 : 0, actor).run();
   return json(c, { ok: true, title: normalize(body.title) }, 201);
+});
+
+/** Pause, re-open, retarget or reset the counter on an existing offer. */
+app.patch('/api/admin/offers/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid offer id.' }, 400);
+  const body = await c.req.json<{ active?: boolean; usageLimit?: number; discountValue?: number; minSubtotal?: number; resetUsage?: boolean; autoApply?: boolean }>();
+  const existing = await c.env.DB.prepare('SELECT id, discount_type AS discountType FROM offers WHERE id = ? LIMIT 1').bind(id).first<{ id: number; discountType: string }>();
+  if (!existing) return json(c, { error: 'Offer not found.' }, 404);
+  const sets: string[] = [];
+  const values: Array<string | number> = [];
+  if (typeof body.active === 'boolean') { sets.push('active = ?'); values.push(body.active ? 1 : 0); }
+  if (typeof body.autoApply === 'boolean') { sets.push('auto_apply = ?'); values.push(body.autoApply ? 1 : 0); }
+  if (body.usageLimit !== undefined) { sets.push('usage_limit = ?'); values.push(Math.max(0, Number(body.usageLimit) || 0)); }
+  if (body.minSubtotal !== undefined) { sets.push('min_subtotal = ?'); values.push(Math.max(0, Number(body.minSubtotal) || 0)); }
+  if (body.discountValue !== undefined) {
+    const value = Math.max(0, Number(body.discountValue) || 0);
+    if (existing.discountType === 'percentage' && (value <= 0 || value > 100)) return json(c, { error: 'A percentage discount must be between 1 and 100.' }, 400);
+    sets.push('discount_value = ?'); values.push(value);
+  }
+  if (body.resetUsage === true) sets.push('used_count = 0');
+  if (!sets.length) return json(c, { error: 'Nothing to update.' }, 400);
+  await c.env.DB.prepare(`UPDATE offers SET ${sets.join(', ')}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(...values, actor, id).run();
+  return json(c, { ok: true });
+});
+
+app.delete('/api/admin/offers/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid offer id.' }, 400);
+  await c.env.DB.prepare('DELETE FROM offers WHERE id = ?').bind(id).run();
+  return json(c, { ok: true });
 });
 
 app.post('/api/admin/marketing-banners', async (c) => {
@@ -1368,7 +1414,7 @@ app.post('/api/admin/chat', async (c) => {
 app.get('/api/admin/overview', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const period = Math.min(Math.max(Number(c.req.query('days') ?? 30) || 30, 7), 90);
-  const revenue = await c.env.DB.prepare("SELECT COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue, COUNT(*) AS orders FROM orders o WHERE o.created_at >= datetime('now', ?) AND o.status IN ('confirmed','processing','shipped','delivered')").bind(`-${period} days`).first<{ revenue: number; orders: number }>();
+  const revenue = await c.env.DB.prepare("SELECT COALESCE(SUM(o.subtotal - o.discount_amount + o.delivery_fee), 0) AS revenue, COUNT(*) AS orders FROM orders o WHERE o.created_at >= datetime('now', ?) AND o.status IN ('confirmed','processing','shipped','delivered')").bind(`-${period} days`).first<{ revenue: number; orders: number }>();
   const profit = await c.env.DB.prepare("SELECT COALESCE(SUM((oi.unit_price - COALESCE(p.cost_price, 0)) * oi.quantity), 0) AS grossProfit FROM orders o JOIN order_items oi ON oi.order_id = o.id LEFT JOIN products p ON p.id = oi.product_id WHERE o.created_at >= datetime('now', ?) AND o.status IN ('confirmed','processing','shipped','delivered')").bind(`-${period} days`).first<{ grossProfit: number }>();
   const stock = await c.env.DB.prepare('SELECT COALESCE(SUM(stock), 0) AS units, COALESCE(SUM(stock * COALESCE(cost_price, 0)), 0) AS costValue, COALESCE(SUM(stock * price), 0) AS retailValue, SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END) AS needsRestock, COUNT(*) AS catalogue FROM products WHERE active = 1').first<{ units: number; costValue: number; retailValue: number; needsRestock: number; catalogue: number }>();
   const pipeline = await c.env.DB.prepare('SELECT status, COUNT(*) AS orders, COALESCE(SUM(subtotal + delivery_fee), 0) AS value FROM orders GROUP BY status ORDER BY orders DESC').all();
@@ -1381,9 +1427,9 @@ app.get('/api/admin/overview-insights', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const period = Math.min(Math.max(Number(c.req.query('days') ?? 30) || 30, 7), 90);
   const orderFilter = "o.status IN ('confirmed','processing','shipped','delivered')";
-  const trend = await c.env.DB.prepare(`SELECT date(o.created_at) AS day, COUNT(*) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o WHERE o.created_at >= datetime('now', ?) AND ${orderFilter} GROUP BY date(o.created_at) ORDER BY day ASC`).bind(`-${period} days`).all();
-  const districts = await c.env.DB.prepare(`SELECT COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') AS district, COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?) GROUP BY COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') ORDER BY customers DESC, orders DESC LIMIT 20`).bind(`-${period} days`).all();
-  const totals = await c.env.DB.prepare(`SELECT COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?)`).bind(`-${period} days`).first();
+  const trend = await c.env.DB.prepare(`SELECT date(o.created_at) AS day, COUNT(*) AS orders, COALESCE(SUM(o.subtotal - o.discount_amount + o.delivery_fee), 0) AS revenue FROM orders o WHERE o.created_at >= datetime('now', ?) AND ${orderFilter} GROUP BY date(o.created_at) ORDER BY day ASC`).bind(`-${period} days`).all();
+  const districts = await c.env.DB.prepare(`SELECT COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') AS district, COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal - o.discount_amount + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?) GROUP BY COALESCE(NULLIF(TRIM(c.district), ''), 'Other / not mapped') ORDER BY customers DESC, orders DESC LIMIT 20`).bind(`-${period} days`).all();
+  const totals = await c.env.DB.prepare(`SELECT COUNT(DISTINCT c.id) AS customers, COUNT(o.id) AS orders, COALESCE(SUM(o.subtotal - o.discount_amount + o.delivery_fee), 0) AS revenue FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?)`).bind(`-${period} days`).first();
   const returnClients = await c.env.DB.prepare(`SELECT c.id AS customerId, c.name, c.phone, c.email, c.district, COUNT(r.id) AS returns, MAX(r.created_at) AS lastReturn FROM returns r JOIN orders o ON o.id = r.order_id JOIN customers c ON c.id = o.customer_id WHERE r.created_at >= datetime('now', ?) GROUP BY c.id ORDER BY lastReturn DESC LIMIT 8`).bind(`-${period} days`).all();
   const cancelClients = await c.env.DB.prepare(`SELECT c.id AS customerId, c.name, c.phone, c.email, c.district, COUNT(o.id) AS cancelledOrders, MAX(o.created_at) AS lastCancelled FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.created_at >= datetime('now', ?) AND o.status IN ('customer_cancelled','admin_cancelled') GROUP BY c.id ORDER BY lastCancelled DESC LIMIT 8`).bind(`-${period} days`).all();
   const [financeRevenue, financeCost, courier] = await Promise.all([
@@ -1398,7 +1444,7 @@ app.get('/api/admin/overview-search', async (c) => {
   const query = normalize(c.req.query('q'));
   if (!query) return json(c, { results: [] });
   const like = `%${query}%`;
-  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, (o.subtotal + o.delivery_fee) AS total FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code LIKE ? OR o.invoice_number LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.name LIKE ? ORDER BY o.created_at DESC LIMIT 20`).bind(like, like, like, like, like).all();
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, o.invoice_number AS invoiceNumber, o.status, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, (o.subtotal - o.discount_amount + o.delivery_fee) AS total FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code LIKE ? OR o.invoice_number LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.name LIKE ? ORDER BY o.created_at DESC LIMIT 20`).bind(like, like, like, like, like).all();
   return json(c, { results: result.results });
 });
 function maskSecret(value: string | undefined) { const secret = normalize(value); return secret ? `${secret.slice(0, 3)}${'•'.repeat(Math.max(4, secret.length - 6))}${secret.slice(-3)}` : 'Not configured'; }
@@ -1663,7 +1709,7 @@ app.get('/api/admin/orders', async (c) => {
   const values: string[] = [];
   if (status) { condition.push('o.status = ?'); values.push(status); }
   if (query) { condition.push('(o.order_code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
-  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.status, o.subtotal, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.status, o.subtotal, o.discount_amount AS discount, o.offer_code AS offerCode, o.delivery_fee AS deliveryFee, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE ${condition.join(' AND ')} ORDER BY o.created_at DESC LIMIT 100`).bind(...values).all();
   return json(c, { orders: result.results });
 });
 
@@ -1734,7 +1780,18 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
       newByProduct.set(product.id, item.quantity);
       lines.push({ product, quantity: item.quantity, details: item.details });
     }
-    const subtotal = lines.reduce((sum, line) => sum + Number(line.product.price || 0) * line.quantity, 0);
+    // Re-price against the chosen variant, not the base price: an order holding the 100g jar
+    // would otherwise be rewritten at the 50g price the moment an admin touched it.
+    const editIds = lines.map((line) => line.product.id);
+    const editVariants = editIds.length
+      ? await c.env.DB.prepare(`SELECT product_id AS productId, label, price FROM product_variants WHERE active = 1 AND kind = 'size' AND price IS NOT NULL AND product_id IN (${editIds.map(() => '?').join(',')})`).bind(...editIds).all<{ productId: number; label: string; price: number }>()
+      : { results: [] as Array<{ productId: number; label: string; price: number }> };
+    const editVariantBy = new Map(editVariants.results.map((row) => [`${row.productId}|${String(row.label).toLowerCase()}`, row.price]));
+    const priceFor = (line: { product: { id: number; price: number }; details?: string }) => {
+      const label = /size:\s*([^·]+)/i.exec(String(line.details || ''))?.[1]?.trim().toLowerCase();
+      return (label ? editVariantBy.get(`${line.product.id}|${label}`) : undefined) ?? Number(line.product.price || 0);
+    };
+    const subtotal = lines.reduce((sum, line) => sum + priceFor(line) * line.quantity, 0);
     const statements = [c.env.DB.prepare('DELETE FROM order_items WHERE order_id = ?').bind(existing.id)];
     // Walk both sides so a product removed from the order gets its reserved stock back.
     for (const productId of new Set([...oldByProduct.keys(), ...newByProduct.keys()])) {
@@ -1742,15 +1799,65 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
       const after = Number(newByProduct.get(productId) || 0);
       if (before !== after) statements.push(c.env.DB.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(before - after, productId));
     }
-    for (const line of lines) statements.push(c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(existing.id, line.product.id, line.details || line.product.name, line.quantity, line.product.price));
-    statements.push(c.env.DB.prepare('UPDATE orders SET subtotal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subtotal, existing.id));
+    for (const line of lines) statements.push(c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(existing.id, line.product.id, line.details || line.product.name, line.quantity, priceFor(line)));
+    // A discount from the original order can outgrow a shrunken basket, which would make the
+    // total negative or the saving larger than the goods. Never let it exceed the subtotal.
+    statements.push(c.env.DB.prepare('UPDATE orders SET subtotal = ?, discount_amount = MIN(discount_amount, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subtotal, subtotal, existing.id));
     await c.env.DB.batch(statements);
   }
   const currentStatus = await c.env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(existing.id).first<{ status: string }>();
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(existing.id, currentStatus?.status || 'pending', `Order details edited by ${username}`).run();
-  const updated = await c.env.DB.prepare('SELECT subtotal, delivery_fee AS deliveryFee, delivery_zone AS deliveryZone FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; deliveryFee: number; deliveryZone: string }>();
-  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, deliveryFee: updated?.deliveryFee || 0, deliveryZone: updated?.deliveryZone || '', total: Number(updated?.subtotal || 0) + Number(updated?.deliveryFee || 0), updatedBy: username });
+  const updated = await c.env.DB.prepare('SELECT subtotal, discount_amount AS discount, delivery_fee AS deliveryFee, delivery_zone AS deliveryZone FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; discount: number; deliveryFee: number; deliveryZone: string }>();
+  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, discount: updated?.discount || 0, deliveryFee: updated?.deliveryFee || 0, deliveryZone: updated?.deliveryZone || '', total: Math.max(0, Number(updated?.subtotal || 0) - Number(updated?.discount || 0)) + Number(updated?.deliveryFee || 0), updatedBy: username });
 });
+
+/**
+ * Priced size/weight variants. A size used to be just a label in specs_json, so "50ml or
+ * 150ml" carried one price and the shop could not charge more for the bigger jar. Prices are
+ * held here and read back server-side when an order is priced.
+ */
+function parseProductVariants(value: unknown) {
+  const raw = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return []; } })() : value;
+  if (!Array.isArray(raw)) return [] as Array<{ kind: 'size' | 'color'; label: string; price: number | null; stock: number; sortOrder: number }>;
+  const seen = new Set<string>();
+  return raw
+    .map((entry, index) => {
+      const item = entry as Record<string, unknown>;
+      const kind = normalize(item.kind) === 'color' ? 'color' as const : 'size' as const;
+      const label = normalize(item.label).slice(0, 80);
+      const priceRaw = item.price;
+      const price = priceRaw === '' || priceRaw === null || priceRaw === undefined ? null : Math.max(0, Math.round(Number(priceRaw) || 0));
+      return { kind, label, price, stock: Math.max(0, Math.round(Number(item.stock) || 0)), sortOrder: index };
+    })
+    .filter((entry) => {
+      if (!entry.label) return false;
+      const key = `${entry.kind}|${entry.label.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 60);
+}
+
+/** Replaces a product's variants wholesale, which is what the editor sends. */
+async function saveProductVariants(env: Bindings, productId: number, value: unknown) {
+  const variants = parseProductVariants(value);
+  await env.DB.prepare('DELETE FROM product_variants WHERE product_id = ?').bind(productId).run();
+  for (const variant of variants) {
+    await env.DB.prepare('INSERT INTO product_variants(product_id, kind, label, price, stock, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(productId, variant.kind, variant.label, variant.price, variant.stock, variant.sortOrder).run();
+  }
+}
+
+/** The product FAQ was identical on every product because it was hard-coded in product.js. */
+function parseProductFaq(value: unknown) {
+  const raw = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return []; } })() : value;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => ({ question: normalize((entry as Record<string, unknown>)?.question).slice(0, 200), answer: normalize((entry as Record<string, unknown>)?.answer).slice(0, 2000) }))
+    .filter((entry) => entry.question && entry.answer)
+    .slice(0, 12);
+}
 
 app.post('/api/admin/products', async (c) => {
   const username = await adminPrincipal(c);
@@ -1768,6 +1875,9 @@ app.post('/api/admin/products', async (c) => {
   const primaryImage = normalizeMediaUrl(body.imageUrl) || null;
   const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, editor_note, price, compare_at_price, cost_price, image_url, media_json, badges_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), normalize(body.editorNote), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, badgesJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), body.featured ? 1 : 0, active).first();
   if (!result) return json(c, { error: 'Could not create product.' }, 500);
+  const createdId = Number((result as { id: number }).id);
+  if (body.variants !== undefined) await saveProductVariants(c.env, createdId, body.variants);
+  if (body.faq !== undefined) await c.env.DB.prepare('UPDATE products SET faq_json = ? WHERE id = ?').bind(JSON.stringify(parseProductFaq(body.faq)), createdId).run();
   return json(c, { ok: true, product: result, createdBy: username }, 201);
 });
 
@@ -1782,7 +1892,24 @@ app.patch('/api/admin/products/sku/:sku', async (c) => {
   const mediaJson = body.mediaJson === undefined ? null : JSON.stringify(parseProductMedia(body.mediaJson));
   const badgesJson = body.badgesJson === undefined && body.badges === undefined ? null : JSON.stringify(parseProductBadges(body.badgesJson ?? body.badges));
   const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), editor_note = COALESCE(?, editor_note), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), badges_json = COALESCE(?, badges_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE sku = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.editorNote === undefined ? null : normalize(body.editorNote), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, badgesJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, sku).run();
+  if (body.variants !== undefined || body.faq !== undefined) {
+    const row = await c.env.DB.prepare('SELECT id FROM products WHERE sku = ? LIMIT 1').bind(sku).first<{ id: number }>();
+    if (row) {
+      if (body.variants !== undefined) await saveProductVariants(c.env, row.id, body.variants);
+      if (body.faq !== undefined) await c.env.DB.prepare('UPDATE products SET faq_json = ? WHERE id = ?').bind(JSON.stringify(parseProductFaq(body.faq)), row.id).run();
+    }
+  }
   return json(c, { ok: result.meta.changes > 0, productSku: sku, updatedBy: username });
+});
+
+/** The editor needs a product's saved variants and FAQ back when it reopens one. */
+app.get('/api/admin/products/sku/:sku/detail', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const sku = normalize(c.req.param('sku'));
+  const product = await c.env.DB.prepare('SELECT id, faq_json AS faqJson FROM products WHERE sku = ? LIMIT 1').bind(sku).first<{ id: number; faqJson: string }>();
+  if (!product) return json(c, { error: 'Product not found.' }, 404);
+  const variants = await c.env.DB.prepare('SELECT kind, label, price, stock FROM product_variants WHERE product_id = ? ORDER BY kind, sort_order, id').bind(product.id).all();
+  return json(c, { variants: variants.results, faq: parseProductFaq(product.faqJson) });
 });
 
 app.post('/api/admin/products/sku/:sku/stock', async (c) => {
@@ -1833,11 +1960,11 @@ app.post('/api/admin/orders/:orderCode/steadfast/book', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const orderCode = normalize(c.req.param('orderCode'));
   try {
-    const order = await c.env.DB.prepare('SELECT o.id, o.order_code AS orderCode, o.subtotal, o.delivery_fee AS deliveryFee, o.package_weight_grams AS packageWeight, c.name, c.phone, c.address, c.district, c.upazila FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first<{ id: number; orderCode: string; subtotal: number; deliveryFee: number; packageWeight: number; name: string; phone: string; address: string; district: string; upazila: string }>();
+    const order = await c.env.DB.prepare('SELECT o.id, o.order_code AS orderCode, o.subtotal, o.discount_amount AS discount, o.delivery_fee AS deliveryFee, o.package_weight_grams AS packageWeight, c.name, c.phone, c.address, c.district, c.upazila FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ?').bind(orderCode).first<{ id: number; orderCode: string; subtotal: number; discount: number; deliveryFee: number; packageWeight: number; name: string; phone: string; address: string; district: string; upazila: string }>();
     if (!order) return json(c, { error: 'Order not found.' }, 404);
     const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, COALESCE(p.weight_grams, 0) AS weightGrams FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?').bind(order.id).all<{ productName: string; quantity: number; weightGrams: number }>();
     const packageWeight = Math.max(order.packageWeight, items.results.reduce((sum, item) => sum + item.quantity * item.weightGrams, 0));
-    const payload = { invoice: order.orderCode, recipient_name: order.name, recipient_phone: order.phone, recipient_address: `${order.address}, ${order.upazila}, ${order.district}`, cod_amount: order.subtotal + order.deliveryFee, note: `Package weight: ${packageWeight}g` };
+    const payload = { invoice: order.orderCode, recipient_name: order.name, recipient_phone: order.phone, recipient_address: `${order.address}, ${order.upazila}, ${order.district}`, cod_amount: Math.max(0, order.subtotal - Number(order.discount || 0)) + order.deliveryFee, note: `Package weight: ${packageWeight}g` };
     const result = await steadfastRequest(c.env, '/create_order', { method: 'POST', body: JSON.stringify(payload) });
     const consignment = (result.consignment ?? result) as Record<string, unknown>;
     const consignmentId = normalize(consignment.consignment_id ?? consignment.consignmentId);
@@ -2050,7 +2177,7 @@ app.get('/api/products', async (c) => {
   if (query) { conditions.push('(p.name LIKE ? OR p.description LIKE ?)'); values.push(`%${query}%`, `%${query}%`); }
   if (category) { conditions.push('c.slug = ?'); values.push(category); }
   if (featured === 'true') conditions.push('p.featured = 1');
-  const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.tags_json AS tagsJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.featured, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, COALESCE(NULLIF(p.price, 0), (SELECT MIN(v.price) FROM product_variants v WHERE v.product_id = p.id AND v.kind = 'size' AND v.active = 1 AND v.price IS NOT NULL), p.price) AS price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.tags_json AS tagsJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.featured, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
   const response = json(c, { products: result.results });
   response.headers.set('Cache-Control', 'no-store');
   return response;
@@ -2058,10 +2185,12 @@ app.get('/api/products', async (c) => {
 
 app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1').bind(slug, slug).first();
+  const product = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, COALESCE(NULLIF(p.price, 0), (SELECT MIN(v.price) FROM product_variants v WHERE v.product_id = p.id AND v.kind = 'size' AND v.active = 1 AND v.price IS NOT NULL), p.price) AS price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.faq_json AS faqJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1`).bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
-  const response = json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
+  // Priced sizes and colours, so the page can show a real price per size and change it on select.
+  const variants = await c.env.DB.prepare('SELECT kind, label, price, stock FROM product_variants WHERE product_id = ? AND active = 1 ORDER BY kind, sort_order, id').bind((product as { id: number }).id).all<{ kind: string; label: string; price: number | null; stock: number }>();
+  const response = json(c, { product: { ...product, faq: parseProductFaq((product as { faqJson?: string }).faqJson) }, variants: variants.results, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
   response.headers.set('Cache-Control', 'no-store');
   return response;
 });
@@ -2093,10 +2222,74 @@ app.get('/api/customers/:phone/trust', async (c) => {
   return json(c, { customer, trust: calculateTrust(orders.results), recentOrders: orders.results });
 });
 
+type OfferRow = { id: number; code: string | null; title: string; discountType: string; discountValue: number; minSubtotal: number; usageLimit: number; usedCount: number };
+
+/**
+ * Works out what an offer is actually worth. Offers used to be stored and listed but never
+ * applied to anything: the order had nowhere to record a discount and checkout had no coupon
+ * field, so creating a percentage offer changed no price anywhere. The maths lives here, on
+ * the server, because a discount the browser calculates is a discount the browser can choose.
+ *
+ * A coupon is matched by code. An offer marked auto_apply carries no code and applies itself
+ * as soon as the subtotal qualifies; when several qualify, the customer gets the best one.
+ */
+async function resolveOffer(env: Bindings, subtotal: number, deliveryFee: number, code: string) {
+  const wanted = normalize(code).toUpperCase();
+  const rows = await env.DB.prepare(
+    `SELECT id, code, title, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, usage_limit AS usageLimit, used_count AS usedCount
+     FROM offers
+     WHERE active = 1
+       AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP)
+       AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP)
+       AND (${wanted ? 'upper(code) = ?' : 'auto_apply = 1'})`,
+  ).bind(...(wanted ? [wanted] : [])).all<OfferRow>();
+
+  const value = (offer: OfferRow) => {
+    if (offer.discountType === 'percentage') return Math.min(subtotal, Math.round((subtotal * Number(offer.discountValue || 0)) / 100));
+    if (offer.discountType === 'free_delivery') return 0;
+    return Math.min(subtotal, Math.max(0, Number(offer.discountValue || 0)));
+  };
+  const usable = rows.results.filter((offer) => {
+    if (subtotal < Number(offer.minSubtotal || 0)) return false;
+    // A limit of 0 means unlimited; anything else stops the coupon once it is used up.
+    if (Number(offer.usageLimit || 0) > 0 && Number(offer.usedCount || 0) >= Number(offer.usageLimit)) return false;
+    return true;
+  });
+
+  if (!usable.length) {
+    if (!wanted) return { discount: 0, deliveryFee, offer: null as OfferRow | null, error: '' };
+    const known = rows.results[0];
+    if (!known) return { discount: 0, deliveryFee, offer: null, error: 'That coupon code is not valid.' };
+    if (subtotal < Number(known.minSubtotal || 0)) return { discount: 0, deliveryFee, offer: null, error: `This coupon needs a subtotal of at least ${known.minSubtotal}.` };
+    return { discount: 0, deliveryFee, offer: null, error: 'This coupon has already been used the maximum number of times.' };
+  }
+
+  // Best for the customer: compare the discount plus any delivery saved.
+  const worth = (offer: OfferRow) => value(offer) + (offer.discountType === 'free_delivery' ? deliveryFee : 0);
+  const best = usable.reduce((winner, offer) => (worth(offer) > worth(winner) ? offer : winner), usable[0]);
+  return { discount: value(best), deliveryFee: best.discountType === 'free_delivery' ? 0 : deliveryFee, offer: best, error: '' };
+}
+
+/** Lets checkout preview a coupon before the order is placed, using the same maths. */
+app.post('/api/offers/validate', async (c) => {
+  const body = await c.req.json<{ subtotal?: number; deliveryFee?: number; code?: string }>();
+  const subtotal = Math.max(0, Math.round(Number(body.subtotal) || 0));
+  const deliveryFee = Math.max(0, Math.round(Number(body.deliveryFee) || 0));
+  const result = await resolveOffer(c.env, subtotal, deliveryFee, normalize(body.code));
+  if (result.error) return json(c, { ok: false, error: result.error }, 400);
+  return json(c, {
+    ok: true,
+    discount: result.discount,
+    deliveryFee: result.deliveryFee,
+    total: Math.max(0, subtotal - result.discount) + result.deliveryFee,
+    offer: result.offer ? { code: result.offer.code, title: result.offer.title, discountType: result.offer.discountType, discountValue: result.offer.discountValue } : null,
+  });
+});
+
 app.post('/api/orders', async (c) => {
   const body = await c.req.json<{
     name: string; phone: string; email?: string; address: string; district?: string; upazila?: string; specialNote?: string;
-    paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
+    paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string; couponCode?: string;
     items: Array<{ sku: string; quantity: number; options?: { size?: string; color?: string; gram?: string } }>;
   }>();
   const address = normalize(body.address);
@@ -2115,6 +2308,19 @@ app.post('/api/orders', async (c) => {
   if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
   const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
   const bySku = new Map(products.results.map((product) => [product.sku, product]));
+  const productIds = products.results.map((product) => product.id);
+  const variantRows = productIds.length
+    ? await c.env.DB.prepare(`SELECT product_id AS productId, label, price FROM product_variants WHERE active = 1 AND kind = 'size' AND price IS NOT NULL AND product_id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ productId: number; label: string; price: number }>()
+    : { results: [] as Array<{ productId: number; label: string; price: number }> };
+  const variantBySku = new Map(variantRows.results.map((row) => [`${row.productId}|${String(row.label).toLowerCase()}`, row]));
+  // A shop that prices by size may leave the base price at zero, which the storefront shows as
+  // "From <cheapest>". Without this, an order naming no size would price that product at zero
+  // and the customer would get it free.
+  const cheapestVariant = new Map<number, number>();
+  for (const row of variantRows.results) {
+    const current = cheapestVariant.get(row.productId);
+    if (current === undefined || Number(row.price) < current) cheapestVariant.set(row.productId, Number(row.price));
+  }
   const lineItems = body.items.map((item) => {
     const product = bySku.get(normalize(item.sku));
     if (!product || item.quantity < 1 || product.stock < item.quantity) throw new RequestError('A selected product is unavailable or out of stock.');
@@ -2122,29 +2328,42 @@ app.post('/api/orders', async (c) => {
     if (item.quantity < minimum) throw new RequestError(`${product.name} requires a minimum order quantity of ${minimum}.`);
     const tiers = parseVolumeTiers(product.volumeTiersJson);
     const tier = tiers.filter((entry) => item.quantity >= entry.minQty).at(-1);
-    const options = Object.fromEntries(Object.entries(item.options || {}).filter(([key, value]) => ['size', 'color', 'gram'].includes(key) && normalize(value))); return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? product.price, options };
+    const options = Object.fromEntries(Object.entries(item.options || {}).filter(([key, value]) => ['size', 'color', 'gram'].includes(key) && normalize(value)));
+    // A priced variant (50g, 100g, a clothing size) overrides the base price. The price comes
+    // from the database, never from the request, so a customer cannot name their own.
+    const variantLabel = normalize(options.size) || normalize(options.gram);
+    const variant = variantLabel ? variantBySku.get(`${product.id}|${variantLabel.toLowerCase()}`) : undefined;
+    const basePrice = variant?.price ?? (Number(product.price) || cheapestVariant.get(product.id) || product.price);
+    return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? basePrice, options, variantLabel: variant ? variant.label : '' };
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  // Offers finally do something: a coupon code, or an auto-apply offer when none is given.
+  const offerResult = await resolveOffer(c.env, subtotal, deliveryFee, normalize(body.couponCode));
+  if (offerResult.error) return json(c, { error: offerResult.error }, 400);
+  const discountAmount = offerResult.discount;
+  const chargedDeliveryFee = offerResult.deliveryFee;
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
   const invoicePlaceholder = `PENDING-${orderCode}`;
   const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, district, upazila, address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
-  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, deliveryFee, zone, paymentMethod, trxId || null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
+  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note, discount_amount, offer_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, chargedDeliveryFee, zone, paymentMethod, trxId || null, normalize(body.specialNote) || null, discountAmount, offerResult.offer?.code ?? null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
   const invoiceNumber = invoiceNumberForOrderId(order.id) || invoicePlaceholder;
   await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(invoiceNumber, order.id).run();
   order.invoiceNumber = invoiceNumber;
   for (const item of lineItems) {
-    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.options && Object.keys(item.options).length ? `${item.product.name} · ${Object.entries(item.options).map(([key, value]) => `${key === 'size' ? 'Size' : key === 'color' ? 'Colour' : 'Weight'}: ${value}`).join(' · ')}` : item.product.name, item.quantity, item.unitPrice).run();
+    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price, variant_label) VALUES (?, ?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.options && Object.keys(item.options).length ? `${item.product.name} · ${Object.entries(item.options).map(([key, value]) => `${key === 'size' ? 'Size' : key === 'color' ? 'Colour' : 'Weight'}: ${value}`).join(' · ')}` : item.product.name, item.quantity, item.unitPrice, item.variantLabel || null).run();
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
   }
+  // Count a coupon only once the order exists, so an abandoned checkout never burns a use.
+  if (offerResult.offer) await c.env.DB.prepare('UPDATE offers SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(offerResult.offer.id).run();
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();
   await createAdminNotification(c.env, { type: 'order', title: 'New order received', message: `Order ${order.orderCode} is ready for review.`, entityType: 'order', entityId: order.orderCode });
-  c.executionCtx.waitUntil(metaCapiEvent(c.env, { eventName: 'Purchase', eventId: order.orderCode, sourceUrl: new URL('/checkout', c.req.url).toString(), value: subtotal + deliveryFee, user: { name: body.name, email: body.email, phone: body.phone, city: zone === 'dhaka' ? 'Dhaka' : undefined, region: zone, country: 'bd', externalId: String(customer.id) }, items: lineItems.map((item) => ({ id: item.product.sku, name: item.product.name, quantity: item.quantity, price: item.unitPrice })) }).catch(async (error) => { console.error('[Meta CAPI Purchase]', error); await createAdminNotification(c.env, { type: 'integration', title: 'Meta CAPI purchase sync failed', message: `Purchase event ${order.orderCode} could not be sent.`, entityType: 'order', entityId: order.orderCode }); }));
+  c.executionCtx.waitUntil(metaCapiEvent(c.env, { eventName: 'Purchase', eventId: order.orderCode, sourceUrl: new URL('/checkout', c.req.url).toString(), value: Math.max(0, subtotal - discountAmount) + chargedDeliveryFee, user: { name: body.name, email: body.email, phone: body.phone, city: zone === 'dhaka' ? 'Dhaka' : undefined, region: zone, country: 'bd', externalId: String(customer.id) }, items: lineItems.map((item) => ({ id: item.product.sku, name: item.product.name, quantity: item.quantity, price: item.unitPrice })) }).catch(async (error) => { console.error('[Meta CAPI Purchase]', error); await createAdminNotification(c.env, { type: 'integration', title: 'Meta CAPI purchase sync failed', message: `Purchase event ${order.orderCode} could not be sent.`, entityType: 'order', entityId: order.orderCode }); }));
   const itemSummary = lineItems.map((item) => `${item.product.name} × ${item.quantity}`).join(' · ');
-  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', paymentMethod, subtotal, deliveryFee, subtotal + deliveryFee, itemSummary, null, null, body.specialNote ? normalize(body.specialNote) : null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', paymentMethod, subtotal, chargedDeliveryFee, Math.max(0, subtotal - discountAmount) + chargedDeliveryFee, itemSummary, null, null, body.specialNote ? normalize(body.specialNote) : null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
   const customerToken = await createCustomerSession(c.env, customer.id);
-  return json(c, { order: { ...order, subtotal, deliveryFee, total: subtotal + deliveryFee, zone, paymentMethod }, customerToken, message: 'Order received successfully.' }, 201);
+  return json(c, { order: { ...order, subtotal, deliveryFee: chargedDeliveryFee, discount: discountAmount, offerCode: offerResult.offer?.code ?? null, total: Math.max(0, subtotal - discountAmount) + chargedDeliveryFee, zone, paymentMethod }, customerToken, message: 'Order received successfully.' }, 201);
 });
 
 app.patch('/api/orders/:orderCode/status', async (c) => {

@@ -6,7 +6,10 @@ const track = (name, params = {}) => window.rinovaAnalytics?.track ? window.rino
 const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.sku || item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
 const COD_FALLBACK = { id: 'cod', label: 'Cash on delivery', labelBn: 'ক্যাশ অন ডেলিভারি', instructions: '', account: '', requiresTrxId: false };
-const state = { deliveryFee: 0, zone: '', paymentMethod: 'cod', paymentMethods: [COD_FALLBACK] };
+// Delivery charges are the owner's to set in Settings. They start empty here and are filled
+// from /api/config, so changing them in the dashboard changes what the customer is quoted
+// and what the summary note says, instead of the old hard-coded 90/150 pair.
+const state = { deliveryFee: 0, zone: '', paymentMethod: 'cod', paymentMethods: [COD_FALLBACK], delivery: { dhaka: 0, outsideDhaka: 0 }, coupon: { code: '', discount: 0, deliveryFee: null, title: '' } };
 
 const selectedPaymentMethod = () => {
   const value = $('#checkout-payment-method')?.value || '';
@@ -37,6 +40,9 @@ async function loadPaymentMethods() {
       const partner = payload.delivery?.partner;
       const partnerName = $('#delivery-partner-name');
       if (partner && partnerName) partnerName.textContent = partner;
+      state.delivery.dhaka = Number(payload.delivery?.dhaka || 0);
+      state.delivery.outsideDhaka = Number(payload.delivery?.outsideDhaka || 0);
+      renderDeliveryNote();
     }
   } catch {
     // Keep the cash-on-delivery fallback rather than blocking checkout on a config hiccup.
@@ -70,7 +76,18 @@ function renderItems() {
   $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="checkout-item"><div><strong>${item.name}</strong>${item.options?.size || item.options?.color ? `<small>${[item.options?.size && `Size: ${item.options.size}`, item.options?.color && `Colour: ${item.options.color}`].filter(Boolean).join(' · ')}</small>` : ''}<small>${money(item.price)} each</small></div><div class="checkout-item-actions"><div class="quantity-stepper"><button type="button" data-checkout-qty="${item.id}" data-direction="-1" aria-label="Decrease ${item.name}"><span data-rinova-icon="minus"></span></button><span>${Number(item.quantity || 0)}</span><button type="button" data-checkout-qty="${item.id}" data-direction="1" aria-label="Increase ${item.name}">+</button></div><strong>${money(Number(item.price || 0) * Number(item.quantity || 0))}</strong></div></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>';
   const subtotal = bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
   $('#subtotal').textContent = money(subtotal);
-  $('#total').textContent = money(subtotal + state.deliveryFee);
+  // A coupon can cut the subtotal, the delivery fee, or both.
+  const discount = Math.min(subtotal, Number(state.coupon.discount || 0));
+  const delivery = state.coupon.deliveryFee === null ? state.deliveryFee : Number(state.coupon.deliveryFee);
+  const line = $('#discount-line');
+  if (line) {
+    line.hidden = !discount && delivery >= state.deliveryFee;
+    const label = $('#discount-label');
+    if (label) label.textContent = state.coupon.title ? `Discount · ${state.coupon.title}` : 'Discount';
+    const node = $('#discount');
+    if (node) node.textContent = discount ? `-${money(discount)}` : `-${money(state.deliveryFee - delivery)}`;
+  }
+  $('#total').textContent = money(Math.max(0, subtotal - discount) + delivery);
   document.querySelectorAll('[data-checkout-qty]').forEach((button) => button.addEventListener('click', () => changeQuantity(Number(button.dataset.checkoutQty), Number(button.dataset.direction))));
 }
 
@@ -127,7 +144,7 @@ async function updateDelivery() {
       const response = await fetch(`${API_BASE}/delivery-fee?district=${encodeURIComponent(district)}&upazila=${encodeURIComponent(upazila)}`);
       if (response.ok) {
         const payload = await response.json();
-        state.deliveryFee = Number(payload.fee || 150);
+        state.deliveryFee = Number(payload.fee ?? state.delivery.outsideDhaka);
         state.zone = payload.zone || 'outside-dhaka';
         $('#delivery').textContent = `${money(state.deliveryFee)} · ${payload.label || (state.zone === 'dhaka' ? 'Inside Dhaka' : 'Outside Dhaka')}`;
         renderItems();
@@ -147,7 +164,8 @@ async function updateDelivery() {
   }
   const referenceText = `${district} ${address}`;
   const insideDhaka = /\bdhaka\b/i.test(referenceText) || referenceText.includes('ঢাকা');
-  state.deliveryFee = insideDhaka ? 90 : 150;
+  // Estimate from the owner's own charges, never from a hard-coded pair.
+  state.deliveryFee = insideDhaka ? state.delivery.dhaka : state.delivery.outsideDhaka;
   state.zone = insideDhaka ? 'dhaka' : 'outside-dhaka';
   $('#delivery').textContent = `${money(state.deliveryFee)} · ${insideDhaka ? 'Inside Dhaka (estimated)' : 'Outside Dhaka (estimated)'}`;
   renderItems();
@@ -173,6 +191,8 @@ async function submitOrder(event) {
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
   data.items = bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: item.quantity, options: item.options || {} }));
+  // The coupon box sits in the order summary, outside the form, so it is not in the FormData.
+  data.couponCode = state.coupon.code || '';
   const method = selectedPaymentMethod();
   data.paymentMethod = method.id;
   if (method.requiresTrxId && !String(data.trxId || '').trim()) return $('#checkout-error').textContent = `Please enter the ${method.label} transaction ID for an advance payment.`;
@@ -192,6 +212,7 @@ async function submitOrder(event) {
       <dl class="success-facts">
         <div><dt>Order ID</dt><dd>${payload.order.orderCode}</dd></div>
         <div><dt>Invoice</dt><dd>${payload.order.invoiceNumber || '—'}</dd></div>
+        ${Number(payload.order.discount || 0) ? `<div><dt>Discount${payload.order.offerCode ? ` · ${escapeHtml(payload.order.offerCode)}` : ''}</dt><dd>-${money(payload.order.discount)}</dd></div>` : ''}
         <div><dt>Total</dt><dd>${money(payload.order.total)}</dd></div>
       </dl>
       <div class="success-actions">
@@ -219,3 +240,59 @@ updatePaymentFields();
 loadPaymentMethods();
 renderItems();
 if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });
+/**
+ * The summary used to state "৳90 inside Dhaka and ৳150 outside Dhaka" as fixed text, so it
+ * kept quoting the old prices after the owner changed them in Settings. It now reads the
+ * live charges, and says nothing rather than something wrong if they cannot be loaded.
+ */
+function renderDeliveryNote() {
+  const node = document.getElementById('delivery-note');
+  if (!node) return;
+  const inside = Number(state.delivery.dhaka || 0);
+  const outside = Number(state.delivery.outsideDhaka || 0);
+  if (!inside && !outside) { node.textContent = 'Delivery is calculated from your district and upazila.'; return; }
+  node.textContent = `Delivery is calculated automatically: ${money(inside)} inside Dhaka and ${money(outside)} outside Dhaka.`;
+}
+
+
+/**
+ * Checks the coupon against the server before the order is placed. The same routine prices it
+ * again at order time, so a coupon edited or used up between preview and submit is caught.
+ */
+async function applyCoupon() {
+  const input = $('#checkout-coupon');
+  const message = $('#checkout-coupon-message');
+  if (!input || !message) return;
+  const code = input.value.trim();
+  const subtotal = bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
+  if (!code) {
+    state.coupon = { code: '', discount: 0, deliveryFee: null, title: '' };
+    message.textContent = '';
+    message.className = 'coupon-message';
+    renderItems();
+    return;
+  }
+  message.textContent = 'Checking…';
+  message.className = 'coupon-message';
+  try {
+    const response = await fetch(`${API_BASE}/offers/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subtotal, deliveryFee: state.deliveryFee, code }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || 'That coupon could not be applied.');
+    state.coupon = { code, discount: Number(payload.discount || 0), deliveryFee: Number(payload.deliveryFee), title: payload.offer?.title || '' };
+    const saved = state.coupon.discount || (state.deliveryFee - state.coupon.deliveryFee);
+    message.textContent = saved > 0 ? `Coupon applied — you save ${money(saved)}.` : 'Coupon applied.';
+    message.className = 'coupon-message ok';
+  } catch (error) {
+    state.coupon = { code: '', discount: 0, deliveryFee: null, title: '' };
+    message.textContent = error.message;
+    message.className = 'coupon-message bad';
+  }
+  renderItems();
+}
+
+document.getElementById('checkout-coupon-apply')?.addEventListener('click', applyCoupon);
+document.getElementById('checkout-coupon')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); applyCoupon(); } });

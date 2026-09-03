@@ -39,7 +39,7 @@ async function copyToClipboard(text, successMessage = 'Copied to clipboard') {
 // Product editor helpers: gallery tiles, bulk-price rows and category-aware
 // option fields. The owner never sees or types JSON — hidden inputs carry it.
 // ---------------------------------------------------------------------------
-const editorState = { media: [], tiers: [], options: { size: [], color: [] }, details: {} };
+const editorState = { media: [], tiers: [], options: { size: [], color: [] }, details: {}, variantPrices: {}, faq: [] };
 
 const CLOTHING_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Free size'];
 const CLOTHING_COLORS = ['Black', 'White', 'Red', 'Maroon', 'Pink', 'Blue', 'Navy', 'Green', 'Yellow', 'Beige', 'Brown', 'Grey', 'Golden', 'Multicolour'];
@@ -167,6 +167,7 @@ function renderProductOptions() {
     if (box.checked) values.add(box.value); else values.delete(box.value);
     editorState.options[group] = [...values];
     box.closest('.option-chip')?.classList.toggle('selected', box.checked);
+    renderVariantPrices();
   }));
   body.querySelectorAll('[data-option-add]').forEach((button) => button.addEventListener('click', () => {
     const group = button.dataset.optionAdd;
@@ -176,6 +177,7 @@ function renderProductOptions() {
     if (!editorState.options[group].includes(value)) editorState.options[group].push(value);
     if (input) input.value = '';
     renderProductOptions();
+    renderVariantPrices();
   }));
   body.querySelectorAll('[data-option-detail]').forEach((input) => input.addEventListener('input', () => { editorState.details[input.dataset.optionDetail] = input.value; }));
 }
@@ -210,6 +212,73 @@ function editorSpecsPayload() {
     specs.push({ key, name: known ? known.label.split(' · ')[0] : key, value: text });
   }
   return specs;
+}
+
+/**
+ * A size used to be a bare label, so "50ml or 150ml" carried one price and the shop had no way
+ * to charge more for the larger jar — the product page then had no price to show when a size
+ * was picked. Every chosen size now gets its own price box. Leave one empty and that size sells
+ * at the product's base price.
+ */
+function renderVariantPrices() {
+  const host = document.getElementById('variant-price-body');
+  if (!host) return;
+  const sizes = editorState.options.size || [];
+  if (!sizes.length) {
+    host.innerHTML = '<p class="muted">সাইজ যোগ করলে এখানে প্রতিটি সাইজের দাম বসানোর ঘর আসবে। (Add a size above to set its price.)</p>';
+    return;
+  }
+  const base = Number(document.querySelector('#product-form [name="price"]')?.value || 0);
+  host.innerHTML = `<div class="variant-price-grid">${sizes.map((label) => {
+    const value = editorState.variantPrices[label];
+    return `<label class="variant-price-row"><span>${escapeHtml(label)}</span><input type="number" min="0" step="1" inputmode="numeric" data-variant-price="${escapeHtml(label)}" value="${value === undefined || value === null || value === '' ? '' : Number(value)}" placeholder="${base || 'দাম'}" /></label>`;
+  }).join('')}</div><p class="muted">খালি রাখলে প্রোডাক্টের মূল দাম প্রযোজ্য হবে। (Empty = the product's base price.)</p>`;
+  host.querySelectorAll('[data-variant-price]').forEach((input) => input.addEventListener('input', () => {
+    const label = input.dataset.variantPrice;
+    const raw = input.value.trim();
+    if (raw === '') delete editorState.variantPrices[label];
+    else editorState.variantPrices[label] = Math.max(0, Number(raw) || 0);
+  }));
+}
+
+/** What the API stores: one row per size (with its price) and one per colour. */
+function editorVariantsPayload() {
+  const sizes = (editorState.options.size || []).map((label) => ({ kind: 'size', label, price: editorState.variantPrices[label] ?? null }));
+  const colors = (editorState.options.color || []).map((label) => ({ kind: 'color', label, price: null }));
+  return [...sizes, ...colors];
+}
+
+/** The product FAQ used to be the same four hard-coded questions on every product. */
+function renderFaqRows() {
+  const host = document.getElementById('product-faq-body');
+  if (!host) return;
+  host.innerHTML = (editorState.faq.length ? editorState.faq : []).map((row, index) => `<div class="faq-row" data-faq-row="${index}"><label>প্রশ্ন (Question)<input data-faq-question="${index}" value="${escapeHtml(row.question || '')}" placeholder="এই প্রোডাক্ট কিভাবে ব্যবহার করব?" /></label><label>উত্তর (Answer)<textarea rows="2" data-faq-answer="${index}" placeholder="সংক্ষেপে উত্তর লিখুন।">${escapeHtml(row.answer || '')}</textarea></label><button type="button" class="icon-action" data-faq-remove="${index}">Remove</button></div>`).join('')
+    || '<p class="muted">কোনো প্রশ্ন যোগ করা হয়নি। খালি রাখলে প্রোডাক্ট পেজে সাধারণ তথ্য দেখাবে। (None yet — the page falls back to general information.)</p>';
+  host.querySelectorAll('[data-faq-question]').forEach((input) => input.addEventListener('input', () => { editorState.faq[Number(input.dataset.faqQuestion)].question = input.value; }));
+  host.querySelectorAll('[data-faq-answer]').forEach((input) => input.addEventListener('input', () => { editorState.faq[Number(input.dataset.faqAnswer)].answer = input.value; }));
+  host.querySelectorAll('[data-faq-remove]').forEach((button) => button.addEventListener('click', () => { editorState.faq.splice(Number(button.dataset.faqRemove), 1); renderFaqRows(); }));
+}
+
+document.getElementById('faq-add')?.addEventListener('click', () => { editorState.faq.push({ question: '', answer: '' }); renderFaqRows(); });
+document.querySelector('#product-form [name="price"]')?.addEventListener('input', renderVariantPrices);
+
+/** Pull saved variants and FAQ back when an existing product is opened. */
+async function loadEditorExtras(sku) {
+  editorState.variantPrices = {};
+  editorState.faq = [];
+  if (sku) {
+    try {
+      const data = await api(`/admin/products/sku/${encodeURIComponent(sku)}/detail`);
+      for (const variant of data.variants || []) {
+        if (variant.kind === 'size' && variant.price !== null && variant.price !== undefined) editorState.variantPrices[variant.label] = Number(variant.price);
+      }
+      editorState.faq = (data.faq || []).map((row) => ({ question: row.question || '', answer: row.answer || '' }));
+    } catch {
+      // A new product, or the detail call failed; the editor still opens with empty extras.
+    }
+  }
+  renderVariantPrices();
+  renderFaqRows();
 }
 
 function parseEditorMedia(value) { const raw = String(value || '').trim(); if (!raw) return []; const parsed = JSON.parse(raw); if (!Array.isArray(parsed)) throw new Error('Media must be a JSON array.'); const seen = new Set(); return parsed.map((item) => { const entry = typeof item === 'string' ? { type: 'image', url: item } : item; const url = String(entry?.url || '').trim(); if (!/^(https:\/\/|\/assets\/|\/media\/)/i.test(url)) throw new Error('Media URLs must start with https://, /assets/ or /media/.'); return { type: entry?.type === 'video' ? 'video' : 'image', url, ...(entry?.alt ? { alt: String(entry.alt).slice(0, 160) } : {}) }; }).filter((item) => { const key = `${item.type}:${item.url.toLowerCase()}`; if (seen.has(key)) return false; seen.add(key); return true; }); }
@@ -329,7 +398,47 @@ async function queryInvoiceByNumber(event) { event.preventDefault(); const invoi
 async function loadProducts() { try { const data = await api(`/admin/products?q=${encodeURIComponent($('#product-search')?.value || '')}&status=${encodeURIComponent($('#product-status')?.value || '')}`); state.products = data.products || []; renderProducts(); renderBarcodeProductOptions(); if (!state.editRouteHandled) { const editSku = new URLSearchParams(window.location.search).get('editSku') || ''; const product = state.products.find((item) => String(item.sku) === editSku); if (editSku && product) { state.editRouteHandled = true; openProductEditor(product); } } } catch (error) { toast(error.message); } }
 function margin(product) { return Number(product.price) ? Math.round((Number(product.price) - Number(product.costPrice || 0)) / Number(product.price) * 100) : 0; }
 function renderProducts() { const rows = state.products.map((product) => { const actions = state.adminMode === 'edit' ? `<button class="icon-action" data-edit-sku="${escapeHtml(product.sku)}">Edit</button> <button class="icon-action" data-stock-sku="${escapeHtml(product.sku)}" data-stock-name="${escapeHtml(product.name)}">Stock</button> <a class="icon-action" href="/products/${encodeURIComponent(product.slug || product.id)}?admin_preview=1">View live</a>` : `<a class="icon-action" href="/products/${encodeURIComponent(product.slug || product.id)}?admin_preview=1">View live</a> <button class="icon-action" data-quick-edit-sku="${escapeHtml(product.sku)}">Quick edit</button>`; return `<tr><td><a class="admin-product-link" href="/products/${encodeURIComponent(product.slug || product.id)}?admin_preview=1">${escapeHtml(product.name)}</a><small>${escapeHtml(product.categoryName || 'Uncategorised')}</small></td><td>${escapeHtml(product.sku)}</td><td>${money(product.price)}</td><td>${money(product.costPrice)}</td><td>${margin(product)}%</td><td><strong>${product.stock}</strong><small>threshold ${product.lowStockThreshold}</small></td><td><span class="status-pill ${escapeHtml(product.status)}">${escapeHtml(product.status)}</span></td><td>${actions}</td></tr>`; }).join(''); $('#products-table').innerHTML = rows || '<tr><td colspan="8" class="muted">No products found.</td></tr>'; $('#inventory-table').innerHTML = state.products.map((product) => `<tr><td><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.sku)}</small></td><td><strong>${product.stock}</strong></td><td>${product.lowStockThreshold}</td><td>${money(product.stock * (product.costPrice || 0))}</td><td>${state.adminMode === 'edit' ? `<button class="icon-action" data-stock-sku="${escapeHtml(product.sku)}" data-stock-name="${escapeHtml(product.name)}">Adjust stock</button>` : '<span class="muted">View only</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No products found.</td></tr>'; }
-async function loadOrders() { try { const data = await api(`/admin/orders?q=${encodeURIComponent($('#order-search')?.value || '')}&status=${encodeURIComponent($('#order-status')?.value || '')}`); state.orders = data.orders || []; const statuses = ['pending','confirmed','processing','shipped','delivered','returned','customer_cancelled','admin_cancelled']; $('#orders-table').innerHTML = state.orders.map((order) => `<tr><td><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><small>Order ${escapeHtml(order.orderCode)}</small><small>${escapeHtml(order.createdAt)}</small></td><td><strong>${escapeHtml(order.name)}</strong><small>${escapeHtml(order.phone)}</small></td><td>${money(Number(order.subtotal) + Number(order.deliveryFee))}</td><td>${escapeHtml(order.paymentMethod)}<small>${escapeHtml(order.paymentStatus)}</small></td><td>${escapeHtml(order.courierStatus || 'not booked')}</td><td><select class="order-status-select" data-order-code="${escapeHtml(order.orderCode)}">${statuses.map((status) => `<option value="${status}" ${status === order.status ? 'selected' : ''}>${status}</option>`).join('')}</select></td><td>${escapeHtml(order.address || order.district || '')}${order.customerNote ? `<small>Note: ${escapeHtml(order.customerNote)}</small>` : ''}<div class="order-row-actions"><button class="icon-action" type="button" data-order-details="${escapeHtml(order.orderCode)}">Edit / details</button><button class="icon-action" type="button" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No orders found.</td></tr>'; } catch (error) { toast(error.message); } }
+const ORDER_STATUS_LOOK = {
+  pending: { label: 'Pending', tone: 'wait' },
+  confirmed: { label: 'Confirmed', tone: 'info' },
+  processing: { label: 'Processing', tone: 'work' },
+  shipped: { label: 'Shipped', tone: 'ship' },
+  delivered: { label: 'Delivered', tone: 'done' },
+  returned: { label: 'Returned', tone: 'warn' },
+  customer_cancelled: { label: 'Cancelled by customer', tone: 'stop' },
+  admin_cancelled: { label: 'Cancelled by shop', tone: 'stop' },
+};
+
+/** A colour-coded pill, because a row of identical grey words is unreadable at a glance. */
+function orderStatusPill(status) {
+  const look = ORDER_STATUS_LOOK[status] || { label: status || 'unknown', tone: 'info' };
+  return `<span class="order-pill order-pill-${look.tone}">${escapeHtml(look.label)}</span>`;
+}
+
+// Long lists slow the page and bury today's work, so only the newest few show until the
+// owner searches or filters. Searching still reaches every order.
+const ORDER_PAGE_SIZE = 15;
+
+async function loadOrders() {
+  try {
+    const query = $('#order-search')?.value || '';
+    const status = $('#order-status')?.value || '';
+    const data = await api(`/admin/orders?q=${encodeURIComponent(query)}&status=${encodeURIComponent(status)}`);
+    const all = data.orders || [];
+    state.orders = all;
+    const narrowed = Boolean(query.trim() || status);
+    const shown = narrowed ? all : all.slice(0, ORDER_PAGE_SIZE);
+    const statuses = Object.keys(ORDER_STATUS_LOOK);
+    $('#orders-table').innerHTML = shown.map((order) => `<tr><td><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><small>Order ${escapeHtml(order.orderCode)}</small><small>${escapeHtml(order.createdAt)}</small></td><td><strong>${escapeHtml(order.name)}</strong><small>${escapeHtml(order.phone)}</small></td><td>${money(Math.max(0, Number(order.subtotal) - Number(order.discount || 0)) + Number(order.deliveryFee))}${Number(order.discount || 0) ? `<small>after -${money(order.discount)}${order.offerCode ? ` ${escapeHtml(order.offerCode)}` : ''}</small>` : ''}</td><td>${escapeHtml(order.paymentMethod)}<small>${escapeHtml(order.paymentStatus)}</small></td><td>${escapeHtml(order.courierStatus || 'not booked')}</td><td><div class="order-status-cell">${orderStatusPill(order.status)}<select class="order-status-select" data-order-code="${escapeHtml(order.orderCode)}" aria-label="Change status for ${escapeHtml(order.orderCode)}">${statuses.map((value) => `<option value="${value}" ${value === order.status ? 'selected' : ''}>${escapeHtml(ORDER_STATUS_LOOK[value].label)}</option>`).join('')}</select></div></td><td>${escapeHtml(order.address || order.district || '')}${order.customerNote ? `<small>Note: ${escapeHtml(order.customerNote)}</small>` : ''}<div class="order-row-actions"><button class="icon-action" type="button" data-order-details="${escapeHtml(order.orderCode)}">Edit / details</button><button class="icon-action" type="button" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No orders found.</td></tr>';
+    const hint = $('#orders-hint');
+    if (hint) {
+      hint.textContent = narrowed
+        ? `${all.length} order${all.length === 1 ? '' : 's'} match your search.`
+        : all.length > ORDER_PAGE_SIZE
+          ? `Showing the latest ${ORDER_PAGE_SIZE} orders. Search by order number, invoice, name or phone to find any other.`
+          : `${all.length} order${all.length === 1 ? '' : 's'}.`;
+    }
+  } catch (error) { toast(error.message); } }
 function orderAddress(order) { return [order.address, order.upazila, order.district].filter(Boolean).join(', '); }
 function productSelectOptions(selectedSku) { return state.catalogue.filter((product) => product.status === 'active' || String(product.sku) === String(selectedSku)).map((product) => `<option value="${escapeHtml(product.sku)}" ${String(product.sku) === String(selectedSku) ? 'selected' : ''}>${escapeHtml(product.name)} · ${escapeHtml(product.sku)} · ${money(product.price)}</option>`).join(''); }
 function orderRowUnitPrice(row) {
@@ -603,8 +712,8 @@ async function loadSettings() {
 }
 
 function parseProductBadges(value) { let parsed = []; try { parsed = Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch {} return Array.isArray(parsed) ? parsed.map((item) => String(item).toLowerCase()).filter((item) => ['hot', 'stockout', 'out', 'instock', 'new'].includes(item)) : []; }
-function openProductEditor(product) { setAdminMode('edit'); const form = $('#product-form'); form.reset(); form.dataset.sku = product?.sku || ''; setEditorMedia(product?.mediaJson || '[]'); setEditorTiers(product?.volumeTiersJson || '[]'); setEditorOptions(product?.specsJson || '[]'); $('#editor-heading').textContent = product ? 'Edit product' : 'Create a product'; $('#product-submit').innerHTML = product ? 'Save changes <span>→</span>' : 'Create product <span>→</span>'; $('#product-form-message').textContent = ''; if ($('#upload-message')) $('#upload-message').textContent = ''; if (product) { for (const [key, value] of Object.entries({ name: product.name, sku: product.sku, brand: product.brand, categoryId: product.categoryId, shortDescription: product.shortDescription, description: product.description, editorNote: product.editorNote, costPrice: product.costPrice, price: product.price, compareAtPrice: product.compareAtPrice, stock: product.stock, lowStockThreshold: product.lowStockThreshold, minOrderQty: product.minOrderQty, weightGrams: product.weightGrams, barcode: product.barcode, imageUrl: product.imageUrl, status: product.status })) { const field = form.elements.namedItem(key); if (field) field.value = value ?? ''; } form.elements.namedItem('featured').checked = Boolean(product.featured); const badges = parseProductBadges(product.badgesJson || product.badges); form.elements.namedItem('badgeHot').checked = badges.includes('hot'); form.elements.namedItem('badgeStockOut').checked = badges.includes('stockout') || badges.includes('out') || badges.includes('instock'); form.elements.namedItem('badgeNew').checked = badges.includes('new'); } else { form.elements.namedItem('badgeHot').checked = false; form.elements.namedItem('badgeStockOut').checked = false; form.elements.namedItem('badgeNew').checked = false; } updateImagePreview(); renderProductOptions(); $('#product-editor').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-async function saveProduct(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.featured = form.elements.namedItem('featured').checked; data.badges = ['hot', 'stockout', 'new'].filter((badge) => form.elements.namedItem(`badge${badge === 'hot' ? 'Hot' : badge === 'stockout' ? 'StockOut' : 'New'}`).checked); data.volumeTiers = $('#product-volume-tiers')?.value || '[]'; data.mediaJson = JSON.stringify(editorState.media); data.specs = editorSpecsPayload(); for (const key of ['categoryId','costPrice','price','stock','lowStockThreshold','minOrderQty','weightGrams']) data[key] = Number(data[key] || 0); data.compareAtPrice = optionalNumber(data.compareAtPrice); const sku = form.dataset.sku; try { if (sku) await api(`/admin/products/sku/${encodeURIComponent(sku)}`, { method: 'PATCH', body: JSON.stringify(data) }); else await api('/admin/products', { method: 'POST', body: JSON.stringify(data) }); $('#product-form-message').textContent = sku ? 'Product updated successfully.' : 'Product created successfully.'; toast(sku ? 'Product updated' : 'Product created'); await loadProducts(); } catch (error) { $('#product-form-message').textContent = error.message; } }
+function openProductEditor(product) { setAdminMode('edit'); const form = $('#product-form'); form.reset(); form.dataset.sku = product?.sku || ''; setEditorMedia(product?.mediaJson || '[]'); setEditorTiers(product?.volumeTiersJson || '[]'); setEditorOptions(product?.specsJson || '[]'); $('#editor-heading').textContent = product ? 'Edit product' : 'Create a product'; $('#product-submit').innerHTML = product ? 'Save changes <span>→</span>' : 'Create product <span>→</span>'; $('#product-form-message').textContent = ''; if ($('#upload-message')) $('#upload-message').textContent = ''; if (product) { for (const [key, value] of Object.entries({ name: product.name, sku: product.sku, brand: product.brand, categoryId: product.categoryId, shortDescription: product.shortDescription, description: product.description, editorNote: product.editorNote, costPrice: product.costPrice, price: product.price, compareAtPrice: product.compareAtPrice, stock: product.stock, lowStockThreshold: product.lowStockThreshold, minOrderQty: product.minOrderQty, weightGrams: product.weightGrams, barcode: product.barcode, imageUrl: product.imageUrl, status: product.status })) { const field = form.elements.namedItem(key); if (field) field.value = value ?? ''; } form.elements.namedItem('featured').checked = Boolean(product.featured); const badges = parseProductBadges(product.badgesJson || product.badges); form.elements.namedItem('badgeHot').checked = badges.includes('hot'); form.elements.namedItem('badgeStockOut').checked = badges.includes('stockout') || badges.includes('out') || badges.includes('instock'); form.elements.namedItem('badgeNew').checked = badges.includes('new'); } else { form.elements.namedItem('badgeHot').checked = false; form.elements.namedItem('badgeStockOut').checked = false; form.elements.namedItem('badgeNew').checked = false; } updateImagePreview(); renderProductOptions(); loadEditorExtras(product?.sku || ''); $('#product-editor').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+async function saveProduct(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.featured = form.elements.namedItem('featured').checked; data.badges = ['hot', 'stockout', 'new'].filter((badge) => form.elements.namedItem(`badge${badge === 'hot' ? 'Hot' : badge === 'stockout' ? 'StockOut' : 'New'}`).checked); data.volumeTiers = $('#product-volume-tiers')?.value || '[]'; data.mediaJson = JSON.stringify(editorState.media); data.specs = editorSpecsPayload(); data.variants = editorVariantsPayload(); data.faq = editorState.faq.filter((row) => String(row.question || '').trim() && String(row.answer || '').trim()); for (const key of ['categoryId','costPrice','price','stock','lowStockThreshold','minOrderQty','weightGrams']) data[key] = Number(data[key] || 0); data.compareAtPrice = optionalNumber(data.compareAtPrice); const sku = form.dataset.sku; try { if (sku) await api(`/admin/products/sku/${encodeURIComponent(sku)}`, { method: 'PATCH', body: JSON.stringify(data) }); else await api('/admin/products', { method: 'POST', body: JSON.stringify(data) }); $('#product-form-message').textContent = sku ? 'Product updated successfully.' : 'Product created successfully.'; toast(sku ? 'Product updated' : 'Product created'); await loadProducts(); } catch (error) { $('#product-form-message').textContent = error.message; } }
 async function adjustStock(sku, name) { const quantity = window.prompt(`Stock change for ${name}. Use a positive or negative number:`); if (quantity === null) return; const reason = window.prompt('Reason: restock, return, damage, adjustment, sale or cancellation', 'adjustment'); if (reason === null) return; try { const data = await api(`/admin/products/sku/${encodeURIComponent(sku)}/stock`, { method: 'POST', body: JSON.stringify({ mode: 'delta', quantity: Number(quantity), reason, note: `Updated from dashboard for ${name}` }) }); toast(`Stock updated to ${data.stock}`); await loadProducts(); } catch (error) { toast(error.message); } }
 async function updateOrderStatus(orderCode, status) { try { await api(`/orders/${encodeURIComponent(orderCode)}/status`, { method: 'PATCH', body: JSON.stringify({ status, reason: 'Updated from admin dashboard' }) }); toast(`${orderCode} marked ${status}`); await loadOrders(); } catch (error) { toast(error.message); await loadOrders(); } }
 async function loadReturns() { try { const data = await api(`/admin/returns?status=${encodeURIComponent($('#return-status').value || '')}`); $('#returns-table').innerHTML = (data.returns || []).map((item) => `<tr><td><strong>${escapeHtml(item.returnCode)}</strong><small>${escapeHtml(item.createdAt)}</small></td><td>${escapeHtml(item.orderCode)}</td><td>${escapeHtml(item.name)}<small>${escapeHtml(item.phone)}</small></td><td>${escapeHtml(item.reason)}</td><td>${money(item.amount)}</td><td><select class="return-status-select" data-return-id="${item.id}">${['requested','approved','picked_up','received','refunded','rejected','cancelled'].map((status) => `<option ${status === item.status ? 'selected' : ''}>${status}</option>`).join('')}</select></td><td><button class="icon-action" data-print-order="${escapeHtml(item.orderCode)}">Invoice</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No returns found.</td></tr>'; } catch (error) { toast(error.message); } }
@@ -642,11 +751,54 @@ function editMarketingBanner(id) { const banner = (state.marketingBanners || [])
 async function saveMarketingBanner(event) { event.preventDefault(); const form = event.target; const values = marketingFormValues(form); const id = form.dataset.id; try { await api(id ? `/admin/marketing-banners/${id}` : '/admin/marketing-banners', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(values) }); $('#marketing-banner-message').textContent = id ? 'Banner updated.' : 'Banner saved.'; toast(id ? 'Banner updated' : 'Banner saved'); resetMarketingBanner(); await loadCms(); } catch (error) { $('#marketing-banner-message').textContent = error.message; } }
 async function uploadMarketingImage() { const input = $('#marketing-banner-file'); const file = input?.files?.[0]; const message = $('#marketing-upload-message'); if (!file) return toast('Choose a banner image first.'); message.textContent = 'Uploading banner image…'; try { const media = await uploadBlogMedia(file); if (media.type !== 'image') throw new Error('Banner image must be JPG, PNG or WEBP.'); $('#marketing-banner-form').elements.namedItem('imageUrl').value = media.url; updateMarketingPreview(); message.textContent = 'Banner image uploaded. Save the banner to apply it.'; input.value = ''; } catch (error) { message.textContent = error.message; } }
 function exportNewsletterCsv() { const leads = state.newsletterLeads || []; if (!leads.length) return toast('There are no newsletter leads to export.'); const csv = ['email,source,status,created_at,last_seen_at', ...leads.map((lead) => [lead.email, lead.source, lead.status, lead.createdAt, lead.lastSeenAt].map((value) => `"${String(value || '').replace(/"/g, '""')}"`).join(','))].join('\n'); const blob = new Blob([`\\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `rinova-newsletter-leads-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url); $('#newsletter-message').textContent = `Exported ${leads.length} lead${leads.length === 1 ? '' : 's'}.`; }
-async function loadCms() { try { const data = await api('/admin/content'); state.cmsPosts = data.posts || []; state.marketingBanners = data.banners || []; state.newsletterLeads = data.newsletter || []; const categorySelect = $('#marketing-category-select'); if (categorySelect) categorySelect.innerHTML = '<option value="">All categories</option>' + (data.categories || []).filter((category) => category.active !== 0 && category.active !== false).map((category) => `<option value="${escapeHtml(category.slug)}">${escapeHtml(category.name)}</option>`).join(''); const banner = data.content?.find((item) => item.key === 'topbar_notice'); if (banner) { const body = JSON.parse(banner.body || '{}'); $('#cms-banner-form [name="text"]').value = body.text || ''; } $('#cms-summary').innerHTML = `<div class="list-row"><span><strong>${(data.pages || []).length}</strong><small>Pages</small></span><span><strong>${(data.posts || []).length}</strong><small>Blog posts</small></span><span><strong>${(data.offers || []).length}</strong><small>Offers</small></span><span><strong>${(data.content || []).length}</strong><small>CMS blocks</small></span></div>`; $('#cms-post-list').innerHTML = (data.posts || []).map((post) => `<div class="list-row"><span><strong>${escapeHtml(post.title)}</strong><small>${escapeHtml(post.category || 'Uncategorised')} · ${escapeHtml(post.status)}</small></span><button type="button" class="icon-action" data-edit-post="${escapeHtml(post.slug)}">Edit</button></div>`).join('') || '<p class="muted">No blog posts yet.</p>'; renderMarketingBanners(); renderNewsletterLeads(); await loadMediaLibrary(); updateCmsSeoReadiness(); } catch (error) { toast(error.message); } }
+async function loadCms() { try { const data = await api('/admin/content'); state.cmsPosts = data.posts || []; state.marketingBanners = data.banners || []; state.newsletterLeads = data.newsletter || []; const categorySelect = $('#marketing-category-select'); if (categorySelect) categorySelect.innerHTML = '<option value="">All categories</option>' + (data.categories || []).filter((category) => category.active !== 0 && category.active !== false).map((category) => `<option value="${escapeHtml(category.slug)}">${escapeHtml(category.name)}</option>`).join(''); const banner = data.content?.find((item) => item.key === 'topbar_notice'); if (banner) { const body = JSON.parse(banner.body || '{}'); $('#cms-banner-form [name="text"]').value = body.text || ''; } $('#cms-summary').innerHTML = `<div class="list-row"><span><strong>${(data.pages || []).length}</strong><small>Pages</small></span><span><strong>${(data.posts || []).length}</strong><small>Blog posts</small></span><span><strong>${(data.offers || []).length}</strong><small>Offers</small></span><span><strong>${(data.content || []).length}</strong><small>CMS blocks</small></span></div>`; $('#cms-post-list').innerHTML = (data.posts || []).map((post) => `<div class="list-row"><span><strong>${escapeHtml(post.title)}</strong><small>${escapeHtml(post.category || 'Uncategorised')} · ${escapeHtml(post.status)}</small></span><button type="button" class="icon-action" data-edit-post="${escapeHtml(post.slug)}">Edit</button></div>`).join('') || '<p class="muted">No blog posts yet.</p>'; renderMarketingBanners(); renderNewsletterLeads(); renderOfferList(data.offers || []); await loadMediaLibrary(); updateCmsSeoReadiness(); } catch (error) { toast(error.message); } }
 async function saveCmsBanner(event) { event.preventDefault(); try { await api('/admin/content/topbar_notice', { method: 'PUT', body: JSON.stringify({ type: 'banner', title: 'Topbar notice', body: { text: event.target.elements.text.value }, status: 'published' }) }); $('#cms-banner-message').textContent = 'Banner saved.'; } catch (error) { $('#cms-banner-message').textContent = error.message; } }
 async function saveCmsPage(event) { event.preventDefault(); const values = Object.fromEntries(new FormData(event.target).entries()); try { await api('/admin/pages', { method: 'POST', body: JSON.stringify(values) }); $('#cms-page-message').textContent = 'Page saved.'; loadCms(); } catch (error) { $('#cms-page-message').textContent = error.message; } }
 async function saveCmsPost(event) { event.preventDefault(); const form = event.target; const values = Object.fromEntries(new FormData(form).entries()); const action = event.submitter?.dataset.postAction || 'draft'; values.status = action === 'publish' ? 'published' : 'draft'; values.priority = Number(values.priority || 0); values.allowSearchEngines = form.elements.namedItem('allowSearchEngines').checked; values.imageUrl = values.coverImageUrl; const seo = blogSeoValues(form); if (action === 'publish' && !seo.ready) { $('#cms-post-message').textContent = 'Complete every SEO readiness item before publishing.'; updateCmsSeoReadiness(); return; } try { const data = await api('/admin/posts', { method: 'POST', body: JSON.stringify(values) }); $('#cms-post-message').textContent = action === 'publish' ? 'Post published successfully.' : 'Draft saved successfully.'; if (data.seo) updateCmsSeoReadiness(); await loadCms(); } catch (error) { $('#cms-post-message').textContent = error.message; if (error.seo) updateCmsSeoReadiness(); } }
-async function saveCmsOffer(event) { event.preventDefault(); const values = Object.fromEntries(new FormData(event.target).entries()); values.discountValue = Number(values.discountValue || 0); values.minSubtotal = Number(values.minSubtotal || 0); try { await api('/admin/offers', { method: 'POST', body: JSON.stringify(values) }); $('#cms-offer-message').textContent = 'Offer saved.'; loadCms(); } catch (error) { $('#cms-offer-message').textContent = error.message; } }
+async function saveCmsOffer(event) {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.target).entries());
+  values.discountValue = Number(values.discountValue || 0);
+  values.minSubtotal = Number(values.minSubtotal || 0);
+  values.usageLimit = Number(values.usageLimit || 0);
+  // The select carries strings; the API wants a real boolean.
+  values.autoApply = values.autoApply === 'true';
+  // Say what is wrong here rather than letting the server answer with a bare 400.
+  if (values.discountType === 'percentage' && (values.discountValue <= 0 || values.discountValue > 100)) { $('#cms-offer-message').textContent = 'শতকরা ছাড় ১ থেকে ১০০ এর মধ্যে দিন। (A percentage must be between 1 and 100.)'; return; }
+  if (values.discountType === 'fixed' && values.discountValue <= 0) { $('#cms-offer-message').textContent = 'ছাড়ের পরিমাণ শূন্যের বেশি দিন। (A fixed discount needs an amount above zero.)'; return; }
+  if (!String(values.code || '').trim() && !values.autoApply) { $('#cms-offer-message').textContent = 'কুপন কোড দিন, অথবা "নিজে থেকেই" বেছে নিন। (Give a code, or set it to apply automatically.)'; return; }
+  try {
+    await api('/admin/offers', { method: 'POST', body: JSON.stringify(values) });
+    $('#cms-offer-message').textContent = 'Offer saved and live.';
+    toast('Offer saved');
+    event.target.reset();
+    loadCms();
+  } catch (error) { $('#cms-offer-message').textContent = error.message; }
+}
+
+/** Shows how much of a coupon's allowance is gone, and lets the owner act on it. */
+function renderOfferList(offers) {
+  const node = $('#cms-offer-list');
+  if (!node) return;
+  node.innerHTML = (offers || []).length ? `<table><thead><tr><th>Offer</th><th>Discount</th><th>Used</th><th>State</th><th></th></tr></thead><tbody>${offers.map((offer) => {
+    const limit = Number(offer.usageLimit || 0);
+    const used = Number(offer.usedCount || 0);
+    const spent = limit > 0 && used >= limit;
+    const discount = offer.discountType === 'percentage' ? `${offer.discountValue}%` : offer.discountType === 'free_delivery' ? 'Free delivery' : money(offer.discountValue);
+    return `<tr><td><strong>${escapeHtml(offer.code || 'Automatic')}</strong><small>${escapeHtml(offer.title || '')}</small>${Number(offer.minSubtotal) ? `<small>Minimum ${money(offer.minSubtotal)}</small>` : ''}</td><td>${escapeHtml(discount)}</td><td>${used}${limit > 0 ? ` / ${limit}` : ''}${spent ? ' <span class="order-pill order-pill-stop">Used up</span>' : ''}</td><td>${Number(offer.active) ? '<span class="order-pill order-pill-done">Active</span>' : '<span class="order-pill order-pill-wait">Paused</span>'}${Number(offer.autoApply) ? ' <span class="order-pill order-pill-info">Automatic</span>' : ''}</td><td><div class="order-row-actions"><button class="icon-action" type="button" data-offer-toggle="${offer.id}" data-active="${Number(offer.active) ? '0' : '1'}">${Number(offer.active) ? 'Pause' : 'Activate'}</button>${used ? `<button class="icon-action" type="button" data-offer-reset="${offer.id}">Reset count</button>` : ''}<button class="icon-action" type="button" data-offer-delete="${offer.id}" data-label="${escapeHtml(offer.code || offer.title || 'this offer')}">Delete</button></div></td></tr>`;
+  }).join('')}</tbody></table>` : '<p class="muted">No offers yet. Create one on the left — give it a code, or set it to apply automatically.</p>';
+}
+
+document.addEventListener('click', async (event) => {
+  const toggle = event.target.closest('[data-offer-toggle]');
+  const reset = event.target.closest('[data-offer-reset]');
+  const remove = event.target.closest('[data-offer-delete]');
+  try {
+    if (toggle) { await api(`/admin/offers/${toggle.dataset.offerToggle}`, { method: 'PATCH', body: JSON.stringify({ active: toggle.dataset.active === '1' }) }); toast('Offer updated'); loadCms(); }
+    else if (reset) { await api(`/admin/offers/${reset.dataset.offerReset}`, { method: 'PATCH', body: JSON.stringify({ resetUsage: true }) }); toast('Usage count reset'); loadCms(); }
+    else if (remove) { if (!window.confirm(`Delete ${remove.dataset.label}?`)) return; await api(`/admin/offers/${remove.dataset.offerDelete}`, { method: 'DELETE' }); toast('Offer deleted'); loadCms(); }
+  } catch (error) { toast(error.message); }
+});
 function formatAssistantText(value) { return escapeHtml(value).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\n/g, '<br>'); }
 function renderAdminChat() { const node = $('#admin-chat-messages'); if (!node) return; if (!state.adminChat.length) { node.innerHTML = '<div class="assistant-empty-state"><div class="assistant-empty-icon" aria-hidden="true">✦</div><strong>Good morning, Rinova.</strong><p>I can help you make a faster decision with the shop data already in your dashboard.</p><span>Try a prompt above or ask your own question below.</span></div>'; } else { node.innerHTML = state.adminChat.map((message) => `<div class="chat-message-row ${message.role}"><div class="chat-bubble ${message.role}">${formatAssistantText(message.content)}</div></div>`).join(''); } node.scrollTop = node.scrollHeight; }
 async function sendAdminChat(event) { event.preventDefault(); const input = $('#admin-chat-input'); const content = input.value.trim(); const status = $('#admin-chat-status'); if (!content || input.disabled) return; input.value = ''; state.adminChat.push({ role: 'user', content }); renderAdminChat(); input.disabled = true; input.setAttribute('aria-busy', 'true'); status.textContent = 'SmartGen is checking your shop data…'; try { const data = await api('/admin/chat', { method: 'POST', body: JSON.stringify({ messages: state.adminChat }) }); state.adminChat.push({ role: 'assistant', content: data.reply }); status.textContent = 'Answer ready.'; renderAdminChat(); } catch (error) { state.adminChat.push({ role: 'assistant', content: 'I could not access the shop assistant right now. Please try again.' }); status.textContent = 'SmartGen is unavailable right now.'; renderAdminChat(); } finally { input.disabled = false; input.removeAttribute('aria-busy'); input.focus(); } }
