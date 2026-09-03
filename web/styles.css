@@ -388,3 +388,45 @@ body.bag-open .global-mobile-nav{ display:none !important; }
 .detail-price del[hidden]{ display:none; }
 .price-off-small{ color:var(--accent-strong); font-style:normal; font-weight:700; font-size:10px; }
 .product-price{ flex-wrap:wrap; }
+
+/* Image viewer: growing out of the thumbnail and shrinking back into it -------- */
+/* Opening used to fade a full-screen panel in over the page, so nothing connected the big
+   image to the one that was tapped. The image now travels between the two, and a downward
+   drag or scroll runs the same journey backwards until it lands back in the grid. */
+.media-viewer{ --media-flight:0; transition:opacity .22s ease, visibility .22s ease; }
+.media-viewer-slide img,.media-viewer-slide video{ transition:transform .34s cubic-bezier(.22,1,.32,1); }
+/* The first frame has to place the image without animating, or it starts from the centre. */
+.media-viewer-arriving .media-viewer-slide img,
+.media-viewer-arriving .media-viewer-slide video,
+.media-viewer-dismissing .media-viewer-slide img,
+.media-viewer-dismissing .media-viewer-slide video{ transition:none; }
+/* Everything around the image fades in step with the journey, so the page underneath comes
+   back gradually rather than being uncovered all at once. */
+.media-viewer-backdrop,
+.media-viewer-head,
+.media-viewer-tools,
+.media-viewer-arrow{ transition:opacity .28s ease; opacity:calc(1 - var(--media-flight)); }
+.media-viewer-dismissing .media-viewer-backdrop,
+.media-viewer-dismissing .media-viewer-head,
+.media-viewer-dismissing .media-viewer-tools,
+.media-viewer-dismissing .media-viewer-arrow{ transition:none; }
+.media-viewer-dialog{ background:transparent; }
+/* While it is flying home the viewer must not swallow another tap. */
+.media-viewer-closing{ pointer-events:none; }
+/* The dialog itself no longer slides: the image carries the movement. */
+.media-viewer.media-viewer-dismissing .media-viewer-dialog{ transform:none; opacity:1; }
+@media(prefers-reduced-motion:reduce){
+  .media-viewer-slide img,.media-viewer-slide video{ transition:none; }
+  .media-viewer-backdrop,.media-viewer-head,.media-viewer-tools,.media-viewer-arrow{ transition:none; }
+}
+/* The panel behind the image has to give way as the image travels, or the customer watches a
+   picture shrink inside a white box instead of the page coming back. The colour moves to an
+   overlay so it can fade on its own — fading the stage itself would fade the image with it. */
+.media-viewer-stage{ position:relative; background-color:transparent!important; }
+.media-viewer-stage::before{
+  content:''; position:absolute; inset:0; background:#F7E9ED; pointer-events:none;
+  opacity:calc(1 - var(--media-flight)); transition:opacity .28s ease;
+}
+.media-viewer-dismissing .media-viewer-stage::before{ transition:none; }
+.media-viewer-track{ position:relative; z-index:1; }
+.media-viewer-arrow{ z-index:2; }
