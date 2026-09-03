@@ -109,21 +109,26 @@ function render(product, ratingSummary, reviews, slug) { state.media = parseMedi
   $('#detail-size')?.addEventListener('change', applySizePrice);
   applySizePrice();
   const priced = () => ({ ...product, price: state.activePrice === null ? product.price : state.activePrice });
-  $('#detail-add')?.addEventListener('click', () => { const options = chooseOptions(); if (options) addToBag(priced(), quantity(), options); }); $('#detail-buy')?.addEventListener('click', () => { const options = chooseOptions(); if (!options) return; addToBag(priced(), quantity(), options); window.location.href = '/checkout.html'; }); setProductMeta(product, ratingSummary); track('view_item', { currency: 'BDT', value: Number(product.price || 0), items: [itemPayload(product, 1)] }); }
+  $('#detail-add')?.addEventListener('click', () => { const options = chooseOptions(); if (options) addToBag(priced(), quantity(), options); }); $('#detail-buy')?.addEventListener('click', () => { const options = chooseOptions(); if (!options) return; addToBag(priced(), quantity(), options); window.location.href = '/checkout.html'; }); applyDeliveryFact(); setProductMeta(product, ratingSummary); track('view_item', { currency: 'BDT', value: Number(product.price || 0), items: [itemPayload(product, 1)] }); }
 (async function boot() { updateBagCount(); try { const slug = productSlugFromLocation(); if (!slug) throw new Error('Product not found'); const data = await api(`/products/${encodeURIComponent(slug)}`); state.variants = data.variants || []; render(data.product, data.ratingSummary, data.reviews, data.product.slug); loadRelatedProducts(data.product); } catch (error) { $('#detail-root').innerHTML = `<div class="loading">${escapeHtml(error.message)}<br><a class="detail-back" href="/#shop">Return to shop ${icon('arrowRight')}</a></div>`; } }());
 
 
-/** The delivery line on a product used to quote fixed prices that ignored Settings. */
-(async function showDeliveryFact() {
-  try {
-    const response = await fetch(`${API_BASE}/config`);
-    if (!response.ok) return;
-    const payload = await response.json();
+/**
+ * The delivery line used to quote fixed prices that ignored Settings. Fetching the charges as
+ * a top-level IIFE raced the product render: when the config won, #detail-delivery-fact did
+ * not exist yet and the line stayed "Calculated at checkout" for good. The fetch is started
+ * once and applied whenever the element appears, so neither order of arrival can lose.
+ */
+let deliveryFactPromise = null;
+function applyDeliveryFact() {
+  const node = document.getElementById('detail-delivery-fact');
+  if (!node) return;
+  deliveryFactPromise = deliveryFactPromise || fetch(`${API_BASE}/config`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  deliveryFactPromise.then((payload) => {
+    if (!payload) return;
     const inside = Number(payload.delivery?.dhaka || 0);
     const outside = Number(payload.delivery?.outsideDhaka || 0);
-    const node = document.getElementById('detail-delivery-fact');
-    if (node && (inside || outside)) node.textContent = `${money(inside)} Dhaka · ${money(outside)} outside`;
-  } catch {
-    // Leave "Calculated at checkout", which is always true.
-  }
-}());
+    const target = document.getElementById('detail-delivery-fact');
+    if (target && (inside || outside)) target.textContent = `${money(inside)} Dhaka · ${money(outside)} outside`;
+  });
+}
