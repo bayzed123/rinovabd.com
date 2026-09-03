@@ -169,16 +169,35 @@ async function updateDelivery() {
   state.zone = insideDhaka ? 'dhaka' : 'outside-dhaka';
   $('#delivery').textContent = `${money(state.deliveryFee)} · ${insideDhaka ? 'Inside Dhaka (estimated)' : 'Outside Dhaka (estimated)'}`;
   renderItems();
+  // A free-delivery offer is only worth something once there is a delivery fee to waive, so
+  // re-ask the shop whenever the zone changes.
+  applyCoupon();
 }
 
+/**
+ * Fills in any missing SKU and re-reads every price from the shop.
+ *
+ * A bag lives in localStorage, so it can be days old. Once a product can carry its own offer
+ * percentage, a stale bag would quote yesterday's price while the server charges today's — the
+ * customer would see one total and be charged another. The shop is the authority on price, so
+ * the bag is refreshed from it rather than trusted.
+ */
 async function hydrateBagSkus() {
-  const missing = bag.filter((item) => !String(item.sku || '').trim());
-  if (!missing.length) return true;
+  if (!bag.length) return true;
   try {
     const response = await fetch(`${API_BASE}/products`);
     const payload = await response.json();
     const byId = new Map((payload.products || []).map((product) => [String(product.id), product]));
-    missing.forEach((item) => { const product = byId.get(String(item.id)); if (product?.sku) item.sku = String(product.sku).trim(); });
+    bag.forEach((item) => {
+      const product = byId.get(String(item.id));
+      if (!product) return;
+      if (!String(item.sku || '').trim() && product.sku) item.sku = String(product.sku).trim();
+      // A line with chosen options is priced from its variant on the server; leave it alone.
+      if (item.options && Object.keys(item.options).length) return;
+      item.price = Number(product.salePrice ?? product.price ?? item.price ?? 0);
+      item.listPrice = Number(product.price ?? item.listPrice ?? 0);
+      item.discountPercent = Math.max(0, Math.round(Number(product.discountPercent || 0)));
+    });
     saveBag();
   } catch {}
   return bag.every((item) => String(item.sku || '').trim());
@@ -239,6 +258,9 @@ $('#checkout-payment-method')?.addEventListener('change', updatePaymentFields);
 updatePaymentFields();
 loadPaymentMethods();
 renderItems();
+// A bag can be days old, so re-read prices before the customer reads the total, then ask the
+// shop whether an automatic offer already applies to it.
+hydrateBagSkus().then(() => { renderItems(); applyCoupon(); });
 if (bag.length) track('view_cart', { currency: 'BDT', value: bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0), items: bag.map(itemPayload) });
 /**
  * The summary used to state "৳90 inside Dhaka and ৳150 outside Dhaka" as fixed text, so it
@@ -265,27 +287,25 @@ async function applyCoupon() {
   if (!input || !message) return;
   const code = input.value.trim();
   const subtotal = bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
-  if (!code) {
-    state.coupon = { code: '', discount: 0, deliveryFee: null, title: '' };
-    message.textContent = '';
-    message.className = 'coupon-message';
-    renderItems();
-    return;
-  }
-  message.textContent = 'Checking…';
+  if (!bag.length) return;
+  message.textContent = code ? 'Checking…' : '';
   message.className = 'coupon-message';
   try {
     const response = await fetch(`${API_BASE}/offers/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subtotal, deliveryFee: state.deliveryFee, code }),
+      body: JSON.stringify({ subtotal, deliveryFee: state.deliveryFee, code, items: bag.map((item) => ({ sku: String(item.sku || '').trim(), quantity: Number(item.quantity || 0) })) }),
     });
     const payload = await response.json();
     if (!response.ok || !payload.ok) throw new Error(payload.error || 'That coupon could not be applied.');
     state.coupon = { code, discount: Number(payload.discount || 0), deliveryFee: Number(payload.deliveryFee), title: payload.offer?.title || '' };
     const saved = state.coupon.discount || (state.deliveryFee - state.coupon.deliveryFee);
-    message.textContent = saved > 0 ? `Coupon applied — you save ${money(saved)}.` : 'Coupon applied.';
-    message.className = 'coupon-message ok';
+    // With no code typed this is the shop's automatic offer. It used to be invisible: the order
+    // came back cheaper than the total the customer had just read. Naming it here also answers
+    // "which offer won", because the server sends back the one it actually chose.
+    if (!code) message.textContent = payload.offer ? `${payload.offer.title} applied automatically — you save ${money(saved)}.` : '';
+    else message.textContent = saved > 0 ? `Coupon applied — you save ${money(saved)}.` : 'Coupon applied.';
+    message.className = payload.offer ? 'coupon-message ok' : 'coupon-message';
   } catch (error) {
     state.coupon = { code: '', discount: 0, deliveryFee: null, title: '' };
     message.textContent = error.message;

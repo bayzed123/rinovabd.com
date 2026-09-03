@@ -1132,8 +1132,10 @@ app.patch('/api/admin/returns/:id', async (c) => {
 app.get('/api/admin/pos/products', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const q = normalize(c.req.query('q'));
-  const result = await c.env.DB.prepare('SELECT id, name, sku, barcode, price, cost_price AS costPrice, stock FROM products WHERE active = 1 AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?) ORDER BY name ASC LIMIT 100').bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
-  return json(c, { products: result.results });
+  const result = await c.env.DB.prepare('SELECT id, name, sku, barcode, price, cost_price AS costPrice, stock, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt FROM products WHERE active = 1 AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?) ORDER BY name ASC LIMIT 100').bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
+  // The counter charges the advertised price: a shopper who saw 20% off online should not be
+  // asked for the list price in the shop.
+  return json(c, { products: result.results.map((row) => withOfferPrice(row as Record<string, unknown>)) });
 });
 
 app.post('/api/admin/pos/sales', async (c) => {
@@ -1143,10 +1145,11 @@ app.post('/api/admin/pos/sales', async (c) => {
   if (!body.items?.length || !body.paymentMethod) return json(c, { error: 'POS items and payment method are required.' }, 400);
   const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
   if (skus.length !== body.items.length) return json(c, { error: 'Each POS item must include a product SKU.' }, 400);
-  const products = await c.env.DB.prepare(`SELECT id, name, sku, barcode, price, cost_price AS costPrice, stock FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; barcode: string | null; price: number; costPrice: number; stock: number }>();
+  const products = await c.env.DB.prepare(`SELECT id, name, sku, barcode, price, cost_price AS costPrice, stock, discount_percent AS discountPercent, discount_ends_at AS discountEndsAt FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; barcode: string | null; price: number; costPrice: number; stock: number; discountPercent: number; discountEndsAt: string | null }>();
   const bySku = new Map(products.results.map((product) => [product.sku, product]));
-  const items = body.items.map((item) => { const product = bySku.get(normalize(item.sku)); if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A POS product is unavailable or out of stock.'); return { ...item, product }; });
-  const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  // Priced from the database with the product's own offer applied, never from what the till sent.
+  const items = body.items.map((item) => { const product = bySku.get(normalize(item.sku)); if (!product || item.quantity < 1 || product.stock < item.quantity) throw new Error('A POS product is unavailable or out of stock.'); return { ...item, product, unitPrice: discountedPrice(Number(product.price) || 0, activeDiscountPercent(product)) }; });
+  const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const discount = Math.max(0, Math.min(subtotal, Number(body.discount) || 0));
   const receiptNumber = `POS-${Date.now().toString(36).toUpperCase()}`;
   const sale = await c.env.DB.prepare('INSERT INTO pos_sales(receipt_number, subtotal, discount, payment_method, created_by) VALUES (?, ?, ?, ?, ?) RETURNING id, receipt_number AS receiptNumber').bind(receiptNumber, subtotal, discount, body.paymentMethod, actor).first<{ id: number; receiptNumber: string }>();
@@ -1155,7 +1158,7 @@ app.post('/api/admin/pos/sales', async (c) => {
   for (const item of items) {
     const next = item.product.stock - item.quantity;
     statements.push(
-      c.env.DB.prepare('INSERT INTO pos_sale_items(sale_id, product_id, product_name, barcode, quantity, unit_price, unit_cost) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(sale.id, item.product.id, item.product.name, item.product.barcode, item.quantity, item.product.price, item.product.costPrice),
+      c.env.DB.prepare('INSERT INTO pos_sale_items(sale_id, product_id, product_name, barcode, quantity, unit_price, unit_cost) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(sale.id, item.product.id, item.product.name, item.product.barcode, item.quantity, item.unitPrice, item.product.costPrice),
       c.env.DB.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, item.product.id),
       c.env.DB.prepare('INSERT INTO stock_movements(product_id, quantity_delta, quantity_after, reason, note, actor) VALUES (?, ?, ?, \'sale\', ?, ?)').bind(item.product.id, -item.quantity, next, `POS ${receiptNumber}`, actor),
     );
@@ -1203,7 +1206,7 @@ app.get('/api/admin/content', async (c) => {
     c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
     c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
-    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active, usage_limit AS usageLimit, used_count AS usedCount, auto_apply AS autoApply FROM offers ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active, usage_limit AS usageLimit, used_count AS usedCount, auto_apply AS autoApply, product_ids_json AS productIdsJson FROM offers ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all(),
     c.env.DB.prepare('SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, active, sort_order AS sortOrder, marquee_speed AS marqueeSpeed, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt FROM marketing_banners ORDER BY placement, sort_order ASC, updated_at DESC, id DESC').all(),
     c.env.DB.prepare('SELECT id, email, source, status, created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt FROM newsletter_leads ORDER BY created_at DESC LIMIT 500').all(),
@@ -1307,7 +1310,7 @@ app.post('/api/admin/posts', async (c) => {
 app.post('/api/admin/offers', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean; usageLimit?: number; autoApply?: boolean }>();
+  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean; usageLimit?: number; autoApply?: boolean; productIds?: unknown }>();
   if (!normalize(body.title)) return json(c, { error: 'Offer title is required.' }, 400);
   const type = ['fixed','percentage','free_delivery'].includes(normalize(body.discountType)) ? normalize(body.discountType) : 'fixed';
   const value = Math.max(0, Number(body.discountValue) || 0);
@@ -1321,7 +1324,9 @@ app.post('/api/admin/offers', async (c) => {
     const clash = await c.env.DB.prepare('SELECT id FROM offers WHERE upper(code) = ? LIMIT 1').bind(code).first();
     if (clash) return json(c, { error: 'That coupon code already exists.' }, 409);
   }
-  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, usage_limit, auto_apply, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(code || null, normalize(body.title), normalize(body.description), type, value, Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, Math.max(0, Number(body.usageLimit) || 0), autoApply ? 1 : 0, actor).run();
+  // An empty product list means the whole shop; naming products limits the discount to them.
+  const productIds = JSON.stringify(offerProductScope(JSON.stringify(body.productIds ?? [])));
+  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, usage_limit, auto_apply, product_ids_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(code || null, normalize(body.title), normalize(body.description), type, value, Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, Math.max(0, Number(body.usageLimit) || 0), autoApply ? 1 : 0, productIds, actor).run();
   return json(c, { ok: true, title: normalize(body.title) }, 201);
 });
 
@@ -1331,7 +1336,7 @@ app.patch('/api/admin/offers/:id', async (c) => {
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid offer id.' }, 400);
-  const body = await c.req.json<{ active?: boolean; usageLimit?: number; discountValue?: number; minSubtotal?: number; resetUsage?: boolean; autoApply?: boolean }>();
+  const body = await c.req.json<{ active?: boolean; usageLimit?: number; discountValue?: number; minSubtotal?: number; resetUsage?: boolean; autoApply?: boolean; productIds?: unknown }>();
   const existing = await c.env.DB.prepare('SELECT id, discount_type AS discountType FROM offers WHERE id = ? LIMIT 1').bind(id).first<{ id: number; discountType: string }>();
   if (!existing) return json(c, { error: 'Offer not found.' }, 404);
   const sets: string[] = [];
@@ -1345,6 +1350,7 @@ app.patch('/api/admin/offers/:id', async (c) => {
     if (existing.discountType === 'percentage' && (value <= 0 || value > 100)) return json(c, { error: 'A percentage discount must be between 1 and 100.' }, 400);
     sets.push('discount_value = ?'); values.push(value);
   }
+  if (body.productIds !== undefined) { sets.push('product_ids_json = ?'); values.push(JSON.stringify(offerProductScope(JSON.stringify(body.productIds ?? [])))); }
   if (body.resetUsage === true) sets.push('used_count = 0');
   if (!sets.length) return json(c, { error: 'Nothing to update.' }, 400);
   await c.env.DB.prepare(`UPDATE offers SET ${sets.join(', ')}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(...values, actor, id).run();
@@ -1646,7 +1652,7 @@ app.get('/api/admin/products', async (c) => {
   const values: string[] = [];
   if (query) { condition.push('(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?)'); values.push(`%${query}%`, `%${query}%`, `%${query}%`); }
   if (status) { condition.push('p.status = ?'); values.push(status); }
-  const result = await c.env.DB.prepare(`SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${condition.join(' AND ')} ORDER BY p.updated_at DESC, p.created_at DESC`).bind(...values).all();
+  const result = await c.env.DB.prepare(`SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.discount_percent AS discountPercent, p.discount_label AS discountLabel, p.discount_ends_at AS discountEndsAt, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${condition.join(' AND ')} ORDER BY p.updated_at DESC, p.created_at DESC`).bind(...values).all();
   return json(c, { products: result.results });
 });
 
@@ -1690,7 +1696,7 @@ app.patch('/api/admin/categories/:id', async (c) => {
 app.get('/api/admin/products/sku/:sku', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const sku = normalize(c.req.param('sku'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.sku = ?').bind(sku).first();
+  const product = await c.env.DB.prepare('SELECT p.id, p.category_id AS categoryId, p.name, p.slug, p.sku, NULL AS brand, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.discount_percent AS discountPercent, p.discount_label AS discountLabel, p.discount_ends_at AS discountEndsAt, p.compare_at_price AS compareAtPrice, p.cost_price AS costPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.low_stock_threshold AS lowStockThreshold, p.min_order_qty AS minOrderQty, p.status, p.featured, p.tags_json AS tagsJson, p.specs_json AS specsJson, p.volume_tiers_json AS volumeTiersJson, c.name AS categoryName FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.sku = ?').bind(sku).first();
   return product ? json(c, { product }) : json(c, { error: 'Product not found.' }, 404);
 });
 
@@ -1766,12 +1772,12 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
     const oldItems = await c.env.DB.prepare('SELECT product_id AS productId, quantity FROM order_items WHERE order_id = ?').bind(existing.id).all<{ productId: number; quantity: number }>();
     const oldByProduct = new Map<number, number>();
     for (const item of oldItems.results) oldByProduct.set(Number(item.productId), Number(oldByProduct.get(Number(item.productId)) || 0) + Number(item.quantity));
-    const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, weight_grams AS weightGrams FROM products WHERE active = 1 AND sku IN (${requested.map(() => '?').join(',')})`).bind(...requested.map((item) => item.sku)).all<{ id: number; name: string; sku: string; price: number; stock: number; weightGrams: number }>();
+    const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, weight_grams AS weightGrams, discount_percent AS discountPercent, discount_ends_at AS discountEndsAt FROM products WHERE active = 1 AND sku IN (${requested.map(() => '?').join(',')})`).bind(...requested.map((item) => item.sku)).all<{ id: number; name: string; sku: string; price: number; stock: number; weightGrams: number; discountPercent: number; discountEndsAt: string | null }>();
     const bySku = new Map(products.results.map((product) => [product.sku, product]));
     const unavailable = requested.filter((item) => !bySku.has(item.sku)).map((item) => item.sku);
     if (unavailable.length) return json(c, { error: `These products are no longer available: ${unavailable.join(', ')}.` }, 400);
     const newByProduct = new Map<number, number>();
-    const lines: Array<{ product: { id: number; name: string; price: number }; quantity: number; details: string }> = [];
+    const lines: Array<{ product: { id: number; name: string; price: number; discountPercent: number; discountEndsAt: string | null }; quantity: number; details: string }> = [];
     for (const item of requested) {
       const product = bySku.get(item.sku)!;
       // Quantity already committed to this order is still reservable, so add it back before comparing.
@@ -1787,9 +1793,12 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
       ? await c.env.DB.prepare(`SELECT product_id AS productId, label, price FROM product_variants WHERE active = 1 AND kind = 'size' AND price IS NOT NULL AND product_id IN (${editIds.map(() => '?').join(',')})`).bind(...editIds).all<{ productId: number; label: string; price: number }>()
       : { results: [] as Array<{ productId: number; label: string; price: number }> };
     const editVariantBy = new Map(editVariants.results.map((row) => [`${row.productId}|${String(row.label).toLowerCase()}`, row.price]));
-    const priceFor = (line: { product: { id: number; price: number }; details?: string }) => {
+    const priceFor = (line: { product: { id: number; price: number; discountPercent?: number; discountEndsAt?: string | null }; details?: string }) => {
       const label = /size:\s*([^·]+)/i.exec(String(line.details || ''))?.[1]?.trim().toLowerCase();
-      return (label ? editVariantBy.get(`${line.product.id}|${label}`) : undefined) ?? Number(line.product.price || 0);
+      const listPrice = (label ? editVariantBy.get(`${line.product.id}|${label}`) : undefined) ?? Number(line.product.price || 0);
+      // The product's own offer applies here too, or editing an order would quietly re-price a
+      // discounted line back up to the list price the customer never agreed to.
+      return discountedPrice(listPrice, activeDiscountPercent(line.product));
     };
     const subtotal = lines.reduce((sum, line) => sum + priceFor(line) * line.quantity, 0);
     const statements = [c.env.DB.prepare('DELETE FROM order_items WHERE order_id = ?').bind(existing.id)];
@@ -1839,6 +1848,51 @@ function parseProductVariants(value: unknown) {
     .slice(0, 60);
 }
 
+type DiscountFields = { discountPercent?: number | null; discountEndsAt?: string | null; discountLabel?: string | null };
+
+/**
+ * A discount that belongs to the product itself, set in the product editor rather than on a
+ * separate offers page. Offers used to be invisible to the customer: a percentage was worked
+ * out at checkout and no card or product page ever showed a changed price.
+ *
+ * Because this is the advertised price it has to be computed identically on the card, the
+ * product page, the campaign page and the order, and it has to be computed here — a percentage
+ * that lives in the browser is a percentage the browser can choose.
+ */
+function activeDiscountPercent(row: DiscountFields | null | undefined) {
+  const percent = Math.round(Number(row?.discountPercent) || 0);
+  if (percent < 1 || percent > 99) return 0;
+  const ends = normalize(row?.discountEndsAt);
+  // A date with no time means the offer runs to the end of that day, not to midnight at its start.
+  if (ends && Date.parse(ends.length <= 10 ? `${ends}T23:59:59Z` : ends) < Date.now()) return 0;
+  return percent;
+}
+
+function discountedPrice(price: number, percent: number) {
+  const base = Math.max(0, Math.round(Number(price) || 0));
+  if (!percent) return base;
+  return Math.max(0, Math.round((base * (100 - percent)) / 100));
+}
+
+/**
+ * Adds what the storefront needs to draw the badge: the live percentage, the price after it and
+ * the price it was. `price` itself is left alone so nothing that already reads it changes
+ * meaning; a page that knows nothing about discounts keeps showing the list price.
+ */
+function withOfferPrice<T extends DiscountFields & { price?: number | null; compareAtPrice?: number | null }>(row: T) {
+  const percent = activeDiscountPercent(row);
+  const price = Math.max(0, Math.round(Number(row?.price) || 0));
+  const salePrice = discountedPrice(price, percent);
+  return {
+    ...row,
+    discountPercent: percent,
+    discountLabel: percent ? normalize(row?.discountLabel) || `${percent}% off` : '',
+    salePrice,
+    // Struck-through price: the offer's own "was" wins over a manually typed compare-at price.
+    wasPrice: percent ? price : Math.max(0, Math.round(Number(row?.compareAtPrice) || 0)) || null,
+  };
+}
+
 /** Replaces a product's variants wholesale, which is what the editor sends. */
 async function saveProductVariants(env: Bindings, productId: number, value: unknown) {
   const variants = parseProductVariants(value);
@@ -1859,6 +1913,24 @@ function parseProductFaq(value: unknown) {
     .slice(0, 12);
 }
 
+/**
+ * The product's own offer, read off whatever the editor sent. A percentage of 0 turns the offer
+ * off, which is why it is clamped rather than dropped, and an empty label or end date clears
+ * those rather than leaving yesterday's wording behind.
+ */
+function productOfferFields(body: Record<string, unknown>, partial: boolean) {
+  const percentGiven = body.discountPercent !== undefined || body.offerPercent !== undefined;
+  const raw = body.discountPercent ?? body.offerPercent;
+  const percent = Math.min(99, Math.max(0, Math.round(Number(raw) || 0)));
+  const labelGiven = body.discountLabel !== undefined || body.offerLabel !== undefined;
+  const endsGiven = body.discountEndsAt !== undefined || body.offerEndsAt !== undefined;
+  return {
+    offerPercent: partial && !percentGiven ? null : percent,
+    offerLabel: partial && !labelGiven ? null : normalize(body.discountLabel ?? body.offerLabel).slice(0, 60),
+    offerEndsAt: partial && !endsGiven ? null : normalize(body.discountEndsAt ?? body.offerEndsAt).slice(0, 30),
+  };
+}
+
 app.post('/api/admin/products', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
@@ -1873,7 +1945,8 @@ app.post('/api/admin/products', async (c) => {
   const mediaJson = JSON.stringify(parseProductMedia(body.mediaJson));
   const badgesJson = JSON.stringify(parseProductBadges(body.badgesJson ?? body.badges));
   const primaryImage = normalizeMediaUrl(body.imageUrl) || null;
-  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, editor_note, price, compare_at_price, cost_price, image_url, media_json, badges_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), normalize(body.editorNote), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, badgesJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), body.featured ? 1 : 0, active).first();
+  const { offerPercent, offerLabel, offerEndsAt } = productOfferFields(body, false);
+  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, editor_note, price, compare_at_price, cost_price, image_url, media_json, badges_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, discount_percent, discount_label, discount_ends_at, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), normalize(body.editorNote), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, badgesJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), offerPercent, offerLabel, offerEndsAt, body.featured ? 1 : 0, active).first();
   if (!result) return json(c, { error: 'Could not create product.' }, 500);
   const createdId = Number((result as { id: number }).id);
   if (body.variants !== undefined) await saveProductVariants(c.env, createdId, body.variants);
@@ -1891,7 +1964,8 @@ app.patch('/api/admin/products/sku/:sku', async (c) => {
   const volumeTiers = body.volumeTiers === undefined ? null : JSON.stringify(parseVolumeTiers(body.volumeTiers));
   const mediaJson = body.mediaJson === undefined ? null : JSON.stringify(parseProductMedia(body.mediaJson));
   const badgesJson = body.badgesJson === undefined && body.badges === undefined ? null : JSON.stringify(parseProductBadges(body.badgesJson ?? body.badges));
-  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), editor_note = COALESCE(?, editor_note), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), badges_json = COALESCE(?, badges_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE sku = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.editorNote === undefined ? null : normalize(body.editorNote), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, badgesJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, sku).run();
+  const { offerPercent, offerLabel, offerEndsAt } = productOfferFields(body, true);
+  const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), editor_note = COALESCE(?, editor_note), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), badges_json = COALESCE(?, badges_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), discount_percent = COALESCE(?, discount_percent), discount_label = COALESCE(?, discount_label), discount_ends_at = COALESCE(?, discount_ends_at), updated_at = CURRENT_TIMESTAMP WHERE sku = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.editorNote === undefined ? null : normalize(body.editorNote), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, badgesJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, offerPercent, offerLabel, offerEndsAt, sku).run();
   if (body.variants !== undefined || body.faq !== undefined) {
     const row = await c.env.DB.prepare('SELECT id FROM products WHERE sku = ? LIMIT 1').bind(sku).first<{ id: number }>();
     if (row) {
@@ -2080,11 +2154,11 @@ app.get('/campaign/:slug', async (c) => {
   // featured catalogue only when no selection was made.
   const chosenIds = parseCampaignProductIds(campaign.productIdsJson);
   const products = chosenIds.length
-    ? await c.env.DB.prepare(`SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, image_url AS imageUrl FROM products WHERE active = 1 AND id IN (${chosenIds.map(() => '?').join(',')})`).bind(...chosenIds).all()
-    : await c.env.DB.prepare('SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, image_url AS imageUrl FROM products WHERE active = 1 ORDER BY featured DESC, updated_at DESC LIMIT 24').all();
-  const ordered = chosenIds.length
+    ? await c.env.DB.prepare(`SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl FROM products WHERE active = 1 AND id IN (${chosenIds.map(() => '?').join(',')})`).bind(...chosenIds).all()
+    : await c.env.DB.prepare('SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl FROM products WHERE active = 1 ORDER BY featured DESC, updated_at DESC LIMIT 24').all();
+  const ordered = (chosenIds.length
     ? chosenIds.map((id) => products.results.find((product) => Number((product as { id: number }).id) === id)).filter(Boolean)
-    : products.results;
+    : products.results).map((row) => withOfferPrice(row as Record<string, unknown>));
 
   const origin = publicOrigin(c);
   const canonical = `${origin}/campaign/${campaign.slug}`;
@@ -2177,20 +2251,20 @@ app.get('/api/products', async (c) => {
   if (query) { conditions.push('(p.name LIKE ? OR p.description LIKE ?)'); values.push(`%${query}%`, `%${query}%`); }
   if (category) { conditions.push('c.slug = ?'); values.push(category); }
   if (featured === 'true') conditions.push('p.featured = 1');
-  const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, COALESCE(NULLIF(p.price, 0), (SELECT MIN(v.price) FROM product_variants v WHERE v.product_id = p.id AND v.kind = 'size' AND v.active = 1 AND v.price IS NOT NULL), p.price) AS price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.tags_json AS tagsJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.featured, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
-  const response = json(c, { products: result.results });
+  const result = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, COALESCE(NULLIF(p.price, 0), (SELECT MIN(v.price) FROM product_variants v WHERE v.product_id = p.id AND v.kind = 'size' AND v.active = 1 AND v.price IS NOT NULL), p.price) AS price, p.discount_percent AS discountPercent, p.discount_label AS discountLabel, p.discount_ends_at AS discountEndsAt, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.tags_json AS tagsJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.featured, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${conditions.join(' AND ')} ORDER BY p.featured DESC, p.created_at DESC`).bind(...values).all();
+  const response = json(c, { products: result.results.map((row) => withOfferPrice(row as Record<string, unknown>)) });
   response.headers.set('Cache-Control', 'no-store');
   return response;
 });
 
 app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
-  const product = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, COALESCE(NULLIF(p.price, 0), (SELECT MIN(v.price) FROM product_variants v WHERE v.product_id = p.id AND v.kind = 'size' AND v.active = 1 AND v.price IS NOT NULL), p.price) AS price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.faq_json AS faqJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1`).bind(slug, slug).first();
+  const product = await c.env.DB.prepare(`SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, COALESCE(NULLIF(p.price, 0), (SELECT MIN(v.price) FROM product_variants v WHERE v.product_id = p.id AND v.kind = 'size' AND v.active = 1 AND v.price IS NOT NULL), p.price) AS price, p.discount_percent AS discountPercent, p.discount_label AS discountLabel, p.discount_ends_at AS discountEndsAt, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.faq_json AS faqJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1`).bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
   // Priced sizes and colours, so the page can show a real price per size and change it on select.
   const variants = await c.env.DB.prepare('SELECT kind, label, price, stock FROM product_variants WHERE product_id = ? AND active = 1 ORDER BY kind, sort_order, id').bind((product as { id: number }).id).all<{ kind: string; label: string; price: number | null; stock: number }>();
-  const response = json(c, { product: { ...product, faq: parseProductFaq((product as { faqJson?: string }).faqJson) }, variants: variants.results, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
+  const response = json(c, { product: { ...withOfferPrice(product as Record<string, unknown>), faq: parseProductFaq((product as { faqJson?: string }).faqJson) }, variants: variants.results, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
   response.headers.set('Cache-Control', 'no-store');
   return response;
 });
@@ -2222,7 +2296,19 @@ app.get('/api/customers/:phone/trust', async (c) => {
   return json(c, { customer, trust: calculateTrust(orders.results), recentOrders: orders.results });
 });
 
-type OfferRow = { id: number; code: string | null; title: string; discountType: string; discountValue: number; minSubtotal: number; usageLimit: number; usedCount: number };
+type OfferRow = { id: number; code: string | null; title: string; discountType: string; discountValue: number; minSubtotal: number; usageLimit: number; usedCount: number; productIdsJson: string | null };
+/** What an offer needs to know about the basket: which product each taka belongs to. */
+type OfferLine = { productId: number; lineTotal: number };
+
+/** An empty list means the whole shop, which is what every offer meant before scoping existed. */
+function offerProductScope(value: string | null | undefined) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0) : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Works out what an offer is actually worth. Offers used to be stored and listed but never
@@ -2232,11 +2318,17 @@ type OfferRow = { id: number; code: string | null; title: string; discountType: 
  *
  * A coupon is matched by code. An offer marked auto_apply carries no code and applies itself
  * as soon as the subtotal qualifies; when several qualify, the customer gets the best one.
+ *
+ * An offer can name the products it covers. A 20%-off-face-wash coupon then takes 20% of what
+ * the face washes cost, not 20% of a basket that also holds a dress — so the minimum subtotal
+ * is still judged on the whole basket, but the discount is only ever computed on the part the
+ * offer actually covers.
  */
-async function resolveOffer(env: Bindings, subtotal: number, deliveryFee: number, code: string) {
+async function resolveOffer(env: Bindings, lines: OfferLine[], deliveryFee: number, code: string) {
+  const subtotal = lines.reduce((sum, line) => sum + Math.max(0, Number(line.lineTotal) || 0), 0);
   const wanted = normalize(code).toUpperCase();
   const rows = await env.DB.prepare(
-    `SELECT id, code, title, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, usage_limit AS usageLimit, used_count AS usedCount
+    `SELECT id, code, title, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, usage_limit AS usageLimit, used_count AS usedCount, product_ids_json AS productIdsJson
      FROM offers
      WHERE active = 1
        AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP)
@@ -2244,15 +2336,25 @@ async function resolveOffer(env: Bindings, subtotal: number, deliveryFee: number
        AND (${wanted ? 'upper(code) = ?' : 'auto_apply = 1'})`,
   ).bind(...(wanted ? [wanted] : [])).all<OfferRow>();
 
+  /** The part of the basket this offer covers — the whole of it when the offer names no products. */
+  const covered = (offer: OfferRow) => {
+    const scope = offerProductScope(offer.productIdsJson);
+    if (!scope.length) return subtotal;
+    return lines.filter((line) => scope.includes(Number(line.productId))).reduce((sum, line) => sum + Math.max(0, Number(line.lineTotal) || 0), 0);
+  };
   const value = (offer: OfferRow) => {
-    if (offer.discountType === 'percentage') return Math.min(subtotal, Math.round((subtotal * Number(offer.discountValue || 0)) / 100));
+    const base = covered(offer);
+    if (offer.discountType === 'percentage') return Math.min(base, Math.round((base * Number(offer.discountValue || 0)) / 100));
     if (offer.discountType === 'free_delivery') return 0;
-    return Math.min(subtotal, Math.max(0, Number(offer.discountValue || 0)));
+    return Math.min(base, Math.max(0, Number(offer.discountValue || 0)));
   };
   const usable = rows.results.filter((offer) => {
     if (subtotal < Number(offer.minSubtotal || 0)) return false;
     // A limit of 0 means unlimited; anything else stops the coupon once it is used up.
     if (Number(offer.usageLimit || 0) > 0 && Number(offer.usedCount || 0) >= Number(offer.usageLimit)) return false;
+    // A product offer whose products are not in the bag is worth nothing, and free delivery is
+    // worth something even though it discounts no line.
+    if (offer.discountType !== 'free_delivery' && covered(offer) <= 0) return false;
     return true;
   });
 
@@ -2261,6 +2363,7 @@ async function resolveOffer(env: Bindings, subtotal: number, deliveryFee: number
     const known = rows.results[0];
     if (!known) return { discount: 0, deliveryFee, offer: null, error: 'That coupon code is not valid.' };
     if (subtotal < Number(known.minSubtotal || 0)) return { discount: 0, deliveryFee, offer: null, error: `This coupon needs a subtotal of at least ${known.minSubtotal}.` };
+    if (covered(known) <= 0) return { discount: 0, deliveryFee, offer: null, error: 'This coupon only applies to selected products, and none of them are in your bag.' };
     return { discount: 0, deliveryFee, offer: null, error: 'This coupon has already been used the maximum number of times.' };
   }
 
@@ -2270,19 +2373,44 @@ async function resolveOffer(env: Bindings, subtotal: number, deliveryFee: number
   return { discount: value(best), deliveryFee: best.discountType === 'free_delivery' ? 0 : deliveryFee, offer: best, error: '' };
 }
 
-/** Lets checkout preview a coupon before the order is placed, using the same maths. */
+/**
+ * Lets checkout preview a coupon before the order is placed, using the same maths.
+ *
+ * Now that an offer can be limited to certain products, the preview needs to know which
+ * products the money belongs to, not just the total. Checkout sends the bag's SKUs and
+ * quantities and the line totals are priced here, so the preview matches the order rather than
+ * trusting a browser that could otherwise claim any basket it liked.
+ */
 app.post('/api/offers/validate', async (c) => {
-  const body = await c.req.json<{ subtotal?: number; deliveryFee?: number; code?: string }>();
-  const subtotal = Math.max(0, Math.round(Number(body.subtotal) || 0));
+  const body = await c.req.json<{ subtotal?: number; deliveryFee?: number; code?: string; items?: Array<{ sku?: string; quantity?: number }> }>();
   const deliveryFee = Math.max(0, Math.round(Number(body.deliveryFee) || 0));
-  const result = await resolveOffer(c.env, subtotal, deliveryFee, normalize(body.code));
+  const wantedItems = (body.items || []).map((item) => ({ sku: normalize(item.sku), quantity: Math.max(0, Math.floor(Number(item.quantity) || 0)) })).filter((item) => item.sku && item.quantity);
+  let lines: OfferLine[] = [];
+  if (wantedItems.length) {
+    const skus = wantedItems.map((item) => item.sku);
+    const rows = await c.env.DB.prepare(`SELECT id, sku, price, volume_tiers_json AS volumeTiersJson, discount_percent AS discountPercent, discount_ends_at AS discountEndsAt FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; sku: string; price: number; volumeTiersJson: string; discountPercent: number; discountEndsAt: string | null }>();
+    const bySku = new Map(rows.results.map((row) => [row.sku, row]));
+    lines = wantedItems.flatMap((item) => {
+      const product = bySku.get(item.sku);
+      if (!product) return [];
+      const tier = parseVolumeTiers(product.volumeTiersJson).filter((entry) => item.quantity >= entry.minQty).at(-1);
+      const offerPrice = discountedPrice(Number(product.price) || 0, activeDiscountPercent(product));
+      const unitPrice = tier?.price === undefined ? offerPrice : Math.min(Number(tier.price), offerPrice);
+      return [{ productId: product.id, lineTotal: unitPrice * item.quantity }];
+    });
+  }
+  // An older checkout, or a caller with no basket, can still preview against a bare subtotal.
+  if (!lines.length) lines = [{ productId: 0, lineTotal: Math.max(0, Math.round(Number(body.subtotal) || 0)) }];
+  const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  const result = await resolveOffer(c.env, lines, deliveryFee, normalize(body.code));
   if (result.error) return json(c, { ok: false, error: result.error }, 400);
   return json(c, {
     ok: true,
+    subtotal,
     discount: result.discount,
     deliveryFee: result.deliveryFee,
     total: Math.max(0, subtotal - result.discount) + result.deliveryFee,
-    offer: result.offer ? { code: result.offer.code, title: result.offer.title, discountType: result.offer.discountType, discountValue: result.offer.discountValue } : null,
+    offer: result.offer ? { code: result.offer.code, title: result.offer.title, discountType: result.offer.discountType, discountValue: result.offer.discountValue, wholeShop: offerProductScope(result.offer.productIdsJson).length === 0 } : null,
   });
 });
 
@@ -2306,18 +2434,25 @@ app.post('/api/orders', async (c) => {
   if (selectedMethod.requiresTrxId && !trxId) return json(c, { error: 'Please enter the bKash transaction ID for an advance payment.' }, 400);
   const skus = body.items.map((item) => normalize(item.sku)).filter(Boolean);
   if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
-  const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
+  const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson, discount_percent AS discountPercent, discount_ends_at AS discountEndsAt FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string; discountPercent: number; discountEndsAt: string | null }>();
   const bySku = new Map(products.results.map((product) => [product.sku, product]));
   const productIds = products.results.map((product) => product.id);
+  type SizeVariant = { id: number; productId: number; label: string; price: number | null; stock: number };
   const variantRows = productIds.length
-    ? await c.env.DB.prepare(`SELECT product_id AS productId, label, price FROM product_variants WHERE active = 1 AND kind = 'size' AND price IS NOT NULL AND product_id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ productId: number; label: string; price: number }>()
-    : { results: [] as Array<{ productId: number; label: string; price: number }> };
+    ? await c.env.DB.prepare(`SELECT id, product_id AS productId, label, price, stock FROM product_variants WHERE active = 1 AND kind = 'size' AND product_id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<SizeVariant>()
+    : { results: [] as SizeVariant[] };
   const variantBySku = new Map(variantRows.results.map((row) => [`${row.productId}|${String(row.label).toLowerCase()}`, row]));
   // A shop that prices by size may leave the base price at zero, which the storefront shows as
   // "From <cheapest>". Without this, an order naming no size would price that product at zero
   // and the customer would get it free.
   const cheapestVariant = new Map<number, number>();
+  // A shop counts stock per size only if it has entered some. All sizes at zero means "not
+  // tracked separately", so the product total still decides; once any size carries a number,
+  // every size of that product is judged on its own — including the ones sitting at zero.
+  const tracksSizeStock = new Set<number>();
   for (const row of variantRows.results) {
+    if (Number(row.stock || 0) > 0) tracksSizeStock.add(row.productId);
+    if (row.price === null || row.price === undefined) continue;
     const current = cheapestVariant.get(row.productId);
     if (current === undefined || Number(row.price) < current) cheapestVariant.set(row.productId, Number(row.price));
   }
@@ -2333,12 +2468,22 @@ app.post('/api/orders', async (c) => {
     // from the database, never from the request, so a customer cannot name their own.
     const variantLabel = normalize(options.size) || normalize(options.gram);
     const variant = variantLabel ? variantBySku.get(`${product.id}|${variantLabel.toLowerCase()}`) : undefined;
-    const basePrice = variant?.price ?? (Number(product.price) || cheapestVariant.get(product.id) || product.price);
-    return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? basePrice, options, variantLabel: variant ? variant.label : '' };
+    // Sizes carry their own stock, so a shop with two S left and thirty L cannot sell three S
+    // just because the product total is thirty-two.
+    if (variant && tracksSizeStock.has(product.id) && Number(variant.stock || 0) < item.quantity) {
+      throw new RequestError(Number(variant.stock || 0) ? `${product.name} has only ${variant.stock} left in ${variant.label}.` : `${product.name} is sold out in ${variant.label}.`);
+    }
+    const listPrice = variant?.price ?? (Number(product.price) || cheapestVariant.get(product.id) || product.price);
+    // The product's own offer percentage, applied here so the price the customer was shown is
+    // the price they are charged. A volume tier is already a negotiated price, so the two never
+    // stack: the customer gets whichever is cheaper, never both discounts at once.
+    const offerPrice = discountedPrice(listPrice, activeDiscountPercent(product));
+    const unitPrice = tier?.price === undefined ? offerPrice : Math.min(Number(tier.price), offerPrice);
+    return { sku: product.sku, quantity: item.quantity, product, unitPrice, options, variantLabel: variant ? variant.label : '', variantId: variant?.id ?? null };
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   // Offers finally do something: a coupon code, or an auto-apply offer when none is given.
-  const offerResult = await resolveOffer(c.env, subtotal, deliveryFee, normalize(body.couponCode));
+  const offerResult = await resolveOffer(c.env, lineItems.map((line) => ({ productId: line.product.id, lineTotal: line.unitPrice * line.quantity })), deliveryFee, normalize(body.couponCode));
   if (offerResult.error) return json(c, { error: offerResult.error }, 400);
   const discountAmount = offerResult.discount;
   const chargedDeliveryFee = offerResult.deliveryFee;
@@ -2354,6 +2499,9 @@ app.post('/api/orders', async (c) => {
   for (const item of lineItems) {
     await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price, variant_label) VALUES (?, ?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.options && Object.keys(item.options).length ? `${item.product.name} · ${Object.entries(item.options).map(([key, value]) => `${key === 'size' ? 'Size' : key === 'color' ? 'Colour' : 'Weight'}: ${value}`).join(' · ')}` : item.product.name, item.quantity, item.unitPrice, item.variantLabel || null).run();
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
+    // Per-size stock only counts down once the shop has actually recorded some; a size left at
+    // zero means "not tracked separately" rather than "sold out".
+    if (item.variantId) await c.env.DB.prepare('UPDATE product_variants SET stock = MAX(0, stock - ?) WHERE id = ? AND stock > 0').bind(item.quantity, item.variantId).run();
   }
   // Count a coupon only once the order exists, so an abandoned checkout never burns a use.
   if (offerResult.offer) await c.env.DB.prepare('UPDATE offers SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(offerResult.offer.id).run();

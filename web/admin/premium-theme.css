@@ -1167,3 +1167,27 @@ label{ color:var(--muted); }
 .order-copy-actions{ display:flex; flex-wrap:wrap; gap:9px; }
 .order-copy-actions .button{ min-height:46px; padding:0 18px; }
 @media(max-width:520px){ .order-copy-actions{ flex-direction:column; } .order-copy-actions .button,.order-copy-actions .icon-action{ width:100%; } }
+
+/* 7h · Product offers, per-size stock, and choosing which products an offer covers ---------- */
+/* A discount used to live only on the Offers page and only as a whole-shop percentage, so the
+   owner could not put "20% off" on one product, and nothing they set ever showed on a card. */
+.offer-editor-field{ border:1px solid var(--pt-line,#eadfe6); border-radius:14px; padding:16px; background:var(--pt-surface,#fff); }
+.offer-editor-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-top:10px; }
+.offer-editor-grid label{ display:flex; flex-direction:column; gap:6px; font-size:12px; }
+.offer-preview{ margin:12px 0 0; font-size:12.5px; line-height:1.5; }
+.offer-preview.ok{ color:#1f7a4d; }
+.offer-preview.warn{ color:#a9541b; }
+
+.variant-price-grid-stock{ display:grid; grid-template-columns:minmax(90px,1.2fr) minmax(80px,1fr) minmax(80px,1fr); gap:8px 10px; align-items:center; }
+.variant-price-head{ font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--pt-muted,#7b6a74); }
+.variant-price-label{ font-size:13px; font-weight:600; overflow-wrap:anywhere; }
+.variant-price-grid-stock input{ width:100%; min-width:0; }
+
+.offer-products-field{ border:1px solid var(--pt-line,#eadfe6); border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+.offer-product-results{ display:flex; flex-direction:column; gap:6px; }
+.offer-result{ display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; border:1px solid var(--pt-line,#eadfe6); border-radius:10px; background:var(--pt-surface,#fff); padding:8px 11px; cursor:pointer; font:inherit; }
+.offer-result:hover{ border-color:var(--pt-accent,#DA70D6); }
+.offer-result small{ color:var(--pt-muted,#7b6a74); font-size:11px; }
+.offer-product-chosen{ display:flex; flex-wrap:wrap; gap:8px; }
+.offer-product-chosen p{ flex:1 1 100%; margin:0; font-size:11.5px; }
+.offer-chip{ display:inline-flex; align-items:center; gap:8px; border:1px solid var(--pt-accent,#DA70D6); background:var(--pt-accent-soft,#fbeefb); color:var(--pt-ink,#2b1724); border-radius:999px; padding:6px 12px; font:inherit; font-size:12px; cursor:pointer; }
