@@ -1,0 +1,74 @@
+name: Rinova Campaign Edge
+
+# The rinovabd.com zone lives in a different Cloudflare account from rinovabd-worker, and
+# Cloudflare only binds a Worker to a hostname inside its own account. This workflow deploys
+# a small proxy Worker into the domain's account and claims ads.rinovabd.com for it, so
+# campaign links can be advertised on the brand domain instead of a workers.dev URL.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY_CAMPAIGN_EDGE to deploy the proxy Worker and claim ads.rinovabd.com"
+        required: true
+        type: string
+        default: ""
+
+concurrency:
+  group: rinova-campaign-edge
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-edge:
+    name: Deploy the campaign proxy to the domain account
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.DOMAIN_CLOUD_FLARE_API }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DOMAIN_CLOUD_FLARE_ID }}
+    steps:
+      - name: Require explicit confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.confirmation }}" != "DEPLOY_CAMPAIGN_EDGE" ]]; then
+            echo "Not deploying. Re-run with confirmation DEPLOY_CAMPAIGN_EDGE to proceed."
+            exit 1
+          fi
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "The client Cloudflare secrets are missing. Add DOMAIN_CLOUD_FLARE_API and DOMAIN_CLOUD_FLARE_ID."
+            exit 1
+          fi
+          echo "Confirmation accepted. Secret values are not printed."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy the campaign proxy Worker
+        working-directory: edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A custom domain is created for ads.rinovabd.com as part of this deploy. If the
+          # token lacks Workers Scripts:Edit or DNS:Edit on the domain account, Wrangler says
+          # so plainly, which is the useful outcome rather than a silent partial setup.
+          npx --yes wrangler@4.125.0 deploy
+
+      - name: Report the campaign link
+        shell: bash
+        run: |
+          echo "Deployed. Campaign pages are now reachable at:"
+          echo "  https://ads.rinovabd.com/campaign/<slug>"
+          echo "The storefront Worker still answers the API on its workers.dev host; that must stay enabled."

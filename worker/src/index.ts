@@ -11,6 +11,7 @@ interface Bindings {
   SHOP_NAME: string;
   SHOP_PHONE: string;
   SHOP_ADDRESS: string;
+  CAMPAIGN_PUBLIC_ORIGIN?: string;
   STEADFAST_BASE_URL?: string;
   STEADFAST_API_KEY?: string;
   STEADFAST_SECRET_KEY?: string;
@@ -1439,6 +1440,31 @@ type CampaignRow = { id: number; slug: string; title: string; eyebrow: string | 
  * Forwarding that redirect is what made campaign pages bounce instead of render,
  * so follow it here and hand back the real document.
  */
+/**
+ * Campaign pages are reached through a proxy Worker on ads.rinovabd.com, because the zone and
+ * this Worker sit in different Cloudflare accounts. That proxy forwards the original host, so
+ * the social card and canonical tag can name the brand domain instead of the workers.dev
+ * origin this Worker actually sees. Only hosts on rinovabd.com are trusted: the header is
+ * attacker-supplied on a direct workers.dev request, and an unchecked value would let anyone
+ * mint canonical and og:url tags pointing at a site they control.
+ */
+function publicOrigin(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
+  const forwarded = normalize(c.req.header('X-Forwarded-Host')).toLowerCase().split(',')[0].trim();
+  if (forwarded && /^[a-z0-9.-]+$/.test(forwarded) && (forwarded === 'rinovabd.com' || forwarded.endsWith('.rinovabd.com'))) return `https://${forwarded}`;
+  return new URL(c.req.url).origin;
+}
+
+/**
+ * The link the owner copies into Meta Ads Manager. The dashboard calls this API on the
+ * workers.dev origin, so without an explicit public host the owner would be handed an
+ * unbranded link to advertise.
+ */
+function campaignPublicOrigin(c: { env: Bindings; req: { url: string; header: (name: string) => string | undefined } }): string {
+  const configured = normalize(c.env.CAMPAIGN_PUBLIC_ORIGIN).replace(/\/+$/, '');
+  if (/^https:\/\/[a-z0-9.-]+$/i.test(configured)) return configured;
+  return publicOrigin(c);
+}
+
 async function fetchAssetHtml(env: Bindings, requestUrl: string, path: string): Promise<Response> {
   if (!env.ASSETS) return new Response('Storefront assets are unavailable.', { status: 503 });
   let response = await env.ASSETS.fetch(new Request(new URL(path, requestUrl)));
@@ -1475,7 +1501,7 @@ function campaignIsLive(campaign: Pick<CampaignRow, 'active' | 'startsAt' | 'end
 app.get('/api/admin/campaigns', async (c) => {
   if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
   const result = await c.env.DB.prepare(`SELECT ${CAMPAIGN_COLUMNS} FROM campaign_pages ORDER BY updated_at DESC, id DESC`).all<CampaignRow>();
-  const origin = new URL(c.req.url).origin;
+  const origin = campaignPublicOrigin(c);
   // The owner needs the finished ad URL in front of them, not a slug to assemble by hand.
   return json(c, { campaigns: result.results.map((campaign) => ({ ...campaign, productIds: parseCampaignProductIds(campaign.productIdsJson), url: `${origin}/campaign/${campaign.slug}`, live: campaignIsLive(campaign) })) });
 });
@@ -1486,7 +1512,7 @@ app.get('/api/admin/campaigns/:id', async (c) => {
   if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid campaign id.' }, 400);
   const campaign = await c.env.DB.prepare(`SELECT ${CAMPAIGN_COLUMNS} FROM campaign_pages WHERE id = ? LIMIT 1`).bind(id).first<CampaignRow>();
   if (!campaign) return json(c, { error: 'Campaign not found.' }, 404);
-  const origin = new URL(c.req.url).origin;
+  const origin = campaignPublicOrigin(c);
   return json(c, { campaign: { ...campaign, productIds: parseCampaignProductIds(campaign.productIdsJson), url: `${origin}/campaign/${campaign.slug}`, live: campaignIsLive(campaign) } });
 });
 
@@ -1933,7 +1959,7 @@ app.get('/campaign/:slug', async (c) => {
     ? chosenIds.map((id) => products.results.find((product) => Number((product as { id: number }).id) === id)).filter(Boolean)
     : products.results;
 
-  const origin = new URL(c.req.url).origin;
+  const origin = publicOrigin(c);
   const canonical = `${origin}/campaign/${campaign.slug}`;
   const metaTitle = normalize(campaign.metaTitle) || `${campaign.title} · ${c.env.SHOP_NAME}`;
   const metaDescription = normalize(campaign.metaDescription) || normalize(campaign.description).slice(0, 200) || `Shop the ${campaign.title} edit from ${c.env.SHOP_NAME}.`;

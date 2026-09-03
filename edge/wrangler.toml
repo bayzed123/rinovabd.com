@@ -1,0 +1,19 @@
+# Deployed to the Cloudflare account that owns the rinovabd.com zone, which is NOT the
+# account holding rinovabd-worker and D1. Keep the account id out of this file: the deploy
+# workflow supplies it from the DOMAIN_CLOUD_FLARE_ID secret.
+name = "rinovabd-campaign-edge"
+main = "src/index.js"
+compatibility_date = "2026-08-24"
+
+# Nothing should reach this Worker except through the brand hostname.
+workers_dev = false
+
+# custom_domain lets Cloudflare create and manage the DNS record itself, so no proxied
+# placeholder record has to be maintained by hand.
+routes = [
+  { pattern = "ads.rinovabd.com", custom_domain = true }
+]
+
+[vars]
+UPSTREAM_ORIGIN = "https://rinovabd-worker.abdussalam8480.workers.dev"
+PUBLIC_SITE_ORIGIN = "https://rinovabd.com"
