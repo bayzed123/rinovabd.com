@@ -1780,7 +1780,18 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
       newByProduct.set(product.id, item.quantity);
       lines.push({ product, quantity: item.quantity, details: item.details });
     }
-    const subtotal = lines.reduce((sum, line) => sum + Number(line.product.price || 0) * line.quantity, 0);
+    // Re-price against the chosen variant, not the base price: an order holding the 100g jar
+    // would otherwise be rewritten at the 50g price the moment an admin touched it.
+    const editIds = lines.map((line) => line.product.id);
+    const editVariants = editIds.length
+      ? await c.env.DB.prepare(`SELECT product_id AS productId, label, price FROM product_variants WHERE active = 1 AND kind = 'size' AND price IS NOT NULL AND product_id IN (${editIds.map(() => '?').join(',')})`).bind(...editIds).all<{ productId: number; label: string; price: number }>()
+      : { results: [] as Array<{ productId: number; label: string; price: number }> };
+    const editVariantBy = new Map(editVariants.results.map((row) => [`${row.productId}|${String(row.label).toLowerCase()}`, row.price]));
+    const priceFor = (line: { product: { id: number; price: number }; details?: string }) => {
+      const label = /size:\s*([^·]+)/i.exec(String(line.details || ''))?.[1]?.trim().toLowerCase();
+      return (label ? editVariantBy.get(`${line.product.id}|${label}`) : undefined) ?? Number(line.product.price || 0);
+    };
+    const subtotal = lines.reduce((sum, line) => sum + priceFor(line) * line.quantity, 0);
     const statements = [c.env.DB.prepare('DELETE FROM order_items WHERE order_id = ?').bind(existing.id)];
     // Walk both sides so a product removed from the order gets its reserved stock back.
     for (const productId of new Set([...oldByProduct.keys(), ...newByProduct.keys()])) {
@@ -1788,14 +1799,16 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
       const after = Number(newByProduct.get(productId) || 0);
       if (before !== after) statements.push(c.env.DB.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(before - after, productId));
     }
-    for (const line of lines) statements.push(c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(existing.id, line.product.id, line.details || line.product.name, line.quantity, line.product.price));
-    statements.push(c.env.DB.prepare('UPDATE orders SET subtotal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subtotal, existing.id));
+    for (const line of lines) statements.push(c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(existing.id, line.product.id, line.details || line.product.name, line.quantity, priceFor(line)));
+    // A discount from the original order can outgrow a shrunken basket, which would make the
+    // total negative or the saving larger than the goods. Never let it exceed the subtotal.
+    statements.push(c.env.DB.prepare('UPDATE orders SET subtotal = ?, discount_amount = MIN(discount_amount, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subtotal, subtotal, existing.id));
     await c.env.DB.batch(statements);
   }
   const currentStatus = await c.env.DB.prepare('SELECT status FROM orders WHERE id = ?').bind(existing.id).first<{ status: string }>();
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(existing.id, currentStatus?.status || 'pending', `Order details edited by ${username}`).run();
-  const updated = await c.env.DB.prepare('SELECT subtotal, delivery_fee AS deliveryFee, delivery_zone AS deliveryZone FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; deliveryFee: number; deliveryZone: string }>();
-  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, deliveryFee: updated?.deliveryFee || 0, deliveryZone: updated?.deliveryZone || '', total: Number(updated?.subtotal || 0) + Number(updated?.deliveryFee || 0), updatedBy: username });
+  const updated = await c.env.DB.prepare('SELECT subtotal, discount_amount AS discount, delivery_fee AS deliveryFee, delivery_zone AS deliveryZone FROM orders WHERE id = ?').bind(existing.id).first<{ subtotal: number; discount: number; deliveryFee: number; deliveryZone: string }>();
+  return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, discount: updated?.discount || 0, deliveryFee: updated?.deliveryFee || 0, deliveryZone: updated?.deliveryZone || '', total: Math.max(0, Number(updated?.subtotal || 0) - Number(updated?.discount || 0)) + Number(updated?.deliveryFee || 0), updatedBy: username });
 });
 
 /**
