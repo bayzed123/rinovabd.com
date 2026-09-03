@@ -1,0 +1,8 @@
+# rinovabd.com is served by GitHub Pages, which does not run the Worker's dynamic
+# /robots.txt route, so the live domain needs this static copy. Without it the admin
+# dashboard published under /admin is crawlable on the public domain.
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /invoice.html
