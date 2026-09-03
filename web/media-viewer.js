@@ -13,6 +13,10 @@
   let lastTap = 0;
   let dismissState;
   let closeTimer;
+  let originEl = null;
+  let homeFlight = null;   // how to map the open image back onto the thumbnail it came from
+  let flight = 0;          // 0 = fully open, 1 = sitting exactly on the origin
+  let wheelReset;
   let lockedScrollY = 0;
   let isLocked = false;
   let lastFocused = null;
@@ -77,11 +81,66 @@
     panY = Math.max(-maxY, Math.min(maxY, panY));
   }
 
+  /* ------------------------------------------------------------------
+     GROWING OUT OF THE THUMBNAIL, AND SHRINKING BACK INTO IT
+     Opening used to fade a full-screen panel in over the page, which gives
+     no sense of where the big image came from. We measure the thumbnail the
+     customer tapped and the image once it is laid out, work out the single
+     transform that puts the second exactly on top of the first, and animate
+     between them. The same numbers run backwards on close, so the image
+     returns to its own place in the grid instead of vanishing.
+
+     If the origin has scrolled out of view, or was never given, there is no
+     honest place to fly from — the viewer falls back to the plain fade.
+  ------------------------------------------------------------------ */
+  function originRect() {
+    if (!originEl || !document.contains(originEl)) return null;
+    const node = originEl.querySelector('img, video') || originEl;
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return null;
+    return rect;
+  }
+
+  function measureHome() {
+    // The rect of a transformed element is its transformed rect, so measuring part-way through
+    // a flight would fold the current transform into the next one. Only measure at rest.
+    if (flight > 0 && homeFlight) return;
+    homeFlight = null;
+    const image = activeImage();
+    const from = originRect();
+    if (!image || !from) return;
+    const to = image.getBoundingClientRect();
+    // An image that has not loaded yet has a placeholder box a few pixels across. Measuring
+    // against that produced a scale of eighteen and an image that arrived the size of a wall.
+    if (to.width < 24 || to.height < 24) return;
+    // One uniform scale, so the image never stretches on the way home. Taking the larger of the
+    // two ratios fills the thumbnail's box the way the thumbnail itself does.
+    const scale = Math.max(from.width / to.width, from.height / to.height);
+    homeFlight = {
+      scale,
+      x: (from.left + from.width / 2) - (to.left + to.width / 2),
+      y: (from.top + from.height / 2) - (to.top + to.height / 2),
+    };
+  }
+
+  /** 0 leaves the image where it opened; 1 puts it exactly on its thumbnail. */
+  function setFlight(progress) {
+    flight = homeFlight ? Math.max(0, Math.min(1, progress)) : 0;
+    viewer?.style.setProperty('--media-flight', String(flight));
+    applyTransform();
+  }
+
   function applyTransform() {
     const image = activeImage();
     if (!image) return;
     clampPan();
-    image.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
+    if (homeFlight && flight > 0) {
+      const scale = 1 + (homeFlight.scale - 1) * flight;
+      image.style.transform = `translate3d(${homeFlight.x * flight}px, ${homeFlight.y * flight}px, 0) scale(${scale})`;
+    } else {
+      image.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
+    }
     image.style.touchAction = zoom > 1 ? 'none' : 'manipulation';
     image.style.cursor = zoom > 1 ? (dragState ? 'grabbing' : 'grab') : 'zoom-in';
   }
@@ -129,16 +188,27 @@
         const next = Math.max(0, Math.min(slides.length - 1, Math.round(track.scrollLeft / width)));
         if (next !== current) {
           current = next;
+          homeFlight = null;
           setZoom('reset', false);
           updateControls();
           preloadNeighbours();
         }
       }, 120);
     }, { passive: true });
+    /* ------------------------------------------------------------------
+       DISMISSING BY DRAGGING DOWN
+       The viewer used to slide the whole dialog down a few pixels and fade,
+       which reads as a panel being pushed away rather than an image going
+       back where it came from. A vertical drag now runs the opening flight
+       backwards: the image shrinks towards the thumbnail it grew out of and
+       the chrome fades with it, so letting go finishes a movement the finger
+       already started. A horizontal drag is left to the track, which pages
+       between images.
+    ------------------------------------------------------------------ */
     const resetDismiss = () => {
       dismissState = null;
       viewer.classList.remove('media-viewer-dismissing');
-      viewer.style.removeProperty('--media-dismiss-y');
+      setFlight(0);
     };
     dialog.addEventListener('touchstart', (event) => {
       if (zoom > 1) return;
@@ -155,11 +225,14 @@
         if (dismissState.active) resetDismiss();
         return;
       }
+      if (!dismissState.active) measureHome();
       dismissState.active = true;
       dismissState.deltaY = deltaY;
       event.preventDefault();
       viewer.classList.add('media-viewer-dismissing');
-      viewer.style.setProperty('--media-dismiss-y', `${Math.min(deltaY, window.innerHeight)}px`);
+      // Stop a hair short of 1 so the image is still visible when the finger lifts;
+      // releasing then finishes the last of the journey rather than snapping.
+      setFlight(Math.min(0.88, deltaY / (window.innerHeight * 0.45)));
     }, { passive: false });
     dialog.addEventListener('touchend', () => {
       if (!dismissState) return;
@@ -168,6 +241,20 @@
       if (shouldClose) close();
     }, { passive: true });
     dialog.addEventListener('touchcancel', resetDismiss, { passive: true });
+
+    // The same gesture with a wheel or trackpad, so scrolling down dismisses on a laptop too.
+    dialog.addEventListener('wheel', (event) => {
+      if (zoom > 1 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      if (!flight) measureHome();
+      const next = Math.max(0, Math.min(0.88, flight + event.deltaY / (window.innerHeight * 0.6)));
+      viewer.classList.add('media-viewer-dismissing');
+      setFlight(next);
+      clearTimeout(wheelReset);
+      if (next >= 0.5) { viewer.classList.remove('media-viewer-dismissing'); close(); return; }
+      // A short nudge springs back rather than leaving the image stranded mid-flight.
+      wheelReset = setTimeout(() => { viewer.classList.remove('media-viewer-dismissing'); setFlight(0); }, 160);
+    }, { passive: false });
 
     track.addEventListener('pointerdown', (event) => {
       const image = event.target.closest('.media-viewer-slide img');
@@ -250,6 +337,8 @@
     const next = Math.max(0, Math.min(slides.length - 1, current + direction));
     if (next === current) return;
     current = next;
+    // A different picture is a different shape, so the way home has to be worked out again.
+    homeFlight = null;
     setZoom('reset', false);
     track.scrollTo({ left: current * track.clientWidth, behavior: 'smooth' });
     updateControls();
@@ -259,22 +348,42 @@
   function close() {
     if (!viewer) return;
     clearTimeout(closeTimer);
+    clearTimeout(wheelReset);
     dismissState = null;
     dragState = null;
     viewer.classList.remove('media-viewer-dismissing');
-    viewer.style.removeProperty('--media-dismiss-y');
-    viewer.classList.remove('open');
     viewer.setAttribute('aria-hidden', 'true');
+    // Measure before unlocking: unlocking restores the page's scroll offset, and the origin has
+    // to be measured in the same coordinate space the image is currently sitting in.
+    if (zoom > 1) setZoom('reset', false);
+    if (!homeFlight) measureHome();
+    if (homeFlight) {
+      // Let the image finish its journey before the viewer is torn down; `closing` fades the
+      // backdrop and chrome around it and stops the viewer taking any more clicks.
+      viewer.classList.add('media-viewer-closing');
+      setFlight(1);
+    } else {
+      viewer.classList.remove('open');
+    }
     unlockScroll();
     if (lastFocused && document.contains(lastFocused)) {
       lastFocused.focus({ preventScroll: true });
       lastFocused = null;
     }
-    closeTimer = setTimeout(() => { if (!viewer.classList.contains('open')) viewer.hidden = true; }, 220);
+    closeTimer = setTimeout(() => {
+      if (!viewer.classList.contains('media-viewer-closing') && viewer.classList.contains('open')) return;
+      viewer.classList.remove('open', 'media-viewer-closing');
+      viewer.hidden = true;
+      homeFlight = null;
+      originEl = null;
+      setFlight(0);
+    }, 320);
   }
 
-  function open(items, index = 0, productTitle = 'Product images') {
+  function open(items, index = 0, productTitle = 'Product images', origin = null) {
     ensureViewer();
+    viewer.classList.remove('media-viewer-closing');
+    originEl = origin instanceof Element ? origin : null;
     slides = (Array.isArray(items) ? items : []).map((item) => ({ type: item?.type === 'video' ? 'video' : 'image', url: safeUrl(typeof item === 'string' ? item : item?.url), alt: item?.alt || productTitle })).filter((item) => item.url);
     if (!slides.length) return;
     clearTimeout(closeTimer);
@@ -300,14 +409,35 @@
 
     // Two frames: the first lets the dialog get its real width so
     // scrollLeft lands on the right slide instead of snapping back.
+    // Start the image sitting exactly on the thumbnail, with no transition, then release it on
+    // the next frame so the browser animates the whole distance in one movement.
+    const takeOff = () => {
+      measureHome();
+      viewer.classList.add('media-viewer-arriving');
+      setFlight(1);
+      viewer.classList.add('open');
+      preloadNeighbours();
+      requestAnimationFrame(() => {
+        viewer.classList.remove('media-viewer-arriving');
+        setFlight(0);
+        applyTransform();
+        viewer.querySelector('.media-viewer-close')?.focus({ preventScroll: true });
+      });
+    };
+
     requestAnimationFrame(() => {
       jumpTo(current);
       requestAnimationFrame(() => {
         jumpTo(current);
-        viewer.classList.add('open');
-        applyTransform();
-        preloadNeighbours();
-        viewer.querySelector('.media-viewer-close')?.focus({ preventScroll: true });
+        // Wait for the picture to have a real size before measuring the journey — but never let
+        // a slow image keep the viewer invisible; after a moment it opens without the flight.
+        const image = activeImage();
+        if (!image || (image.complete && image.naturalWidth)) { takeOff(); return; }
+        let launched = false;
+        const go = () => { if (!launched) { launched = true; takeOff(); } };
+        image.addEventListener('load', go, { once: true });
+        image.addEventListener('error', go, { once: true });
+        setTimeout(go, 400);
       });
     });
   }
