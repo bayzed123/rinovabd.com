@@ -429,7 +429,7 @@ async function loadOrders() {
     const narrowed = Boolean(query.trim() || status);
     const shown = narrowed ? all : all.slice(0, ORDER_PAGE_SIZE);
     const statuses = Object.keys(ORDER_STATUS_LOOK);
-    $('#orders-table').innerHTML = shown.map((order) => `<tr><td><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><small>Order ${escapeHtml(order.orderCode)}</small><small>${escapeHtml(order.createdAt)}</small></td><td><strong>${escapeHtml(order.name)}</strong><small>${escapeHtml(order.phone)}</small></td><td>${money(Math.max(0, Number(order.subtotal) - Number(order.discount || 0)) + Number(order.deliveryFee))}${Number(order.discount || 0) ? `<small>after -${money(order.discount)}${order.offerCode ? ` ${escapeHtml(order.offerCode)}` : ''}</small>` : ''}</td><td>${escapeHtml(order.paymentMethod)}<small>${escapeHtml(order.paymentStatus)}</small></td><td>${escapeHtml(order.courierStatus || 'not booked')}</td><td><div class="order-status-cell">${orderStatusPill(order.status)}<select class="order-status-select" data-order-code="${escapeHtml(order.orderCode)}" aria-label="Change status for ${escapeHtml(order.orderCode)}">${statuses.map((value) => `<option value="${value}" ${value === order.status ? 'selected' : ''}>${escapeHtml(ORDER_STATUS_LOOK[value].label)}</option>`).join('')}</select></div></td><td>${escapeHtml(order.address || order.district || '')}${order.customerNote ? `<small>Note: ${escapeHtml(order.customerNote)}</small>` : ''}<div class="order-row-actions"><button class="icon-action" type="button" data-order-details="${escapeHtml(order.orderCode)}">Edit / details</button><button class="icon-action" type="button" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No orders found.</td></tr>';
+    $('#orders-table').innerHTML = shown.map((order) => `<tr><td><button type="button" class="order-invoice-button" data-order-copy="${escapeHtml(order.orderCode)}" title="Show customer details to copy"><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><span class="order-invoice-hint">tap to copy details</span></button><small>Order ${escapeHtml(order.orderCode)}</small><small>${escapeHtml(order.createdAt)}</small></td><td><strong>${escapeHtml(order.name)}</strong><small>${escapeHtml(order.phone)}</small></td><td>${money(Math.max(0, Number(order.subtotal) - Number(order.discount || 0)) + Number(order.deliveryFee))}${Number(order.discount || 0) ? `<small>after -${money(order.discount)}${order.offerCode ? ` ${escapeHtml(order.offerCode)}` : ''}</small>` : ''}</td><td>${escapeHtml(order.paymentMethod)}<small>${escapeHtml(order.paymentStatus)}</small></td><td>${escapeHtml(order.courierStatus || 'not booked')}</td><td><div class="order-status-cell">${orderStatusPill(order.status)}<select class="order-status-select" data-order-code="${escapeHtml(order.orderCode)}" aria-label="Change status for ${escapeHtml(order.orderCode)}">${statuses.map((value) => `<option value="${value}" ${value === order.status ? 'selected' : ''}>${escapeHtml(ORDER_STATUS_LOOK[value].label)}</option>`).join('')}</select></div></td><td>${escapeHtml(order.address || order.district || '')}${order.customerNote ? `<small>Note: ${escapeHtml(order.customerNote)}</small>` : ''}<div class="order-row-actions"><button class="icon-action" type="button" data-order-details="${escapeHtml(order.orderCode)}">Edit / details</button><button class="icon-action" type="button" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No orders found.</td></tr>';
     const hint = $('#orders-hint');
     if (hint) {
       hint.textContent = narrowed
@@ -840,3 +840,48 @@ function renderStockHint() {
 document.querySelector('#product-form [name="stock"]')?.addEventListener('input', renderStockHint);
 $('#new-product')?.addEventListener('click', () => setTimeout(renderStockHint, 0));
 document.addEventListener('click', (event) => { if (event.target.closest('[data-edit-sku], [data-quick-edit-sku]')) setTimeout(renderStockHint, 0); });
+
+
+/**
+ * Packing an order needs the customer's name, phone and address to paste into the courier's
+ * form — nothing else. That used to mean opening the whole edit form, which invites accidental
+ * edits to a customer who has not made a mistake. Tapping the invoice number now shows just
+ * the copy block; editing stays one button further on, for when something is actually wrong.
+ */
+function courierCopyText(order) {
+  return [order.name, order.phone, [order.address, order.upazila, order.district].map((part) => String(part || '').trim()).filter(Boolean).join(', ')]
+    .map((line) => String(line || '').trim()).filter(Boolean).join('\n');
+}
+
+function showOrderCopy(orderCode) {
+  const order = (state.orders || []).find((entry) => String(entry.orderCode) === String(orderCode));
+  if (!order) return;
+  let panel = document.getElementById('order-copy-popover');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'order-copy-popover';
+    panel.className = 'order-copy-popover';
+    document.body.appendChild(panel);
+  }
+  const text = courierCopyText(order);
+  panel.innerHTML = `<div class="order-copy-card" role="dialog" aria-label="Customer details for ${escapeHtml(order.orderCode)}">
+    <div class="order-copy-head"><div><strong>${escapeHtml(order.invoiceNumber || order.orderCode)}</strong><small>${escapeHtml(order.orderCode)}</small></div><button type="button" class="icon-action" data-copy-close>Close</button></div>
+    <pre class="order-copy-block" id="order-copy-quick">${escapeHtml(text)}</pre>
+    <div class="order-copy-actions">
+      <button type="button" class="button button-dark" data-copy-quick>Copy details</button>
+      <button type="button" class="icon-action" data-order-details="${escapeHtml(order.orderCode)}" data-copy-close>Edit details</button>
+      <button type="button" class="icon-action" data-print-order="${escapeHtml(order.orderCode)}">Print invoice</button>
+    </div>
+  </div>`;
+  panel.classList.add('open');
+}
+
+document.addEventListener('click', (event) => {
+  const open = event.target.closest('[data-order-copy]');
+  if (open) showOrderCopy(open.dataset.orderCopy);
+  if (event.target.closest('[data-copy-quick]')) copyToClipboard(document.getElementById('order-copy-quick')?.textContent || '', 'Customer details copied');
+  const panel = document.getElementById('order-copy-popover');
+  if (!panel || !panel.classList.contains('open')) return;
+  if (event.target.closest('[data-copy-close]') || event.target === panel) panel.classList.remove('open');
+});
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.getElementById('order-copy-popover')?.classList.remove('open'); });

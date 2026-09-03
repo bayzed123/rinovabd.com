@@ -23,7 +23,32 @@ function addToBag(productId) { const product = state.products.find((item) => ite
 function removeFromBag(productId) { const item = state.bag.find((entry) => entry.id === productId); state.bag = state.bag.filter((entry) => entry.id !== productId); saveBag(); if (item) track('remove_from_cart', { currency: 'BDT', value: Number(item.price || 0) * Number(item.quantity || 1), items: [window.rinovaAnalytics?.item(item, item.quantity) || { item_id: item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) }] }); }
 function changeBagQuantity(productId, direction) { const item = state.bag.find((entry) => Number(entry.id) === Number(productId)); if (!item) return; const minimum = Math.max(1, Number(item.minOrderQty || 1)); const maximum = Number(item.stock || 0); const next = Number(item.quantity || minimum) + direction; if (next < minimum) return removeFromBag(productId); item.quantity = maximum ? Math.min(maximum, next) : next; saveBag(); }
 function renderBag() { const totalItems = state.bag.reduce((sum, item) => sum + Number(item.quantity || 0), 0); $('#bag-count').textContent = totalItems; const total = state.bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0); $('#bag-total').textContent = money(total); $('#bag-items').innerHTML = state.bag.length ? state.bag.map((item) => `<div class="bag-item"><img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" /><div><strong>${escapeHtml(item.name)}</strong><div class="quantity-stepper bag-stepper"><button data-bag-qty="${item.id}" data-direction="-1" aria-label="Decrease ${escapeHtml(item.name)}">${icon('minus')}</button><span>${Number(item.quantity || 0)}</span><button data-bag-qty="${item.id}" data-direction="1" aria-label="Increase ${escapeHtml(item.name)}">${icon('plus')}</button></div><small>${money(item.price)} each</small></div><button data-remove="${item.id}" aria-label="Remove ${escapeHtml(item.name)}">${icon('close')}</button></div>`).join('') : '<div class="bag-empty">Your bag is waiting for a little ritual.</div>'; document.querySelectorAll('[data-remove]').forEach((button) => button.addEventListener('click', () => removeFromBag(Number(button.dataset.remove)))); document.querySelectorAll('[data-bag-qty]').forEach((button) => button.addEventListener('click', () => changeBagQuantity(Number(button.dataset.bagQty), Number(button.dataset.direction)))); }
-function toggleDrawer(open) { $('#bag-drawer').classList.toggle('open', open); $('#bag-drawer').setAttribute('aria-hidden', String(!open)); }
+function toggleDrawer(open) {
+  $('#bag-drawer').classList.toggle('open', open);
+  $('#bag-drawer').setAttribute('aria-hidden', String(!open));
+  // The bottom tab bar sits above the drawer, and on a phone it covered the delivery note
+  // and clipped the checkout button. The bag owns the screen while it is open.
+  document.body.classList.toggle('bag-open', open);
+  if (open) renderBagDeliveryNote();
+}
+
+/**
+ * The bag quoted "৳90 inside Dhaka, ৳150 outside Dhaka" as fixed text, so it kept showing the
+ * old charges after the owner changed them in Settings — the same fault as the checkout note.
+ */
+let bagDeliveryPromise = null;
+function renderBagDeliveryNote() {
+  const node = document.getElementById('bag-delivery-note');
+  if (!node) return;
+  bagDeliveryPromise = bagDeliveryPromise || fetch(`${API_BASE}/config`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  bagDeliveryPromise.then((payload) => {
+    const target = document.getElementById('bag-delivery-note');
+    if (!target || !payload) return;
+    const inside = Number(payload.delivery?.dhaka || 0);
+    const outside = Number(payload.delivery?.outsideDhaka || 0);
+    if (inside || outside) target.textContent = `Delivery is calculated automatically at checkout: ${money(inside)} inside Dhaka, ${money(outside)} outside Dhaka.`;
+  });
+}
 function toggleMobileNav(open) { const nav = $('#mobile-nav'); const backdrop = $('#mobile-nav-backdrop'); nav?.classList.toggle('open', open); backdrop?.classList.toggle('open', open); nav?.setAttribute('aria-hidden', String(!open)); backdrop?.setAttribute('aria-hidden', String(!open)); document.body.classList.toggle('menu-open', open); }
 function openSearch() { const overlay = $('#search-overlay'); overlay?.classList.add('open'); overlay?.setAttribute('aria-hidden', 'false'); document.body.classList.add('search-open'); window.setTimeout(() => $('#site-search')?.focus(), 60); }
 function closeSearch() { const overlay = $('#search-overlay'); overlay?.classList.remove('open'); overlay?.setAttribute('aria-hidden', 'true'); document.body.classList.remove('search-open'); }

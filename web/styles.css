@@ -354,3 +354,21 @@ html,body{background-color:var(--v1-canvas);background-image:none;color:var(--in
 /* The bottom tab bar sits at z-index 999, above the image viewer, so it covered the viewer's
    zoom controls. While a full-screen image is open the viewer is the only thing on screen. */
 .media-viewer-open .global-mobile-nav{display:none!important}
+
+/* Bag drawer on a phone ------------------------------------------------------ */
+/* The fixed bottom tab bar (z-index 999) sat above the drawer, hiding the delivery note and
+   clipping the checkout button. The bag takes the screen while it is open, its items scroll,
+   and the summary stays put above the safe area. */
+body.bag-open .global-mobile-nav{ display:none !important; }
+/* The quantity stepper is an inline-flex box, so the "৳390 each" line beside it shared the same
+   text row and the two overlapped. Stacking the middle column gives each its own line. */
+.bag-item>div{ display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-width:0; }
+.bag-item .bag-stepper{ margin-top:2px; }
+.bag-item>div small{ display:block; }
+@media(max-width:760px){
+  .drawer-panel{ width:100%; padding:22px 18px calc(18px + env(safe-area-inset-bottom)); }
+  .bag-items{ flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:16px 0; }
+  .bag-summary{ flex:0 0 auto; padding-top:16px; }
+  .bag-summary p{ margin:8px 0 14px; font-size:12.5px; line-height:1.5; }
+  .bag-summary .button{ width:100%; min-height:56px; }
+}
