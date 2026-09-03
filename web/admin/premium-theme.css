@@ -1107,3 +1107,15 @@ label{ color:var(--muted); }
 /* Zero-stock warning under the product editor's stock field. */
 .stock-hint{ display:block; margin-top:4px; font-size:12px; line-height:1.45; color:var(--muted); }
 .stock-hint.warn{ color:var(--danger); font-weight:600; }
+
+/* 7e. Priced variants and the per-product FAQ ------------------------------- */
+.editor-subsection{ margin-top:18px; padding-top:16px; border-top:1px solid var(--line); }
+.variant-price-body{ margin-top:10px; }
+.variant-price-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }
+.variant-price-row{ display:grid; gap:5px; padding:10px 12px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--paper); }
+.variant-price-row>span{ font-size:12px; font-weight:700; color:var(--ink); }
+.variant-price-row input{ min-height:42px; }
+.product-faq-body{ display:grid; gap:12px; margin:10px 0 12px; }
+.faq-row{ display:grid; gap:8px; padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--paper); }
+.faq-row label{ display:grid; gap:5px; font-size:12px; font-weight:600; color:var(--ink-soft); }
+.faq-row .icon-action{ justify-self:start; }

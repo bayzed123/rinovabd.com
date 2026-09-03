@@ -1203,7 +1203,7 @@ app.get('/api/admin/content', async (c) => {
     c.env.DB.prepare('SELECT content_key AS key, content_type AS type, title, body_json AS body, status, updated_by AS updatedBy, updated_at AS updatedAt FROM cms_content ORDER BY content_key').all(),
     c.env.DB.prepare('SELECT id, slug, title, body, status, seo_title AS seoTitle, seo_description AS seoDescription, updated_at AS updatedAt FROM site_pages ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, slug, title, excerpt, body, category, subcategory, content_type AS contentType, media_url AS mediaUrl, image_url AS imageUrl, cover_image_url AS coverImageUrl, extra_file_url AS extraFileUrl, publish_date AS publishDate, duration, priority, seo_title AS seoTitle, meta_description AS metaDescription, keywords, allow_search_engines AS allowSearchEngines, rights, license_url AS licenseUrl, status, published_at AS publishedAt, author, updated_at AS updatedAt FROM blog_posts ORDER BY updated_at DESC').all(),
-    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active FROM offers ORDER BY updated_at DESC').all(),
+    c.env.DB.prepare('SELECT id, code, title, description, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, starts_at AS startsAt, ends_at AS endsAt, active, usage_limit AS usageLimit, used_count AS usedCount, auto_apply AS autoApply FROM offers ORDER BY updated_at DESC').all(),
     c.env.DB.prepare('SELECT id, name, slug, active FROM categories ORDER BY sort_order ASC, name ASC').all(),
     c.env.DB.prepare('SELECT id, title, eyebrow, body, image_url AS imageUrl, link_url AS linkUrl, placement, category_slug AS categorySlug, active, sort_order AS sortOrder, marquee_speed AS marqueeSpeed, starts_at AS startsAt, ends_at AS endsAt, updated_at AS updatedAt FROM marketing_banners ORDER BY placement, sort_order ASC, updated_at DESC, id DESC').all(),
     c.env.DB.prepare('SELECT id, email, source, status, created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt FROM newsletter_leads ORDER BY created_at DESC LIMIT 500').all(),
@@ -1307,11 +1307,57 @@ app.post('/api/admin/posts', async (c) => {
 app.post('/api/admin/offers', async (c) => {
   const actor = await adminPrincipal(c);
   if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
-  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean }>();
+  const body = await c.req.json<{ code?: string; title?: string; description?: string; discountType?: string; discountValue?: number; minSubtotal?: number; startsAt?: string; endsAt?: string; active?: boolean; usageLimit?: number; autoApply?: boolean }>();
   if (!normalize(body.title)) return json(c, { error: 'Offer title is required.' }, 400);
   const type = ['fixed','percentage','free_delivery'].includes(normalize(body.discountType)) ? normalize(body.discountType) : 'fixed';
-  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(normalize(body.code) || null, normalize(body.title), normalize(body.description), type, Math.max(0, Number(body.discountValue) || 0), Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, actor).run();
+  const value = Math.max(0, Number(body.discountValue) || 0);
+  // A percentage over 100 would hand money back, and a percentage of nothing is a dead offer.
+  if (type === 'percentage' && (value <= 0 || value > 100)) return json(c, { error: 'A percentage discount must be between 1 and 100.' }, 400);
+  if (type === 'fixed' && value <= 0) return json(c, { error: 'A fixed discount needs an amount above zero.' }, 400);
+  const code = normalize(body.code).toUpperCase();
+  const autoApply = body.autoApply === true;
+  if (!code && !autoApply) return json(c, { error: 'Give the offer a coupon code, or mark it as applied automatically.' }, 400);
+  if (code) {
+    const clash = await c.env.DB.prepare('SELECT id FROM offers WHERE upper(code) = ? LIMIT 1').bind(code).first();
+    if (clash) return json(c, { error: 'That coupon code already exists.' }, 409);
+  }
+  await c.env.DB.prepare('INSERT INTO offers(code, title, description, discount_type, discount_value, min_subtotal, starts_at, ends_at, active, usage_limit, auto_apply, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').bind(code || null, normalize(body.title), normalize(body.description), type, value, Math.max(0, Number(body.minSubtotal) || 0), normalize(body.startsAt) || null, normalize(body.endsAt) || null, body.active === false ? 0 : 1, Math.max(0, Number(body.usageLimit) || 0), autoApply ? 1 : 0, actor).run();
   return json(c, { ok: true, title: normalize(body.title) }, 201);
+});
+
+/** Pause, re-open, retarget or reset the counter on an existing offer. */
+app.patch('/api/admin/offers/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid offer id.' }, 400);
+  const body = await c.req.json<{ active?: boolean; usageLimit?: number; discountValue?: number; minSubtotal?: number; resetUsage?: boolean; autoApply?: boolean }>();
+  const existing = await c.env.DB.prepare('SELECT id, discount_type AS discountType FROM offers WHERE id = ? LIMIT 1').bind(id).first<{ id: number; discountType: string }>();
+  if (!existing) return json(c, { error: 'Offer not found.' }, 404);
+  const sets: string[] = [];
+  const values: Array<string | number> = [];
+  if (typeof body.active === 'boolean') { sets.push('active = ?'); values.push(body.active ? 1 : 0); }
+  if (typeof body.autoApply === 'boolean') { sets.push('auto_apply = ?'); values.push(body.autoApply ? 1 : 0); }
+  if (body.usageLimit !== undefined) { sets.push('usage_limit = ?'); values.push(Math.max(0, Number(body.usageLimit) || 0)); }
+  if (body.minSubtotal !== undefined) { sets.push('min_subtotal = ?'); values.push(Math.max(0, Number(body.minSubtotal) || 0)); }
+  if (body.discountValue !== undefined) {
+    const value = Math.max(0, Number(body.discountValue) || 0);
+    if (existing.discountType === 'percentage' && (value <= 0 || value > 100)) return json(c, { error: 'A percentage discount must be between 1 and 100.' }, 400);
+    sets.push('discount_value = ?'); values.push(value);
+  }
+  if (body.resetUsage === true) sets.push('used_count = 0');
+  if (!sets.length) return json(c, { error: 'Nothing to update.' }, 400);
+  await c.env.DB.prepare(`UPDATE offers SET ${sets.join(', ')}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(...values, actor, id).run();
+  return json(c, { ok: true });
+});
+
+app.delete('/api/admin/offers/:id', async (c) => {
+  const actor = await adminPrincipal(c);
+  if (!actor) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id < 1) return json(c, { error: 'Invalid offer id.' }, 400);
+  await c.env.DB.prepare('DELETE FROM offers WHERE id = ?').bind(id).run();
+  return json(c, { ok: true });
 });
 
 app.post('/api/admin/marketing-banners', async (c) => {
@@ -1752,6 +1798,54 @@ app.patch('/api/admin/orders/:orderCode', async (c) => {
   return json(c, { ok: true, orderCode, subtotal: updated?.subtotal || 0, deliveryFee: updated?.deliveryFee || 0, deliveryZone: updated?.deliveryZone || '', total: Number(updated?.subtotal || 0) + Number(updated?.deliveryFee || 0), updatedBy: username });
 });
 
+/**
+ * Priced size/weight variants. A size used to be just a label in specs_json, so "50ml or
+ * 150ml" carried one price and the shop could not charge more for the bigger jar. Prices are
+ * held here and read back server-side when an order is priced.
+ */
+function parseProductVariants(value: unknown) {
+  const raw = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return []; } })() : value;
+  if (!Array.isArray(raw)) return [] as Array<{ kind: 'size' | 'color'; label: string; price: number | null; stock: number; sortOrder: number }>;
+  const seen = new Set<string>();
+  return raw
+    .map((entry, index) => {
+      const item = entry as Record<string, unknown>;
+      const kind = normalize(item.kind) === 'color' ? 'color' as const : 'size' as const;
+      const label = normalize(item.label).slice(0, 80);
+      const priceRaw = item.price;
+      const price = priceRaw === '' || priceRaw === null || priceRaw === undefined ? null : Math.max(0, Math.round(Number(priceRaw) || 0));
+      return { kind, label, price, stock: Math.max(0, Math.round(Number(item.stock) || 0)), sortOrder: index };
+    })
+    .filter((entry) => {
+      if (!entry.label) return false;
+      const key = `${entry.kind}|${entry.label.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 60);
+}
+
+/** Replaces a product's variants wholesale, which is what the editor sends. */
+async function saveProductVariants(env: Bindings, productId: number, value: unknown) {
+  const variants = parseProductVariants(value);
+  await env.DB.prepare('DELETE FROM product_variants WHERE product_id = ?').bind(productId).run();
+  for (const variant of variants) {
+    await env.DB.prepare('INSERT INTO product_variants(product_id, kind, label, price, stock, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(productId, variant.kind, variant.label, variant.price, variant.stock, variant.sortOrder).run();
+  }
+}
+
+/** The product FAQ was identical on every product because it was hard-coded in product.js. */
+function parseProductFaq(value: unknown) {
+  const raw = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return []; } })() : value;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => ({ question: normalize((entry as Record<string, unknown>)?.question).slice(0, 200), answer: normalize((entry as Record<string, unknown>)?.answer).slice(0, 2000) }))
+    .filter((entry) => entry.question && entry.answer)
+    .slice(0, 12);
+}
+
 app.post('/api/admin/products', async (c) => {
   const username = await adminPrincipal(c);
   if (!username) return json(c, { error: 'Unauthorized admin request.' }, 401);
@@ -1768,6 +1862,9 @@ app.post('/api/admin/products', async (c) => {
   const primaryImage = normalizeMediaUrl(body.imageUrl) || null;
   const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, editor_note, price, compare_at_price, cost_price, image_url, media_json, badges_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), normalize(body.editorNote), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, badgesJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), body.featured ? 1 : 0, active).first();
   if (!result) return json(c, { error: 'Could not create product.' }, 500);
+  const createdId = Number((result as { id: number }).id);
+  if (body.variants !== undefined) await saveProductVariants(c.env, createdId, body.variants);
+  if (body.faq !== undefined) await c.env.DB.prepare('UPDATE products SET faq_json = ? WHERE id = ?').bind(JSON.stringify(parseProductFaq(body.faq)), createdId).run();
   return json(c, { ok: true, product: result, createdBy: username }, 201);
 });
 
@@ -1782,7 +1879,24 @@ app.patch('/api/admin/products/sku/:sku', async (c) => {
   const mediaJson = body.mediaJson === undefined ? null : JSON.stringify(parseProductMedia(body.mediaJson));
   const badgesJson = body.badgesJson === undefined && body.badges === undefined ? null : JSON.stringify(parseProductBadges(body.badgesJson ?? body.badges));
   const result = await c.env.DB.prepare("UPDATE products SET name = COALESCE(?, name), sku = COALESCE(?, sku), description = COALESCE(?, description), short_description = COALESCE(?, short_description), editor_note = COALESCE(?, editor_note), price = COALESCE(?, price), compare_at_price = COALESCE(?, compare_at_price), cost_price = COALESCE(?, cost_price), image_url = COALESCE(?, image_url), media_json = COALESCE(?, media_json), badges_json = COALESCE(?, badges_json), barcode = COALESCE(?, barcode), weight_grams = COALESCE(?, weight_grams), low_stock_threshold = COALESCE(?, low_stock_threshold), min_order_qty = COALESCE(?, min_order_qty), status = COALESCE(?, status), active = COALESCE(?, active), featured = COALESCE(?, featured), tags_json = COALESCE(?, tags_json), specs_json = COALESCE(?, specs_json), volume_tiers_json = COALESCE(?, volume_tiers_json), updated_at = CURRENT_TIMESTAMP WHERE sku = ?").bind(body.name === undefined ? null : normalize(body.name), body.sku === undefined ? null : normalize(body.sku), body.description === undefined ? null : normalize(body.description), body.shortDescription === undefined ? null : normalize(body.shortDescription), body.editorNote === undefined ? null : normalize(body.editorNote), body.price === undefined ? null : Number(body.price), numberOrNull(body.compareAtPrice), body.costPrice === undefined ? null : numberOrNull(body.costPrice), body.imageUrl === undefined ? null : (normalizeMediaUrl(body.imageUrl) || null), mediaJson, badgesJson, body.barcode === undefined ? null : normalize(body.barcode), body.weightGrams === undefined ? null : Number(body.weightGrams), body.lowStockThreshold === undefined ? null : Number(body.lowStockThreshold), body.minOrderQty === undefined ? null : Number(body.minOrderQty), status, active, body.featured === undefined ? null : body.featured ? 1 : 0, body.tags === undefined ? null : JSON.stringify(body.tags), body.specs === undefined ? null : JSON.stringify(body.specs), volumeTiers, sku).run();
+  if (body.variants !== undefined || body.faq !== undefined) {
+    const row = await c.env.DB.prepare('SELECT id FROM products WHERE sku = ? LIMIT 1').bind(sku).first<{ id: number }>();
+    if (row) {
+      if (body.variants !== undefined) await saveProductVariants(c.env, row.id, body.variants);
+      if (body.faq !== undefined) await c.env.DB.prepare('UPDATE products SET faq_json = ? WHERE id = ?').bind(JSON.stringify(parseProductFaq(body.faq)), row.id).run();
+    }
+  }
   return json(c, { ok: result.meta.changes > 0, productSku: sku, updatedBy: username });
+});
+
+/** The editor needs a product's saved variants and FAQ back when it reopens one. */
+app.get('/api/admin/products/sku/:sku/detail', async (c) => {
+  if (!await adminPrincipal(c)) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  const sku = normalize(c.req.param('sku'));
+  const product = await c.env.DB.prepare('SELECT id, faq_json AS faqJson FROM products WHERE sku = ? LIMIT 1').bind(sku).first<{ id: number; faqJson: string }>();
+  if (!product) return json(c, { error: 'Product not found.' }, 404);
+  const variants = await c.env.DB.prepare('SELECT kind, label, price, stock FROM product_variants WHERE product_id = ? ORDER BY kind, sort_order, id').bind(product.id).all();
+  return json(c, { variants: variants.results, faq: parseProductFaq(product.faqJson) });
 });
 
 app.post('/api/admin/products/sku/:sku/stock', async (c) => {
@@ -2058,10 +2172,12 @@ app.get('/api/products', async (c) => {
 
 app.get('/api/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
-  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1').bind(slug, slug).first();
+  const product = await c.env.DB.prepare('SELECT p.id, p.name, p.slug, p.sku, p.description, p.short_description AS shortDescription, p.editor_note AS editorNote, p.price, p.compare_at_price AS compareAtPrice, p.image_url AS imageUrl, p.media_json AS mediaJson, p.badges_json AS badgesJson, p.barcode, p.weight_grams AS weightGrams, p.stock, p.min_order_qty AS minOrderQty, p.volume_tiers_json AS volumeTiersJson, p.specs_json AS specsJson, p.faq_json AS faqJson, p.rating, p.review_count AS reviewCount, c.name AS categoryName, c.slug AS categorySlug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.active = 1 AND (p.slug = ? OR p.sku = ?) LIMIT 1').bind(slug, slug).first();
   if (!product) return json(c, { error: 'Product not found.' }, 404);
   const reviews = await c.env.DB.prepare("SELECT reviewer_name AS reviewerName, rating, review_text AS reviewText, created_at AS createdAt FROM product_reviews WHERE product_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 50").bind((product as { id: number }).id).all();
-  const response = json(c, { product, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
+  // Priced sizes and colours, so the page can show a real price per size and change it on select.
+  const variants = await c.env.DB.prepare('SELECT kind, label, price, stock FROM product_variants WHERE product_id = ? AND active = 1 ORDER BY kind, sort_order, id').bind((product as { id: number }).id).all<{ kind: string; label: string; price: number | null; stock: number }>();
+  const response = json(c, { product: { ...product, faq: parseProductFaq((product as { faqJson?: string }).faqJson) }, variants: variants.results, ratingSummary: { average: Number((product as { rating?: number }).rating || 0), count: Number((product as { reviewCount?: number }).reviewCount || 0) }, reviews: reviews.results });
   response.headers.set('Cache-Control', 'no-store');
   return response;
 });
@@ -2093,10 +2209,74 @@ app.get('/api/customers/:phone/trust', async (c) => {
   return json(c, { customer, trust: calculateTrust(orders.results), recentOrders: orders.results });
 });
 
+type OfferRow = { id: number; code: string | null; title: string; discountType: string; discountValue: number; minSubtotal: number; usageLimit: number; usedCount: number };
+
+/**
+ * Works out what an offer is actually worth. Offers used to be stored and listed but never
+ * applied to anything: the order had nowhere to record a discount and checkout had no coupon
+ * field, so creating a percentage offer changed no price anywhere. The maths lives here, on
+ * the server, because a discount the browser calculates is a discount the browser can choose.
+ *
+ * A coupon is matched by code. An offer marked auto_apply carries no code and applies itself
+ * as soon as the subtotal qualifies; when several qualify, the customer gets the best one.
+ */
+async function resolveOffer(env: Bindings, subtotal: number, deliveryFee: number, code: string) {
+  const wanted = normalize(code).toUpperCase();
+  const rows = await env.DB.prepare(
+    `SELECT id, code, title, discount_type AS discountType, discount_value AS discountValue, min_subtotal AS minSubtotal, usage_limit AS usageLimit, used_count AS usedCount
+     FROM offers
+     WHERE active = 1
+       AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP)
+       AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP)
+       AND (${wanted ? 'upper(code) = ?' : 'auto_apply = 1'})`,
+  ).bind(...(wanted ? [wanted] : [])).all<OfferRow>();
+
+  const value = (offer: OfferRow) => {
+    if (offer.discountType === 'percentage') return Math.min(subtotal, Math.round((subtotal * Number(offer.discountValue || 0)) / 100));
+    if (offer.discountType === 'free_delivery') return 0;
+    return Math.min(subtotal, Math.max(0, Number(offer.discountValue || 0)));
+  };
+  const usable = rows.results.filter((offer) => {
+    if (subtotal < Number(offer.minSubtotal || 0)) return false;
+    // A limit of 0 means unlimited; anything else stops the coupon once it is used up.
+    if (Number(offer.usageLimit || 0) > 0 && Number(offer.usedCount || 0) >= Number(offer.usageLimit)) return false;
+    return true;
+  });
+
+  if (!usable.length) {
+    if (!wanted) return { discount: 0, deliveryFee, offer: null as OfferRow | null, error: '' };
+    const known = rows.results[0];
+    if (!known) return { discount: 0, deliveryFee, offer: null, error: 'That coupon code is not valid.' };
+    if (subtotal < Number(known.minSubtotal || 0)) return { discount: 0, deliveryFee, offer: null, error: `This coupon needs a subtotal of at least ${known.minSubtotal}.` };
+    return { discount: 0, deliveryFee, offer: null, error: 'This coupon has already been used the maximum number of times.' };
+  }
+
+  // Best for the customer: compare the discount plus any delivery saved.
+  const worth = (offer: OfferRow) => value(offer) + (offer.discountType === 'free_delivery' ? deliveryFee : 0);
+  const best = usable.reduce((winner, offer) => (worth(offer) > worth(winner) ? offer : winner), usable[0]);
+  return { discount: value(best), deliveryFee: best.discountType === 'free_delivery' ? 0 : deliveryFee, offer: best, error: '' };
+}
+
+/** Lets checkout preview a coupon before the order is placed, using the same maths. */
+app.post('/api/offers/validate', async (c) => {
+  const body = await c.req.json<{ subtotal?: number; deliveryFee?: number; code?: string }>();
+  const subtotal = Math.max(0, Math.round(Number(body.subtotal) || 0));
+  const deliveryFee = Math.max(0, Math.round(Number(body.deliveryFee) || 0));
+  const result = await resolveOffer(c.env, subtotal, deliveryFee, normalize(body.code));
+  if (result.error) return json(c, { ok: false, error: result.error }, 400);
+  return json(c, {
+    ok: true,
+    discount: result.discount,
+    deliveryFee: result.deliveryFee,
+    total: Math.max(0, subtotal - result.discount) + result.deliveryFee,
+    offer: result.offer ? { code: result.offer.code, title: result.offer.title, discountType: result.offer.discountType, discountValue: result.offer.discountValue } : null,
+  });
+});
+
 app.post('/api/orders', async (c) => {
   const body = await c.req.json<{
     name: string; phone: string; email?: string; address: string; district?: string; upazila?: string; specialNote?: string;
-    paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string;
+    paymentMethod?: 'cod' | 'bkash' | 'nagad' | 'rocket'; trxId?: string; couponCode?: string;
     items: Array<{ sku: string; quantity: number; options?: { size?: string; color?: string; gram?: string } }>;
   }>();
   const address = normalize(body.address);
@@ -2115,6 +2295,11 @@ app.post('/api/orders', async (c) => {
   if (skus.length !== body.items.length) return json(c, { error: 'Each order item must include a product SKU.' }, 400);
   const products = await c.env.DB.prepare(`SELECT id, name, sku, price, stock, min_order_qty AS minOrderQty, volume_tiers_json AS volumeTiersJson FROM products WHERE active = 1 AND sku IN (${skus.map(() => '?').join(',')})`).bind(...skus).all<{ id: number; name: string; sku: string; price: number; stock: number; minOrderQty: number; volumeTiersJson: string }>();
   const bySku = new Map(products.results.map((product) => [product.sku, product]));
+  const productIds = products.results.map((product) => product.id);
+  const variantRows = productIds.length
+    ? await c.env.DB.prepare(`SELECT product_id AS productId, label, price FROM product_variants WHERE active = 1 AND kind = 'size' AND price IS NOT NULL AND product_id IN (${productIds.map(() => '?').join(',')})`).bind(...productIds).all<{ productId: number; label: string; price: number }>()
+    : { results: [] as Array<{ productId: number; label: string; price: number }> };
+  const variantBySku = new Map(variantRows.results.map((row) => [`${row.productId}|${String(row.label).toLowerCase()}`, row]));
   const lineItems = body.items.map((item) => {
     const product = bySku.get(normalize(item.sku));
     if (!product || item.quantity < 1 || product.stock < item.quantity) throw new RequestError('A selected product is unavailable or out of stock.');
@@ -2122,29 +2307,42 @@ app.post('/api/orders', async (c) => {
     if (item.quantity < minimum) throw new RequestError(`${product.name} requires a minimum order quantity of ${minimum}.`);
     const tiers = parseVolumeTiers(product.volumeTiersJson);
     const tier = tiers.filter((entry) => item.quantity >= entry.minQty).at(-1);
-    const options = Object.fromEntries(Object.entries(item.options || {}).filter(([key, value]) => ['size', 'color', 'gram'].includes(key) && normalize(value))); return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? product.price, options };
+    const options = Object.fromEntries(Object.entries(item.options || {}).filter(([key, value]) => ['size', 'color', 'gram'].includes(key) && normalize(value)));
+    // A priced variant (50g, 100g, a clothing size) overrides the base price. The price comes
+    // from the database, never from the request, so a customer cannot name their own.
+    const variantLabel = normalize(options.size) || normalize(options.gram);
+    const variant = variantLabel ? variantBySku.get(`${product.id}|${variantLabel.toLowerCase()}`) : undefined;
+    const basePrice = variant?.price ?? product.price;
+    return { sku: product.sku, quantity: item.quantity, product, unitPrice: tier?.price ?? basePrice, options, variantLabel: variant ? variant.label : '' };
   });
   const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  // Offers finally do something: a coupon code, or an auto-apply offer when none is given.
+  const offerResult = await resolveOffer(c.env, subtotal, deliveryFee, normalize(body.couponCode));
+  if (offerResult.error) return json(c, { error: offerResult.error }, 400);
+  const discountAmount = offerResult.discount;
+  const chargedDeliveryFee = offerResult.deliveryFee;
   const orderCode = `RNV-${Date.now().toString(36).toUpperCase()}`;
   const invoicePlaceholder = `PENDING-${orderCode}`;
   const customer = await c.env.DB.prepare('INSERT INTO customers(name, phone, email, district, upazila, address, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(phone) DO UPDATE SET name=excluded.name, email=excluded.email, district=excluded.district, upazila=excluded.upazila, address=excluded.address, updated_at=CURRENT_TIMESTAMP RETURNING id').bind(body.name, body.phone, body.email ?? null, district, upazila, address).first<{ id: number }>();
   if (!customer) return json(c, { error: 'Could not create customer profile.' }, 500);
-  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, deliveryFee, zone, paymentMethod, trxId || null, normalize(body.specialNote) || null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
+  const order = await c.env.DB.prepare('INSERT INTO orders(order_code, invoice_number, customer_id, subtotal, delivery_fee, delivery_zone, payment_method, trx_id, admin_note, discount_amount, offer_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, order_code AS orderCode, invoice_number AS invoiceNumber').bind(orderCode, invoicePlaceholder, customer.id, subtotal, chargedDeliveryFee, zone, paymentMethod, trxId || null, normalize(body.specialNote) || null, discountAmount, offerResult.offer?.code ?? null).first<{ id: number; orderCode: string; invoiceNumber: string }>();
   if (!order) return json(c, { error: 'Could not create order.' }, 500);
   const invoiceNumber = invoiceNumberForOrderId(order.id) || invoicePlaceholder;
   await c.env.DB.prepare('UPDATE orders SET invoice_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(invoiceNumber, order.id).run();
   order.invoiceNumber = invoiceNumber;
   for (const item of lineItems) {
-    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.options && Object.keys(item.options).length ? `${item.product.name} · ${Object.entries(item.options).map(([key, value]) => `${key === 'size' ? 'Size' : key === 'color' ? 'Colour' : 'Weight'}: ${value}`).join(' · ')}` : item.product.name, item.quantity, item.unitPrice).run();
+    await c.env.DB.prepare('INSERT INTO order_items(order_id, product_id, product_name, quantity, unit_price, variant_label) VALUES (?, ?, ?, ?, ?, ?)').bind(order.id, item.product.id, item.options && Object.keys(item.options).length ? `${item.product.name} · ${Object.entries(item.options).map(([key, value]) => `${key === 'size' ? 'Size' : key === 'color' ? 'Colour' : 'Weight'}: ${value}`).join(' · ')}` : item.product.name, item.quantity, item.unitPrice, item.variantLabel || null).run();
     await c.env.DB.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').bind(item.quantity, item.product.id).run();
   }
+  // Count a coupon only once the order exists, so an abandoned checkout never burns a use.
+  if (offerResult.offer) await c.env.DB.prepare('UPDATE offers SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(offerResult.offer.id).run();
   await c.env.DB.prepare('INSERT INTO order_status_history(order_id, to_status, reason) VALUES (?, ?, ?)').bind(order.id, 'pending', 'Customer order placed').run();
   await createAdminNotification(c.env, { type: 'order', title: 'New order received', message: `Order ${order.orderCode} is ready for review.`, entityType: 'order', entityId: order.orderCode });
-  c.executionCtx.waitUntil(metaCapiEvent(c.env, { eventName: 'Purchase', eventId: order.orderCode, sourceUrl: new URL('/checkout', c.req.url).toString(), value: subtotal + deliveryFee, user: { name: body.name, email: body.email, phone: body.phone, city: zone === 'dhaka' ? 'Dhaka' : undefined, region: zone, country: 'bd', externalId: String(customer.id) }, items: lineItems.map((item) => ({ id: item.product.sku, name: item.product.name, quantity: item.quantity, price: item.unitPrice })) }).catch(async (error) => { console.error('[Meta CAPI Purchase]', error); await createAdminNotification(c.env, { type: 'integration', title: 'Meta CAPI purchase sync failed', message: `Purchase event ${order.orderCode} could not be sent.`, entityType: 'order', entityId: order.orderCode }); }));
+  c.executionCtx.waitUntil(metaCapiEvent(c.env, { eventName: 'Purchase', eventId: order.orderCode, sourceUrl: new URL('/checkout', c.req.url).toString(), value: Math.max(0, subtotal - discountAmount) + chargedDeliveryFee, user: { name: body.name, email: body.email, phone: body.phone, city: zone === 'dhaka' ? 'Dhaka' : undefined, region: zone, country: 'bd', externalId: String(customer.id) }, items: lineItems.map((item) => ({ id: item.product.sku, name: item.product.name, quantity: item.quantity, price: item.unitPrice })) }).catch(async (error) => { console.error('[Meta CAPI Purchase]', error); await createAdminNotification(c.env, { type: 'integration', title: 'Meta CAPI purchase sync failed', message: `Purchase event ${order.orderCode} could not be sent.`, entityType: 'order', entityId: order.orderCode }); }));
   const itemSummary = lineItems.map((item) => `${item.product.name} × ${item.quantity}`).join(' · ');
-  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', paymentMethod, subtotal, deliveryFee, subtotal + deliveryFee, itemSummary, null, null, body.specialNote ? normalize(body.specialNote) : null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
+  c.executionCtx.waitUntil(syncActivityLead(c.env, [new Date().toISOString(), 'sale', order.orderCode, order.invoiceNumber, body.name, normalize(body.phone), normalize(body.email) || null, 'pending', paymentMethod, subtotal, chargedDeliveryFee, Math.max(0, subtotal - discountAmount) + chargedDeliveryFee, itemSummary, null, null, body.specialNote ? normalize(body.specialNote) : null]).catch(async () => { await createAdminNotification(c.env, { type: 'integration', title: 'Google Sheet sync failed', message: `Sale lead ${order.orderCode} could not be added to the activity sheet.`, entityType: 'order', entityId: order.orderCode }); }));
   const customerToken = await createCustomerSession(c.env, customer.id);
-  return json(c, { order: { ...order, subtotal, deliveryFee, total: subtotal + deliveryFee, zone, paymentMethod }, customerToken, message: 'Order received successfully.' }, 201);
+  return json(c, { order: { ...order, subtotal, deliveryFee: chargedDeliveryFee, discount: discountAmount, offerCode: offerResult.offer?.code ?? null, total: Math.max(0, subtotal - discountAmount) + chargedDeliveryFee, zone, paymentMethod }, customerToken, message: 'Order received successfully.' }, 201);
 });
 
 app.patch('/api/orders/:orderCode/status', async (c) => {

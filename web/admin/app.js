@@ -39,7 +39,7 @@ async function copyToClipboard(text, successMessage = 'Copied to clipboard') {
 // Product editor helpers: gallery tiles, bulk-price rows and category-aware
 // option fields. The owner never sees or types JSON — hidden inputs carry it.
 // ---------------------------------------------------------------------------
-const editorState = { media: [], tiers: [], options: { size: [], color: [] }, details: {} };
+const editorState = { media: [], tiers: [], options: { size: [], color: [] }, details: {}, variantPrices: {}, faq: [] };
 
 const CLOTHING_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'Free size'];
 const CLOTHING_COLORS = ['Black', 'White', 'Red', 'Maroon', 'Pink', 'Blue', 'Navy', 'Green', 'Yellow', 'Beige', 'Brown', 'Grey', 'Golden', 'Multicolour'];
@@ -167,6 +167,7 @@ function renderProductOptions() {
     if (box.checked) values.add(box.value); else values.delete(box.value);
     editorState.options[group] = [...values];
     box.closest('.option-chip')?.classList.toggle('selected', box.checked);
+    renderVariantPrices();
   }));
   body.querySelectorAll('[data-option-add]').forEach((button) => button.addEventListener('click', () => {
     const group = button.dataset.optionAdd;
@@ -176,6 +177,7 @@ function renderProductOptions() {
     if (!editorState.options[group].includes(value)) editorState.options[group].push(value);
     if (input) input.value = '';
     renderProductOptions();
+    renderVariantPrices();
   }));
   body.querySelectorAll('[data-option-detail]').forEach((input) => input.addEventListener('input', () => { editorState.details[input.dataset.optionDetail] = input.value; }));
 }
@@ -210,6 +212,73 @@ function editorSpecsPayload() {
     specs.push({ key, name: known ? known.label.split(' · ')[0] : key, value: text });
   }
   return specs;
+}
+
+/**
+ * A size used to be a bare label, so "50ml or 150ml" carried one price and the shop had no way
+ * to charge more for the larger jar — the product page then had no price to show when a size
+ * was picked. Every chosen size now gets its own price box. Leave one empty and that size sells
+ * at the product's base price.
+ */
+function renderVariantPrices() {
+  const host = document.getElementById('variant-price-body');
+  if (!host) return;
+  const sizes = editorState.options.size || [];
+  if (!sizes.length) {
+    host.innerHTML = '<p class="muted">সাইজ যোগ করলে এখানে প্রতিটি সাইজের দাম বসানোর ঘর আসবে। (Add a size above to set its price.)</p>';
+    return;
+  }
+  const base = Number(document.querySelector('#product-form [name="price"]')?.value || 0);
+  host.innerHTML = `<div class="variant-price-grid">${sizes.map((label) => {
+    const value = editorState.variantPrices[label];
+    return `<label class="variant-price-row"><span>${escapeHtml(label)}</span><input type="number" min="0" step="1" inputmode="numeric" data-variant-price="${escapeHtml(label)}" value="${value === undefined || value === null || value === '' ? '' : Number(value)}" placeholder="${base || 'দাম'}" /></label>`;
+  }).join('')}</div><p class="muted">খালি রাখলে প্রোডাক্টের মূল দাম প্রযোজ্য হবে। (Empty = the product's base price.)</p>`;
+  host.querySelectorAll('[data-variant-price]').forEach((input) => input.addEventListener('input', () => {
+    const label = input.dataset.variantPrice;
+    const raw = input.value.trim();
+    if (raw === '') delete editorState.variantPrices[label];
+    else editorState.variantPrices[label] = Math.max(0, Number(raw) || 0);
+  }));
+}
+
+/** What the API stores: one row per size (with its price) and one per colour. */
+function editorVariantsPayload() {
+  const sizes = (editorState.options.size || []).map((label) => ({ kind: 'size', label, price: editorState.variantPrices[label] ?? null }));
+  const colors = (editorState.options.color || []).map((label) => ({ kind: 'color', label, price: null }));
+  return [...sizes, ...colors];
+}
+
+/** The product FAQ used to be the same four hard-coded questions on every product. */
+function renderFaqRows() {
+  const host = document.getElementById('product-faq-body');
+  if (!host) return;
+  host.innerHTML = (editorState.faq.length ? editorState.faq : []).map((row, index) => `<div class="faq-row" data-faq-row="${index}"><label>প্রশ্ন (Question)<input data-faq-question="${index}" value="${escapeHtml(row.question || '')}" placeholder="এই প্রোডাক্ট কিভাবে ব্যবহার করব?" /></label><label>উত্তর (Answer)<textarea rows="2" data-faq-answer="${index}" placeholder="সংক্ষেপে উত্তর লিখুন।">${escapeHtml(row.answer || '')}</textarea></label><button type="button" class="icon-action" data-faq-remove="${index}">Remove</button></div>`).join('')
+    || '<p class="muted">কোনো প্রশ্ন যোগ করা হয়নি। খালি রাখলে প্রোডাক্ট পেজে সাধারণ তথ্য দেখাবে। (None yet — the page falls back to general information.)</p>';
+  host.querySelectorAll('[data-faq-question]').forEach((input) => input.addEventListener('input', () => { editorState.faq[Number(input.dataset.faqQuestion)].question = input.value; }));
+  host.querySelectorAll('[data-faq-answer]').forEach((input) => input.addEventListener('input', () => { editorState.faq[Number(input.dataset.faqAnswer)].answer = input.value; }));
+  host.querySelectorAll('[data-faq-remove]').forEach((button) => button.addEventListener('click', () => { editorState.faq.splice(Number(button.dataset.faqRemove), 1); renderFaqRows(); }));
+}
+
+document.getElementById('faq-add')?.addEventListener('click', () => { editorState.faq.push({ question: '', answer: '' }); renderFaqRows(); });
+document.querySelector('#product-form [name="price"]')?.addEventListener('input', renderVariantPrices);
+
+/** Pull saved variants and FAQ back when an existing product is opened. */
+async function loadEditorExtras(sku) {
+  editorState.variantPrices = {};
+  editorState.faq = [];
+  if (sku) {
+    try {
+      const data = await api(`/admin/products/sku/${encodeURIComponent(sku)}/detail`);
+      for (const variant of data.variants || []) {
+        if (variant.kind === 'size' && variant.price !== null && variant.price !== undefined) editorState.variantPrices[variant.label] = Number(variant.price);
+      }
+      editorState.faq = (data.faq || []).map((row) => ({ question: row.question || '', answer: row.answer || '' }));
+    } catch {
+      // A new product, or the detail call failed; the editor still opens with empty extras.
+    }
+  }
+  renderVariantPrices();
+  renderFaqRows();
 }
 
 function parseEditorMedia(value) { const raw = String(value || '').trim(); if (!raw) return []; const parsed = JSON.parse(raw); if (!Array.isArray(parsed)) throw new Error('Media must be a JSON array.'); const seen = new Set(); return parsed.map((item) => { const entry = typeof item === 'string' ? { type: 'image', url: item } : item; const url = String(entry?.url || '').trim(); if (!/^(https:\/\/|\/assets\/|\/media\/)/i.test(url)) throw new Error('Media URLs must start with https://, /assets/ or /media/.'); return { type: entry?.type === 'video' ? 'video' : 'image', url, ...(entry?.alt ? { alt: String(entry.alt).slice(0, 160) } : {}) }; }).filter((item) => { const key = `${item.type}:${item.url.toLowerCase()}`; if (seen.has(key)) return false; seen.add(key); return true; }); }
@@ -603,8 +672,8 @@ async function loadSettings() {
 }
 
 function parseProductBadges(value) { let parsed = []; try { parsed = Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch {} return Array.isArray(parsed) ? parsed.map((item) => String(item).toLowerCase()).filter((item) => ['hot', 'stockout', 'out', 'instock', 'new'].includes(item)) : []; }
-function openProductEditor(product) { setAdminMode('edit'); const form = $('#product-form'); form.reset(); form.dataset.sku = product?.sku || ''; setEditorMedia(product?.mediaJson || '[]'); setEditorTiers(product?.volumeTiersJson || '[]'); setEditorOptions(product?.specsJson || '[]'); $('#editor-heading').textContent = product ? 'Edit product' : 'Create a product'; $('#product-submit').innerHTML = product ? 'Save changes <span>→</span>' : 'Create product <span>→</span>'; $('#product-form-message').textContent = ''; if ($('#upload-message')) $('#upload-message').textContent = ''; if (product) { for (const [key, value] of Object.entries({ name: product.name, sku: product.sku, brand: product.brand, categoryId: product.categoryId, shortDescription: product.shortDescription, description: product.description, editorNote: product.editorNote, costPrice: product.costPrice, price: product.price, compareAtPrice: product.compareAtPrice, stock: product.stock, lowStockThreshold: product.lowStockThreshold, minOrderQty: product.minOrderQty, weightGrams: product.weightGrams, barcode: product.barcode, imageUrl: product.imageUrl, status: product.status })) { const field = form.elements.namedItem(key); if (field) field.value = value ?? ''; } form.elements.namedItem('featured').checked = Boolean(product.featured); const badges = parseProductBadges(product.badgesJson || product.badges); form.elements.namedItem('badgeHot').checked = badges.includes('hot'); form.elements.namedItem('badgeStockOut').checked = badges.includes('stockout') || badges.includes('out') || badges.includes('instock'); form.elements.namedItem('badgeNew').checked = badges.includes('new'); } else { form.elements.namedItem('badgeHot').checked = false; form.elements.namedItem('badgeStockOut').checked = false; form.elements.namedItem('badgeNew').checked = false; } updateImagePreview(); renderProductOptions(); $('#product-editor').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-async function saveProduct(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.featured = form.elements.namedItem('featured').checked; data.badges = ['hot', 'stockout', 'new'].filter((badge) => form.elements.namedItem(`badge${badge === 'hot' ? 'Hot' : badge === 'stockout' ? 'StockOut' : 'New'}`).checked); data.volumeTiers = $('#product-volume-tiers')?.value || '[]'; data.mediaJson = JSON.stringify(editorState.media); data.specs = editorSpecsPayload(); for (const key of ['categoryId','costPrice','price','stock','lowStockThreshold','minOrderQty','weightGrams']) data[key] = Number(data[key] || 0); data.compareAtPrice = optionalNumber(data.compareAtPrice); const sku = form.dataset.sku; try { if (sku) await api(`/admin/products/sku/${encodeURIComponent(sku)}`, { method: 'PATCH', body: JSON.stringify(data) }); else await api('/admin/products', { method: 'POST', body: JSON.stringify(data) }); $('#product-form-message').textContent = sku ? 'Product updated successfully.' : 'Product created successfully.'; toast(sku ? 'Product updated' : 'Product created'); await loadProducts(); } catch (error) { $('#product-form-message').textContent = error.message; } }
+function openProductEditor(product) { setAdminMode('edit'); const form = $('#product-form'); form.reset(); form.dataset.sku = product?.sku || ''; setEditorMedia(product?.mediaJson || '[]'); setEditorTiers(product?.volumeTiersJson || '[]'); setEditorOptions(product?.specsJson || '[]'); $('#editor-heading').textContent = product ? 'Edit product' : 'Create a product'; $('#product-submit').innerHTML = product ? 'Save changes <span>→</span>' : 'Create product <span>→</span>'; $('#product-form-message').textContent = ''; if ($('#upload-message')) $('#upload-message').textContent = ''; if (product) { for (const [key, value] of Object.entries({ name: product.name, sku: product.sku, brand: product.brand, categoryId: product.categoryId, shortDescription: product.shortDescription, description: product.description, editorNote: product.editorNote, costPrice: product.costPrice, price: product.price, compareAtPrice: product.compareAtPrice, stock: product.stock, lowStockThreshold: product.lowStockThreshold, minOrderQty: product.minOrderQty, weightGrams: product.weightGrams, barcode: product.barcode, imageUrl: product.imageUrl, status: product.status })) { const field = form.elements.namedItem(key); if (field) field.value = value ?? ''; } form.elements.namedItem('featured').checked = Boolean(product.featured); const badges = parseProductBadges(product.badgesJson || product.badges); form.elements.namedItem('badgeHot').checked = badges.includes('hot'); form.elements.namedItem('badgeStockOut').checked = badges.includes('stockout') || badges.includes('out') || badges.includes('instock'); form.elements.namedItem('badgeNew').checked = badges.includes('new'); } else { form.elements.namedItem('badgeHot').checked = false; form.elements.namedItem('badgeStockOut').checked = false; form.elements.namedItem('badgeNew').checked = false; } updateImagePreview(); renderProductOptions(); loadEditorExtras(product?.sku || ''); $('#product-editor').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+async function saveProduct(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); data.featured = form.elements.namedItem('featured').checked; data.badges = ['hot', 'stockout', 'new'].filter((badge) => form.elements.namedItem(`badge${badge === 'hot' ? 'Hot' : badge === 'stockout' ? 'StockOut' : 'New'}`).checked); data.volumeTiers = $('#product-volume-tiers')?.value || '[]'; data.mediaJson = JSON.stringify(editorState.media); data.specs = editorSpecsPayload(); data.variants = editorVariantsPayload(); data.faq = editorState.faq.filter((row) => String(row.question || '').trim() && String(row.answer || '').trim()); for (const key of ['categoryId','costPrice','price','stock','lowStockThreshold','minOrderQty','weightGrams']) data[key] = Number(data[key] || 0); data.compareAtPrice = optionalNumber(data.compareAtPrice); const sku = form.dataset.sku; try { if (sku) await api(`/admin/products/sku/${encodeURIComponent(sku)}`, { method: 'PATCH', body: JSON.stringify(data) }); else await api('/admin/products', { method: 'POST', body: JSON.stringify(data) }); $('#product-form-message').textContent = sku ? 'Product updated successfully.' : 'Product created successfully.'; toast(sku ? 'Product updated' : 'Product created'); await loadProducts(); } catch (error) { $('#product-form-message').textContent = error.message; } }
 async function adjustStock(sku, name) { const quantity = window.prompt(`Stock change for ${name}. Use a positive or negative number:`); if (quantity === null) return; const reason = window.prompt('Reason: restock, return, damage, adjustment, sale or cancellation', 'adjustment'); if (reason === null) return; try { const data = await api(`/admin/products/sku/${encodeURIComponent(sku)}/stock`, { method: 'POST', body: JSON.stringify({ mode: 'delta', quantity: Number(quantity), reason, note: `Updated from dashboard for ${name}` }) }); toast(`Stock updated to ${data.stock}`); await loadProducts(); } catch (error) { toast(error.message); } }
 async function updateOrderStatus(orderCode, status) { try { await api(`/orders/${encodeURIComponent(orderCode)}/status`, { method: 'PATCH', body: JSON.stringify({ status, reason: 'Updated from admin dashboard' }) }); toast(`${orderCode} marked ${status}`); await loadOrders(); } catch (error) { toast(error.message); await loadOrders(); } }
 async function loadReturns() { try { const data = await api(`/admin/returns?status=${encodeURIComponent($('#return-status').value || '')}`); $('#returns-table').innerHTML = (data.returns || []).map((item) => `<tr><td><strong>${escapeHtml(item.returnCode)}</strong><small>${escapeHtml(item.createdAt)}</small></td><td>${escapeHtml(item.orderCode)}</td><td>${escapeHtml(item.name)}<small>${escapeHtml(item.phone)}</small></td><td>${escapeHtml(item.reason)}</td><td>${money(item.amount)}</td><td><select class="return-status-select" data-return-id="${item.id}">${['requested','approved','picked_up','received','refunded','rejected','cancelled'].map((status) => `<option ${status === item.status ? 'selected' : ''}>${status}</option>`).join('')}</select></td><td><button class="icon-action" data-print-order="${escapeHtml(item.orderCode)}">Invoice</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No returns found.</td></tr>'; } catch (error) { toast(error.message); } }
