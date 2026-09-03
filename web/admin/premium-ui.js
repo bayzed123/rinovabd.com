@@ -1,6 +1,10 @@
 (() => {
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' }[char]));
   const apiBase = () => window.RINOVA_API_BASE || '/api';
+  // The storefront is served by GitHub Pages, but /campaign/* is rendered by the Worker.
+  // Building the ad link from location.origin therefore hands the owner a dead link on the
+  // brand domain, so the link is anchored to whichever origin answers the API instead.
+  const campaignOrigin = () => { try { return new URL(apiBase(), location.href).origin; } catch { return location.origin; } };
   const auth = () => ({ Authorization: `Bearer ${sessionStorage.getItem('rinova-admin-token') || ''}` });
   const api = async (path, options = {}) => { const response = await fetch(`${apiBase()}${path}`, { ...options, headers: { 'Content-Type': 'application/json', ...auth(), ...(options.headers || {}) } }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Request failed'); return data; };
   const statusBadge = (status) => `<span class="tracking-status tracking-${esc(status || 'error')}">${status === 'healthy' ? 'Verified / Healthy' : status === 'ready' ? 'Ready' : status === 'warning' ? 'Needs setup' : 'Error'}</span>`;
@@ -91,7 +95,7 @@
     form.elements.title.addEventListener('input', () => { if (slugInput.dataset.touched !== 'true') slugInput.value = slugify(form.elements.title.value); renderCampaignUrl(); });
     slugInput.addEventListener('input', () => { slugInput.dataset.touched = 'true'; renderCampaignUrl(); });
     slugInput.addEventListener('blur', () => { slugInput.value = slugify(slugInput.value); renderCampaignUrl(); });
-    document.getElementById('campaign-url-prefix').textContent = `${location.origin}/campaign/`;
+    document.getElementById('campaign-url-prefix').textContent = `${campaignOrigin()}/campaign/`;
 
     document.getElementById('tracking-form').addEventListener('submit', async (event) => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.currentTarget).entries()); delete body.capiToken; try { await api('/admin/tracking/settings', { method: 'PUT', body: JSON.stringify(body) }); document.getElementById('tracking-message').textContent = 'Tracking IDs saved. CAPI token remains protected as a Worker secret.'; } catch (error) { document.getElementById('tracking-message').textContent = error.message; } });
     document.getElementById('tracking-verify').addEventListener('click', verifyTracking);
@@ -103,7 +107,7 @@
   function renderCampaignUrl() {
     const slug = slugify(document.getElementById('campaign-slug')?.value || document.querySelector('#campaign-form [name="title"]')?.value || '');
     const node = document.getElementById('campaign-url-preview');
-    if (node) node.textContent = slug ? `${location.origin}/campaign/${slug}` : 'Your ad link will appear here.';
+    if (node) node.textContent = slug ? `${campaignOrigin()}/campaign/${slug}` : 'Your ad link will appear here.';
   }
 
   function renderCampaignImagePreview() {
@@ -242,7 +246,7 @@
       const result = campaignState.editingId
         ? await api(`/admin/campaigns/${campaignState.editingId}`, { method: 'PATCH', body: JSON.stringify(body) })
         : await api('/admin/campaigns', { method: 'POST', body: JSON.stringify(body) });
-      const url = result.url || `${location.origin}/campaign/${result.slug}`;
+      const url = result.url || `${campaignOrigin()}/campaign/${result.slug}`;
       message.innerHTML = `Saved. Your ad link: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>`;
       window.toast?.(campaignState.editingId ? 'Campaign updated' : 'Campaign created');
       const wasEditing = campaignState.editingId;
@@ -262,7 +266,7 @@
       const campaigns = data.campaigns || [];
       node.innerHTML = campaigns.length ? campaigns.map((campaign) => {
         const live = Boolean(campaign.live);
-        const url = campaign.url || `${location.origin}/campaign/${campaign.slug}`;
+        const url = campaign.url || `${campaignOrigin()}/campaign/${campaign.slug}`;
         // A paused page 404s for customers, so the owner's link has to carry the preview flag.
         const openUrl = live ? url : `${url}?preview=1`;
         const count = (campaign.productIds || []).length;
