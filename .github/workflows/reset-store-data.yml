@@ -1,0 +1,98 @@
+name: Reset store data for launch
+
+# Wipes every product and order from the LIVE store so the owner can add real products and see
+# real order counts starting at zero. This is manual-only, backs up the database first, and
+# refuses to run without the exact confirmation phrase — there is no undo beyond that backup.
+#
+# What survives: the Silky Beauty Combo product (RNV-LP-COMBO-01) and the free-delivery offer
+# that prices it, because ads already point at that page. What is cleared: every other product,
+# every order and its history, customer accounts, Campaign Studio pages, every other coupon, and
+# product reviews. Store settings, delivery zones, payment methods, admin/staff logins, blog and
+# CMS content are never touched by this — see worker/scripts/reset-to-launch.sql for the exact
+# statements, checked into the repo so they can be read before they are ever run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type RESET_TO_LAUNCH exactly to run this. Anything else stops before touching the database."
+        required: true
+        type: string
+        default: ""
+
+concurrency:
+  group: rinova-reset-store-data
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    name: Back up, then reset products and orders to zero
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 46bf056399139631a967566fdb0413fa
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Require the exact confirmation phrase
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "RESET_TO_LAUNCH" ]]; then
+            echo "Nothing was touched. Dispatch again with confirmation RESET_TO_LAUNCH to proceed."
+            exit 1
+          fi
+          echo "Confirmation accepted."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Cloudflare deployment secret
+        run: |
+          set -euo pipefail
+          if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo "CLOUDFLARE_API_TOKEN is not configured as a repository secret. Nothing was touched."
+            exit 1
+          fi
+          echo "Cloudflare credentials are configured. Secret values are not printed."
+
+      - name: Back up the live database before changing anything
+        working-directory: worker
+        run: |
+          set -euo pipefail
+          mkdir -p ../backup
+          pnpm exec wrangler d1 export rinovabd-db --remote --output=../backup/rinovabd-db-before-reset.sql
+          echo "Backup written. If anything about the reset looks wrong afterwards, this file can restore the database."
+
+      - name: Upload the backup as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rinovabd-db-backup-before-reset
+          path: backup/rinovabd-db-before-reset.sql
+          retention-days: 90
+
+      - name: Run the reset
+        working-directory: worker
+        run: |
+          set -euo pipefail
+          pnpm exec wrangler d1 execute rinovabd-db --remote --file=scripts/reset-to-launch.sql
+          echo "Reset complete. The counts and surviving rows above are the store's new state."
