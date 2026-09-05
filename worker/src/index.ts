@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { r2S3CompleteMultipartUpload, r2S3Configured, r2S3CreateMultipartUpload, r2S3Get, r2S3List, r2S3Put, r2S3UploadPart } from './r2-s3';
 
@@ -790,22 +790,75 @@ app.post('/api/admin/product-media', async (c) => {
   return json(c, { ok: true, media: { type: 'image', url: mediaUrl(c.env, c.req.raw, key), alt: file.name.replace(/\.[^.]+$/, '').slice(0, 160) } }, 201);
 });
 
+/**
+ * Slowing down password guessing on the dashboard login.
+ *
+ * The login counted nothing and locked nobody out, so the owner account could be guessed at as
+ * fast as the network allowed. Failures are recorded and counted over a short window: per
+ * username, so one account cannot be ground down, and per caller, so an attacker cannot spray
+ * one guess each across many usernames instead.
+ *
+ * A correct password clears that username's failures immediately, so a customer who mistypes a
+ * few times and then gets it right is never left locked out.
+ */
+const LOGIN_WINDOW_MINUTES = 15;
+const LOGIN_MAX_PER_USERNAME = 8;
+const LOGIN_MAX_PER_IP = 25;
+
+function callerIp(c: Context<{ Bindings: Bindings }>) {
+  return normalize(c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')).split(',')[0].trim() || 'unknown';
+}
+
+/** True when this caller or this account has failed too often to be allowed another guess. */
+async function loginIsThrottled(env: Bindings, username: string, ip: string) {
+  const since = `-${LOGIN_WINDOW_MINUTES} minutes`;
+  const row = await env.DB.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN username = ? THEN 1 ELSE 0 END), 0) AS byUser,
+       COALESCE(SUM(CASE WHEN ip = ? THEN 1 ELSE 0 END), 0) AS byIp
+     FROM admin_login_attempts
+     WHERE created_at >= datetime('now', ?)`,
+  ).bind(username, ip, since).first<{ byUser: number; byIp: number }>();
+  return Number(row?.byUser || 0) >= LOGIN_MAX_PER_USERNAME || Number(row?.byIp || 0) >= LOGIN_MAX_PER_IP;
+}
+
+async function recordLoginFailure(env: Bindings, username: string, ip: string) {
+  await env.DB.prepare('INSERT INTO admin_login_attempts(username, ip) VALUES (?, ?)').bind(username, ip).run();
+  // Keep the table from growing forever; anything past the window can never throttle again.
+  await env.DB.prepare("DELETE FROM admin_login_attempts WHERE created_at < datetime('now', '-1 day')").run();
+}
+
+const clearLoginFailures = (env: Bindings, username: string) =>
+  env.DB.prepare('DELETE FROM admin_login_attempts WHERE username = ?').bind(username).run();
+
 app.post('/api/admin/login', async (c) => {
   const body = await c.req.json<{ username?: string; password?: string }>().catch((): { username?: string; password?: string } => ({}));
   const username = normalize(body.username);
   const password = normalize(body.password);
   const expectedUsername = c.env.ADMIN_USERNAME ?? 'admin';
+  const key = username.toLowerCase();
+  const ip = callerIp(c);
+  // Checked before the password so a locked-out attacker learns nothing from the response.
+  if (await loginIsThrottled(c.env, key, ip)) {
+    return json(c, { error: `Too many failed sign-ins. Please wait ${LOGIN_WINDOW_MINUTES} minutes and try again.` }, 429);
+  }
+  const refuse = async () => {
+    await recordLoginFailure(c.env, key, ip);
+    return json(c, { error: 'Invalid administrator credentials.' }, 401);
+  };
 
   // The owner login lives in Worker secrets and is only changed by the developer.
-  if (username.toLowerCase() === expectedUsername.toLowerCase()) {
-    if (!c.env.ADMIN_PASSWORD || body.password !== c.env.ADMIN_PASSWORD) return json(c, { error: 'Invalid administrator credentials.' }, 401);
+  if (key === expectedUsername.toLowerCase()) {
+    if (!c.env.ADMIN_PASSWORD || body.password !== c.env.ADMIN_PASSWORD) return refuse();
+    await clearLoginFailures(c.env, key);
     const token = await createAdminSession(c.env, expectedUsername, 'owner');
     return json(c, { ok: true, token, expiresInHours: 12, username: expectedUsername, role: 'owner' });
   }
 
   // Staff logins are created by the owner from the dashboard.
   const staff = await c.env.DB.prepare('SELECT id, username, password_hash AS passwordHash, role, active FROM admin_users WHERE lower(username) = lower(?) LIMIT 1').bind(username).first<{ id: number; username: string; passwordHash: string; role: string; active: number }>();
-  if (!staff || !Number(staff.active) || !await verifyPassword(password, staff.passwordHash)) return json(c, { error: 'Invalid administrator credentials.' }, 401);
+  if (!staff || !Number(staff.active) || !await verifyPassword(password, staff.passwordHash)) return refuse();
+  await clearLoginFailures(c.env, key);
   await c.env.DB.prepare('UPDATE admin_users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').bind(staff.id).run();
   const role: AdminRole = staff.role === 'owner' ? 'owner' : 'staff';
   const token = await createAdminSession(c.env, staff.username, role);
@@ -2530,10 +2583,23 @@ app.patch('/api/orders/:orderCode/status', async (c) => {
   return json(c, { ok: true, orderCode, status: body.status });
 });
 
+/**
+ * A single order, for the admin dashboard or for the customer who placed it.
+ *
+ * This used to answer anybody. It matches on printf('INV-%06d', id), which is a plain counter,
+ * so INV-000001, INV-000002, ... walked the whole customer base and handed back every name,
+ * phone number, email and home address without so much as a cookie. It is guarded the same way
+ * its /invoice sibling always was, and answers "not found" rather than "not allowed" so it
+ * cannot be used to confirm which invoice numbers exist.
+ */
 app.get('/api/orders/:orderIdentifier', async (c) => {
+  const admin = await adminPrincipal(c);
+  const customerSession = admin ? null : await customerPrincipal(c);
+  if (!admin && !customerSession) return json(c, { error: 'Order not found.' }, 404);
   const identifier = normalize(c.req.param('orderIdentifier'));
-  const order = await c.env.DB.prepare("SELECT o.id, o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(identifier, identifier, identifier, identifier).first();
-  if (!order) return json(c, { error: 'Order not found.' }, 404);
+  const order = await c.env.DB.prepare("SELECT o.id, o.customer_id AS customerId, o.order_code AS orderCode, printf('INV-%06d', o.id) AS invoiceNumber, o.subtotal, o.delivery_fee AS deliveryFee, o.delivery_zone AS deliveryZone, o.payment_method AS paymentMethod, o.payment_status AS paymentStatus, o.status, o.courier_status AS courierStatus, o.admin_note AS customerNote, o.created_at AS createdAt, c.name, c.phone, c.email, c.district, c.upazila, c.address FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.order_code = ? OR o.invoice_number = ? OR printf('INV-%06d', o.id) = ? OR printf('RNV-%06d', o.id) = ? LIMIT 1").bind(identifier, identifier, identifier, identifier).first<{ id: number; customerId: number }>();
+  // A signed-in customer may only read their own order, never another one by guessing its number.
+  if (!order || (!admin && customerSession?.customerId !== order.customerId)) return json(c, { error: 'Order not found.' }, 404);
   const items = await c.env.DB.prepare('SELECT oi.product_name AS productName, oi.quantity, oi.unit_price AS unitPrice, p.sku AS sku FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id').bind((order as { id: number }).id).all();
   return json(c, { order, items: items.results });
 });
