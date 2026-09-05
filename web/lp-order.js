@@ -100,23 +100,40 @@ window.RinovaLanding = (() => {
     // the authority, so anything it says overrides that.
     const state = { price: Number(chosen().price || 0), delivery: 0 };
 
+    /**
+     * Writes the price, the delivery and the total.
+     *
+     * When an offer waives delivery the page can name one number and stand behind it. When it
+     * does not, the page cannot: the charge depends on the customer's district, which nobody
+     * knows until they have typed their address. Quoting the Dhaka rate and then charging the
+     * outside-Dhaka rate is how a customer is told ৳790 and billed ৳850 — so both rates are
+     * named and the total is honest about what is still to be added.
+     */
     function renderTotals() {
+      const free = state.delivery <= 0;
+      const outside = Number(options.deliveryFeeOutside || 0);
       const total = Math.max(0, state.price) + Math.max(0, state.delivery);
+      const payable = free ? taka(total) : `${taka(state.price)} + ডেলিভারি`;
+
       const pickPrice = $('#lp-pick-price');
       if (pickPrice) pickPrice.textContent = taka(state.price);
       if ($('#lp-subtotal')) $('#lp-subtotal').textContent = taka(state.price);
-      if ($('#lp-total')) $('#lp-total').textContent = taka(total);
-      if ($('#lp-submit-price')) $('#lp-submit-price').textContent = taka(total);
+      if ($('#lp-total')) $('#lp-total').textContent = payable;
+      if ($('#lp-submit-price')) $('#lp-submit-price').textContent = payable;
       const sticky = document.querySelector('#lp-sticky .cta');
-      if (sticky) sticky.textContent = `অর্ডার করতে ক্লিক করুন — ${taka(total)}`;
+      if (sticky) sticky.textContent = `অর্ডার করতে ক্লিক করুন — ${payable}`;
       const delivery = $('#lp-delivery');
       if (delivery) {
-        delivery.textContent = state.delivery > 0 ? taka(state.delivery) : 'ফ্রি ডেলিভারি';
-        delivery.classList.toggle('free', state.delivery <= 0);
+        delivery.textContent = free
+          ? 'ফ্রি ডেলিভারি'
+          : (outside && outside !== state.delivery
+            ? `ঢাকায় ${taka(state.delivery)} · ঢাকার বাইরে ${taka(outside)}`
+            : taka(state.delivery));
+        delivery.classList.toggle('free', free);
       }
       // The free-delivery promise is only made when the shop is really waiving it.
       const band = $('#lp-free-band');
-      if (band) band.hidden = state.delivery > 0;
+      if (band) band.hidden = !free;
     }
 
     /**
