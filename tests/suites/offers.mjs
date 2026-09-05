@@ -65,6 +65,18 @@ check('A scoped coupon is refused when none of its products are in the bag', wro
 const wrongOrder = await order([{ sku: SIZED_SKU, quantity: 1 }], { couponCode: code });
 check('The order refuses it too, rather than discounting the wrong goods', wrongOrder.status === 400, `${wrongOrder.status} ${wrongOrder.json.error || ''}`);
 
+// Free delivery is the one offer that discounts no line, which is why it used to skip the
+// "is any of it in the bag?" test entirely. Scoped to a product, that made "free delivery on
+// the combo" mean free delivery on every order the shop took.
+const freeCode = `FREEDEL${Math.floor(Math.random() * 100000)}`;
+await authed('/api/admin/offers', 'POST', { code: freeCode, title: 'Combo delivery', discountType: 'free_delivery', discountValue: 0, minSubtotal: 0, usageLimit: 0, autoApply: false, productIds: [offerProduct.id] });
+const freeWithProduct = await post('/api/offers/validate', { deliveryFee: 120, code: freeCode, items: [{ sku: OFFER_SKU, quantity: 1 }] });
+check('Scoped free delivery applies when its product is in the bag', freeWithProduct.json.deliveryFee === 0, `delivery ${freeWithProduct.json.deliveryFee}`);
+const freeWithoutProduct = await post('/api/offers/validate', { deliveryFee: 120, code: freeCode, items: [{ sku: SIZED_SKU, quantity: 1 }] });
+check('And is refused for a bag that does not hold it', freeWithoutProduct.status === 400 && /selected products/i.test(freeWithoutProduct.json.error || ''), `HTTP ${freeWithoutProduct.status} ${freeWithoutProduct.json.error || ''} delivery ${freeWithoutProduct.json.deliveryFee}`);
+const freeOrder = await order([{ sku: SIZED_SKU, quantity: 1 }]);
+check('An unrelated order is still charged for delivery', Number(freeOrder.json.order?.deliveryFee) > 0, `delivery ${freeOrder.json.order?.deliveryFee}`);
+
 // A whole-shop coupon must keep working exactly as before.
 const shopCode = `SHOP${Math.floor(Math.random() * 100000)}`;
 await authed('/api/admin/offers', 'POST', { code: shopCode, title: 'Everything', discountType: 'percentage', discountValue: 10, minSubtotal: 0, usageLimit: 0, autoApply: false, productIds: [] });
@@ -215,7 +227,7 @@ check('No console errors in the dashboard', errors.length === 0, errors.slice(0,
 await browser.close();
 // Leave the shop as the other suites expect to find it. The auto-apply offer especially: left
 // behind it would silently discount every order the next suite places.
-const SUITE_TITLES = ['Face wash only', 'Everything', 'Suite auto gift', 'Picked products'];
+const SUITE_TITLES = ['Face wash only', 'Everything', 'Suite auto gift', 'Picked products', 'Combo delivery'];
 const remaining = await (await authed('/api/admin/content', 'GET')).json;
 for (const offer of remaining.offers || []) {
   if (SUITE_TITLES.includes(String(offer.title || ''))) await authed(`/api/admin/offers/${offer.id}`, 'DELETE');

@@ -25,6 +25,10 @@ worth keeping, because both caught real bugs that a looser check waved through:
 - **Prove a control is usable, not merely present.** `elementFromPoint` at a button's own centre
   catches a button that is on screen but painted underneath something else — which is exactly how
   the bag's checkout button and the image viewer's close button were broken.
+- **Parse what the server injects, don't just look for it.** The campaign pages shipped for
+  months with a data block that was HTML-escaped inside a `<script>` tag, so no browser could
+  read it and every campaign rendered empty. A check that the block is *present* would have
+  passed; the landing suite parses it instead.
 
 ## Fixtures
 
@@ -40,7 +44,7 @@ yourself.
 | `RINOVA_TEST_PORT` | `8899` | port for the test Worker |
 | `RINOVA_TEST_ADMIN_USERNAME` | `Rinova` | dashboard login the suites use |
 | `RINOVA_TEST_ADMIN_PASSWORD` | `AdminRinova` | its password |
-| `RINOVA_TEST_CHROMIUM` | Playwright's own | path to a Chromium binary |
+| `RINOVA_TEST_CHROMIUM` | a build under `PLAYWRIGHT_BROWSERS_PATH`, else Playwright's own | path to a Chromium binary |
 | `RINOVA_TEST_ARTIFACTS` | `tests/artifacts` | where screenshots are written |
 
 `worker/.dev.vars` holds the dashboard login for local development and is gitignored. The runner
