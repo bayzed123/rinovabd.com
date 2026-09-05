@@ -24,6 +24,15 @@ const list = (products.products || products).slice(0, 4);
 await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
 await page.evaluate((items) => localStorage.setItem('rinova-bag', JSON.stringify(items.map((p) => ({ id: p.id, sku: p.sku, slug: p.slug, name: p.name, price: p.price, imageUrl: p.imageUrl, quantity: 2, stock: p.stock, minOrderQty: 1 })))), list);
 await page.reload({ waitUntil: 'networkidle' });
+// The drawer slides in over 300ms on a real `transform` transition, so the listener has to be on
+// the element before the class change that starts it — attaching afterwards is a race a fast
+// round-trip can lose outright, which is what made polling the settled position flake under load
+// (two samples can coincide mid-flight, not just at the end). `transitionend` is unambiguous.
+await page.evaluate(() => {
+  window.__drawerSettled = false;
+  const panel = document.querySelector('#bag-drawer .drawer-panel');
+  panel?.addEventListener('transitionend', (event) => { if (event.propertyName === 'transform') window.__drawerSettled = true; }, { once: true });
+});
 await page.click('.bag-button');
 await page.waitForSelector('#bag-drawer.open', { timeout: 10000 });
 // The note is written once the shop answers /api/config, which the drawer only asks for when it
@@ -33,15 +42,8 @@ await page.waitForSelector('#bag-drawer.open', { timeout: 10000 });
 await page.waitForFunction(() => /\d/.test(document.getElementById('bag-delivery-note')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
 // The drawer slides in from the side, so anything measured before it lands reads a position the
 // customer never sees — the checkout button looks half off the screen. Wait for the panel to
-// stop moving rather than guessing at how long the animation takes.
-await page.waitForFunction(() => {
-  const panel = document.querySelector('#bag-drawer .drawer-panel');
-  if (!panel) return false;
-  const left = Math.round(panel.getBoundingClientRect().left);
-  const settled = window.__panelLeft === left;
-  window.__panelLeft = left;
-  return settled;
-}, null, { timeout: 10000, polling: 'raf' }).catch(() => {});
+// finish sliding rather than guessing at how long the animation takes.
+await page.waitForFunction(() => window.__drawerSettled === true, null, { timeout: 10000 }).catch(() => {});
 
 const note = (await page.locator('#bag-delivery-note').textContent()).trim();
 check('The bag note quotes the owner current charges', /111/.test(note) && /222/.test(note), note);

@@ -13,7 +13,10 @@ const token = await adminToken();
 const auth = authHeaders(token);
 const stamp = Date.now().toString(36).slice(-6);
 
-const { inside } = await seedDeliveryCharges(token);
+const { inside, outside } = await seedDeliveryCharges(token);
+// The page prints these in Bangla digits, so the check has to look for them the way a customer
+// reads them.
+const outsideLabel = Number(outside).toLocaleString('bn-BD');
 
 // A product for the campaign to sell, priced so the discount is visible on the page.
 const SKU = `RNV-CAMP-${stamp}`;
@@ -84,17 +87,27 @@ check('The offer price is the headline number', /৭০০/.test(shown.priceNow 
 check('With the old price struck through beside it', /১,?২০০/.test(shown.priceOld || ''), shown.priceOld);
 check('The order button is repeated down the page', shown.ctas >= 2, `${shown.ctas} buttons`);
 check('The call button dials the shop', /^tel:\+?\d+/.test(shown.callHref || ''), shown.callHref);
-check('The summary is priced from the shop, not the markup', /৭০০/.test(shown.subtotal || '') && /৭০০/.test(shown.total || ''), JSON.stringify(shown));
-check('The confirm button carries the amount payable', /৭০০/.test(shown.submit || ''), shown.submit);
+check('The summary is priced from the shop, not the markup', /৭০০/.test(shown.subtotal || ''), JSON.stringify(shown));
 
-// Whatever the shop says about delivery is what the page has to say. Asserting a fixed number
-// here would only test which offers happened to exist when the suite ran; asserting agreement
-// tests the thing that matters — that the page never promises what the order would not honour.
+// Whatever the shop actually decides for this SKU — including a shop-wide auto-apply offer this
+// suite did not create — is what the page has to agree with. Asserting a fixed branch here would
+// only test whichever offers happened to exist when the suite ran; asking the shop and requiring
+// agreement tests the thing that matters, that the page never promises what the order would not
+// honour, and holds regardless of what other fixtures have left behind.
 const quoted = await api.post('/api/offers/validate', { deliveryFee: inside, code: '', items: [{ sku: SKU, quantity: 1 }] });
-const shopDelivery = Number(quoted.json.deliveryFee ?? inside);
+const shopWaivesDelivery = Number(quoted.json.deliveryFee ?? inside) <= 0;
 const delivery = await page.locator('#lp-delivery').textContent();
-check('The page quotes the delivery the shop would charge', shopDelivery > 0 ? !/ফ্রি/.test(delivery || '') : /ফ্রি/.test(delivery || ''), `page says "${delivery}", shop charges ${shopDelivery}`);
-check('The free-delivery banner only shows when delivery really is free', await page.locator('#lp-free-band').isHidden() === (shopDelivery > 0), `banner hidden: ${await page.locator('#lp-free-band').isHidden()}, shop charges ${shopDelivery}`);
+check('The free-delivery banner only shows when delivery really is free', await page.locator('#lp-free-band').isHidden() !== shopWaivesDelivery, `banner hidden: ${await page.locator('#lp-free-band').isHidden()}, shop waives delivery: ${shopWaivesDelivery}`);
+if (shopWaivesDelivery) {
+  check('The page says delivery is free', /ফ্রি/.test(delivery || ''), delivery);
+} else {
+  // The charge depends on the customer's district, which is not known until they type it.
+  // Quoting the Dhaka rate and then charging the outside-Dhaka rate is how a customer is shown
+  // ৳790 and billed ৳850, so both rates are named and the total says delivery is still to come.
+  check('Both delivery rates are named rather than one being guessed at', new RegExp(outsideLabel).test(delivery || '') && /ঢাকা/.test(delivery || ''), `delivery "${delivery}", rates ${inside}/${outside}`);
+  check('The total does not pretend to know the delivery charge yet', /ডেলিভারি/.test(shown.total || '') && /৭০০/.test(shown.total || ''), shown.total);
+  check('And nor does the confirm button', /ডেলিভারি/.test(shown.submit || ''), shown.submit);
+}
 
 // ---- An order placed from the campaign page -----------------------------------------------------
 const phone = `019${String(Date.now()).slice(-8)}`;
@@ -114,13 +127,53 @@ check('An order can be placed from the campaign page', Boolean((await page.locat
 const placed = (await api.get(`/api/admin/orders?q=${encodeURIComponent(phone)}`, auth)).json.orders?.[0];
 check('The order reaches the shop', Boolean(placed), `nothing found for ${phone}`);
 check('It is charged the advertised price', Number(placed?.subtotal) === 700, `subtotal ${placed?.subtotal}`);
-check('With the delivery the shop charges', Number(placed?.deliveryFee) === shopDelivery, `delivery ${placed?.deliveryFee}, expected ${shopDelivery}`);
+// The order is charged whatever the page told the customer to expect: free if the shop is
+// waiving it, or one of the two published rates by the address they typed. What must never
+// happen is a charge the page never mentioned.
+const charged = Number(placed?.deliveryFee);
+check('Delivery is charged at a rate the page named', shopWaivesDelivery ? charged === 0 : (charged === inside || charged === outside), `charged ${charged}, page named ${shopWaivesDelivery ? 'free' : `${inside}/${outside}`}`);
 check('And it is marked as coming from this campaign', new RegExp(`Winter Glow ${stamp}`).test(String(placed?.customerNote || '')), placed?.customerNote);
 
 const events = await page.evaluate(() => (window.dataLayer || []).map((entry) => (Array.isArray(entry) ? entry[0] : entry.event)).filter(Boolean));
 check('The campaign view is reported', events.includes('campaign_view'), events.join(', '));
 check('So is the product view and the purchase', events.includes('view_item') && events.includes('purchase'), events.join(', '));
 check('No console errors on the campaign page', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+// ---- A campaign whose product has free delivery -------------------------------------------------
+// The other half of the same rule: when the shop really is waiving delivery, the page may name one
+// number and stand behind it, and the banner promising free delivery may finally show.
+await api.post('/api/admin/offers', {
+  code: '', title: `Campaign free delivery ${stamp}`, discountType: 'free_delivery', discountValue: 0,
+  minSubtotal: 0, usageLimit: 0, autoApply: true, productIds: [productId],
+}, auth);
+const freePage = await context.newPage();
+await freePage.goto(`${BASE}${PATH}`, { waitUntil: 'networkidle' });
+await freePage.waitForFunction(() => /ফ্রি/.test(document.getElementById('lp-delivery')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
+const freeShown = await freePage.evaluate(() => ({
+  delivery: document.getElementById('lp-delivery')?.textContent.trim(),
+  total: document.getElementById('lp-total')?.textContent.trim(),
+  submit: document.getElementById('lp-submit')?.textContent.trim(),
+  bandHidden: document.getElementById('lp-free-band')?.hidden,
+}));
+check('A waived delivery is shown as free', /ফ্রি/.test(freeShown.delivery || ''), freeShown.delivery);
+check('And the total becomes a firm number', /৭০০/.test(freeShown.total || '') && !/ডেলিভারি/.test(freeShown.total || ''), freeShown.total);
+check('The confirm button carries that amount', /৭০০/.test(freeShown.submit || ''), freeShown.submit);
+check('Only then does the free-delivery banner show', freeShown.bandHidden === false, `banner hidden: ${freeShown.bandHidden}`);
+
+const freePhone = `016${String(Date.now()).slice(-8)}`;
+await freePage.fill('#lp-name', 'ফ্রি ডেলিভারি টেস্ট');
+await freePage.fill('#lp-phone', freePhone);
+await freePage.fill('#lp-address', 'Malopara, Boalia, Rajshahi 6100');
+await freePage.click('#lp-submit');
+await freePage.waitForSelector('#lp-done', { state: 'visible', timeout: 20000 });
+const freeOrder = (await api.get(`/api/admin/orders?q=${encodeURIComponent(freePhone)}`, auth)).json.orders?.[0];
+check('And the order really is delivered free', Number(freeOrder?.deliveryFee) === 0, `delivery ${freeOrder?.deliveryFee}`);
+await freePage.close();
+// Take the offer away again so it does not quietly discount another suite's orders.
+const madeOffers = await api.get('/api/admin/content', auth);
+for (const offer of madeOffers.json.offers || []) {
+  if (String(offer.title || '') === `Campaign free delivery ${stamp}`) await api.send(`/api/admin/offers/${offer.id}`, 'DELETE', undefined, auth);
+}
 
 // ---- A paused campaign is still the owner's to check -------------------------------------------
 await api.send(`/api/admin/campaigns/${campaign.json.id}`, 'PATCH', { active: false }, auth);

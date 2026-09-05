@@ -2303,7 +2303,10 @@ app.get('/campaign/:slug', async (c) => {
     products: ordered,
     tracking,
     shop: { name: c.env.SHOP_NAME, phone: normalize(c.env.SHOP_PHONE), whatsapp: normalize(c.env.WHATSAPP_NUMBER) },
+    // Both rates: the page cannot know which one applies until the address is read, so it names
+    // both rather than quoting one and charging the other.
     deliveryFee: fees.dhaka,
+    deliveryFeeOutside: fees['outside-dhaka'],
   };
   const output = html
     .replace('<title>Rinova BD Campaign</title>', head)

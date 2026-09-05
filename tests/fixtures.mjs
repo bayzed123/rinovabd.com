@@ -47,7 +47,13 @@ export async function seedSizedProduct(token, { price = 390, stock = 500 } = {})
  */
 export async function seedOffer(token, offer) {
   const existing = await api.get('/api/admin/content', authHeaders(token));
-  const already = (existing.json.offers || []).some((row) => String(row.code || '').toUpperCase() === String(offer.code || '').toUpperCase() && offer.code);
+  // A coded coupon is matched by its code. An auto-apply offer carries no code at all, so the
+  // only thing that identifies "the same fixture" between runs is its title — without this, an
+  // empty code matched every other empty code and the dedup never fired, silently stacking a
+  // fresh duplicate free-delivery offer into the local database on every repeat run.
+  const already = (existing.json.offers || []).some((row) => (
+    offer.code ? String(row.code || '').toUpperCase() === String(offer.code).toUpperCase() : String(row.title || '') === String(offer.title || '')
+  ));
   if (already) return false;
   await api.post('/api/admin/offers', { minSubtotal: 0, usageLimit: 0, autoApply: false, productIds: [], ...offer }, authHeaders(token));
   return true;

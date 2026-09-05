@@ -127,6 +127,7 @@
     tracking: data.tracking || {},
     products: demo ? [] : products.map((product) => ({ sku: product.sku, name: product.name, price: priceOf(product) })),
     deliveryFee: Number(data.deliveryFee || 0),
+    deliveryFeeOutside: Number(data.deliveryFeeOutside || 0),
     soldOut: Boolean(products.length) && products.every((product) => Number(product.stock ?? 1) <= 0),
     callNumber: phone,
     note: `Campaign page — ${campaign.title || campaign.slug || 'Rinova BD'}`,
