@@ -55,7 +55,7 @@ const wanted = args.filter((a) => !a.startsWith('--'));
 // Suites that drive a browser need Chromium; the rest are plain fetch calls.
 const CHROMIUM = findChromium();
 
-const BROWSER_SUITES = new Set(['general', 'commerce', 'admin2', 'ux', 'origin', 'bag-copy', 'offers', 'viewer', 'icons', 'stepper', 'products', 'staff', 'landing']);
+const BROWSER_SUITES = new Set(['general', 'commerce', 'admin2', 'ux', 'origin', 'bag-copy', 'offers', 'viewer', 'icons', 'stepper', 'products', 'staff', 'landing', 'campaign']);
 
 const log = (...parts) => console.log(...parts);
 const run = (command, cmdArgs, options = {}) =>

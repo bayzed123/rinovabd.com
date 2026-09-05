@@ -18,7 +18,7 @@
 
   function campaignFormMarkup() {
     return `<form id="campaign-form" class="panel campaign-form">
-      <div class="panel-heading"><div><p class="eyebrow" id="campaign-form-eyebrow">NEW CAMPAIGN</p><h3 id="campaign-form-title">Ad landing page</h3><p class="muted">Give the campaign a name — the page link is created for you. Nothing is public until you set it Active.</p></div><button id="campaign-cancel" class="icon-action" type="button" hidden>Cancel edit</button></div>
+      <div class="panel-heading"><div><p class="eyebrow" id="campaign-form-eyebrow">NEW CAMPAIGN</p><h3 id="campaign-form-title">Ad landing page</h3><p class="muted">Give the campaign a name — the page link is created for you. The page comes out as a full ad landing page with the order form on it, so a customer orders without leaving the ad. Nothing is public until you set it Active.</p></div><button id="campaign-cancel" class="icon-action" type="button" hidden>Cancel edit</button></div>
 
       <label>Campaign name · ক্যাম্পেইনের নাম<input name="title" required placeholder="Winter Glow Edit" autocomplete="off" /></label>
 
@@ -29,7 +29,7 @@
       </div>
 
       <label>Small headline · ছোট শিরোনাম<input name="eyebrow" placeholder="Limited winter edit" /></label>
-      <label>Description · বিবরণ<textarea name="description" rows="4" placeholder="One or two lines that explain the offer."></textarea></label>
+      <label>Selling points · বিবরণ<small class="muted">Each line becomes its own paragraph on the page. Write the reasons to buy, one per line.</small><textarea name="description" rows="6" placeholder="ব্যথা ছাড়াই অবাঞ্ছিত লোম পরিষ্কার করুন।&#10;কোনো সাইড ইফেক্ট নেই।&#10;১০০% অরিজিনাল প্রোডাক্ট, ক্যাশ অন ডেলিভারি।"></textarea></label>
 
       <div class="campaign-image-field">
         <span class="setting-label">Main picture · প্রধান ছবি<small>Square 1080×1080, under 500 KB, WebP or JPG.</small></span>
@@ -46,7 +46,7 @@
       </details>
 
       <div class="campaign-picker">
-        <div class="campaign-picker-head"><span class="setting-label">Products on this page · এই পেজের প্রোডাক্ট<small>Tick the products this ad should sell. Leave all unticked to show your featured products.</small></span><span class="metric-chip" id="campaign-selected-count">0 selected</span></div>
+        <div class="campaign-picker-head"><span class="setting-label">Products on this page · এই পেজের প্রোডাক্ট<small>Tick the products this ad should sell — the order form sells these. Tick one for a single-product ad; tick a few and the customer picks between them. Leave all unticked and a few featured products are offered instead.</small></span><span class="metric-chip" id="campaign-selected-count">0 selected</span></div>
         <input id="campaign-product-search" class="campaign-picker-search" type="search" placeholder="Search products by name or SKU" autocomplete="off" />
         <div id="campaign-product-picker" class="campaign-product-picker"><p class="muted">Loading products…</p></div>
       </div>
