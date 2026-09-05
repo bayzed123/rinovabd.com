@@ -40,9 +40,59 @@ jobs:
       - name: Build storefront and typecheck Worker
         run: pnpm build
 
+  verify:
+    name: Behaviour suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Cached between runs; downloading Chromium every time would dominate the job.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Boots a Worker on a throwaway local D1, runs every suite against it, fails on any
+      # failed check. The suites seed their own data, so a fresh database is the normal case.
+      - name: Run the behaviour suites
+        run: pnpm test
+        env:
+          RINOVA_TEST_ADMIN_USERNAME: ci-owner
+          RINOVA_TEST_ADMIN_PASSWORD: ci-password-not-a-secret
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: tests/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
   deploy:
     name: Deploy Worker and storefront assets
-    needs: validate
+    needs: [validate, verify]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10

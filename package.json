@@ -3,13 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "description": "Rinova BD beauty and personal-care storefront with Cloudflare Worker backend.",
-  "workspaces": ["worker", "web"],
+  "workspaces": [
+    "worker",
+    "web"
+  ],
   "scripts": {
     "dev": "npm run dev --workspace worker",
     "build": "npm run build --workspace web && npm run typecheck --workspace worker",
     "typecheck": "npm run typecheck --workspace worker",
-    "test": "npm run test --workspace worker",
-    "deploy": "npm run deploy --workspace worker"
+    "test": "node tests/run.mjs",
+    "deploy": "npm run deploy --workspace worker",
+    "test:api": "node tests/run.mjs --api-only"
+  },
+  "devDependencies": {
+    "playwright": "1.49.1"
   }
 }
-
