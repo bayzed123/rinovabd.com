@@ -25,7 +25,23 @@ await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
 await page.evaluate((items) => localStorage.setItem('rinova-bag', JSON.stringify(items.map((p) => ({ id: p.id, sku: p.sku, slug: p.slug, name: p.name, price: p.price, imageUrl: p.imageUrl, quantity: 2, stock: p.stock, minOrderQty: 1 })))), list);
 await page.reload({ waitUntil: 'networkidle' });
 await page.click('.bag-button');
-await page.waitForTimeout(900);
+await page.waitForSelector('#bag-drawer.open', { timeout: 10000 });
+// The note is written once the shop answers /api/config, which the drawer only asks for when it
+// opens. A fixed pause is a race against that reply — one lost on a CI runner and reported as
+// the shop quoting the wrong charges. Wait for the answer instead; if it never comes, the check
+// below still fails, and on the fallback text rather than a timeout nobody can read.
+await page.waitForFunction(() => /\d/.test(document.getElementById('bag-delivery-note')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
+// The drawer slides in from the side, so anything measured before it lands reads a position the
+// customer never sees — the checkout button looks half off the screen. Wait for the panel to
+// stop moving rather than guessing at how long the animation takes.
+await page.waitForFunction(() => {
+  const panel = document.querySelector('#bag-drawer .drawer-panel');
+  if (!panel) return false;
+  const left = Math.round(panel.getBoundingClientRect().left);
+  const settled = window.__panelLeft === left;
+  window.__panelLeft = left;
+  return settled;
+}, null, { timeout: 10000, polling: 'raf' }).catch(() => {});
 
 const note = (await page.locator('#bag-delivery-note').textContent()).trim();
 check('The bag note quotes the owner current charges', /111/.test(note) && /222/.test(note), note);

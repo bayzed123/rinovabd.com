@@ -1,0 +1,93 @@
+/**
+ * The ad landing page look.
+ *
+ * Shared by the built-in landing pages and by every campaign page the owner makes in Campaign
+ * Studio, so a campaign comes out in the same format rather than a second design that drifts
+ * from it. One phone-first column, one price, one path to the order form.
+ */
+:root{--pink:#e0218a;--pink-deep:#a8145f;--ink:#2b1724;--muted:#6b5661;--paper:#fff;--soft:#fff5fa;--line:#f3d9e6;--green:#127a48;--gold:#f6b100}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:'Hind Siliguri',system-ui,sans-serif;color:var(--ink);background:var(--soft);line-height:1.75;font-size:17px;overflow-x:hidden}
+img{max-width:100%;height:auto;display:block}
+.wrap{width:min(680px,100%);margin-inline:auto;padding-inline:16px}
+.band{background:var(--pink);color:#fff;text-align:center;padding:11px 16px;font-weight:600;font-size:15px;line-height:1.5}
+header.lp-head{background:var(--paper);border-bottom:1px solid var(--line);padding:12px 0}
+header.lp-head .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{font-weight:700;font-size:19px;color:var(--ink);text-decoration:none;letter-spacing:-.01em}
+.brand b{color:var(--pink)}
+.head-call{display:inline-flex;align-items:center;gap:7px;background:var(--soft);border:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:999px;padding:8px 14px;font-weight:600;font-size:14px}
+section{padding:26px 0}
+.hero{background:var(--paper);padding-top:20px}
+h1{font-size:clamp(23px,5.4vw,30px);line-height:1.45;margin:0 0 12px;font-weight:700}
+h2{font-size:clamp(20px,4.6vw,25px);line-height:1.5;margin:0 0 14px;font-weight:700}
+.lead{font-size:17px;color:var(--muted);margin:0 0 18px}
+.hero-media{border-radius:18px;overflow:hidden;border:1px solid var(--line);background:var(--soft);margin-bottom:18px}
+.price-box{background:var(--soft);border:2px dashed var(--pink);border-radius:16px;padding:18px;text-align:center;margin:18px 0}
+.price-old{color:var(--muted);font-size:17px}
+.price-old s{text-decoration-color:var(--pink)}
+.price-now{font-size:clamp(30px,8vw,40px);font-weight:700;color:var(--pink);line-height:1.2;margin:4px 0 2px}
+.price-save{display:inline-block;background:var(--green);color:#fff;border-radius:999px;padding:4px 14px;font-size:14px;font-weight:600;margin-top:6px}
+.cta{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;background:var(--pink);color:#fff;border:0;border-radius:14px;padding:17px 20px;font:700 19px/1.3 'Hind Siliguri',sans-serif;text-decoration:none;cursor:pointer;box-shadow:0 8px 22px rgba(224,33,138,.28);min-height:58px}
+.cta:hover,.cta:focus-visible{background:var(--pink-deep)}
+.cta-note{text-align:center;color:var(--muted);font-size:14px;margin:9px 0 0}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:20px}
+.ticks{list-style:none;margin:0;padding:0}
+.ticks li{padding:9px 0 9px 32px;position:relative;border-bottom:1px solid var(--line)}
+.ticks li:last-child{border-bottom:0}
+.ticks li::before{content:"✓";position:absolute;left:0;top:9px;width:22px;height:22px;border-radius:50%;background:var(--soft);color:var(--pink);font-weight:700;font-size:13px;display:grid;place-items:center}
+.leaf li::before{content:"🌿";background:transparent}
+.pills{display:flex;flex-wrap:wrap;gap:9px;justify-content:center;margin:16px 0 0;padding:0;list-style:none}
+.pills li{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:8px 15px;font-size:14px;font-weight:600}
+.help{background:var(--ink);color:#fff;border-radius:18px;padding:22px;text-align:center}
+.help h2{color:#fff;margin-bottom:6px}
+.help p{color:#e7d6de;margin:0 0 16px;font-size:16px}
+.help-actions{display:grid;gap:11px}
+@media(min-width:520px){.help-actions{grid-template-columns:1fr 1fr}}
+.help-btn{display:flex;align-items:center;justify-content:center;gap:9px;border-radius:12px;padding:15px;font-weight:700;text-decoration:none;min-height:54px;font-size:17px}
+.wa{background:#25d366;color:#04301a}
+.tel{background:#fff;color:var(--ink)}
+.steps{counter-reset:s;list-style:none;margin:0;padding:0}
+.steps li{counter-increment:s;position:relative;padding:12px 0 12px 44px;border-bottom:1px solid var(--line)}
+.steps li:last-child{border-bottom:0}
+.steps li::before{content:counter(s);position:absolute;left:0;top:12px;width:30px;height:30px;border-radius:50%;background:var(--pink);color:#fff;font-weight:700;display:grid;place-items:center;font-size:15px}
+form label{display:block;font-weight:600;margin:0 0 6px;font-size:16px}
+form .req{color:var(--pink)}
+form input,form textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:14px;font:inherit;font-size:17px;background:var(--paper);color:var(--ink);min-height:52px}
+form input:focus,form textarea:focus{outline:2px solid var(--pink);outline-offset:1px;border-color:var(--pink)}
+form .field{margin-bottom:16px}
+.pick{display:flex;gap:13px;align-items:center;border:2px solid var(--pink);border-radius:14px;padding:13px;background:var(--soft)}
+.pick img{width:74px;height:74px;object-fit:cover;border-radius:10px;flex:0 0 74px;background:var(--paper)}
+.pick strong{display:block;font-size:16px;line-height:1.45}
+.pick small{color:var(--muted);font-size:14px}
+.pick .pick-price{margin-left:auto;font-weight:700;color:var(--pink);font-size:19px;white-space:nowrap}
+table.sum{width:100%;border-collapse:collapse;margin-top:6px}
+table.sum th,table.sum td{text-align:left;padding:12px 0;border-bottom:1px solid var(--line);font-size:16px}
+table.sum td:last-child,table.sum th:last-child{text-align:right}
+table.sum tr:last-child th,table.sum tr:last-child td{border-bottom:0;font-size:20px;font-weight:700;padding-top:14px}
+.free{color:var(--green);font-weight:700}
+.cod{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:15px;margin:16px 0}
+.cod strong{display:block;margin-bottom:4px}
+.err{background:#fdecef;border:1px solid #f5b7c2;color:#93122b;border-radius:12px;padding:13px;margin-bottom:14px;font-weight:600}
+.done{background:var(--paper);border:2px solid var(--green);border-radius:16px;padding:26px;text-align:center}
+.done h2{color:var(--green)}
+.done .code{display:inline-block;background:var(--soft);border-radius:10px;padding:9px 16px;font-weight:700;font-size:19px;margin:10px 0}
+footer.lp-foot{background:var(--ink);color:#d9c8d2;padding:28px 0;text-align:center;font-size:15px}
+footer.lp-foot a{color:#fff;font-weight:600}
+.sticky{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--paper);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom));box-shadow:0 -6px 20px rgba(43,23,36,.12)}
+.sticky .wrap{padding:0}
+body{padding-bottom:88px}
+[hidden]{display:none!important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---- Campaign pages ------------------------------------------------------------------------
+   The owner writes the selling copy as plain lines in Campaign Studio, so the page has to make
+   an ordinary paragraph and a bullet list look deliberate without any markup from them. */
+.lp-copy p{margin:0 0 14px}
+.lp-copy p:last-child{margin-bottom:0}
+.pick.choice{cursor:pointer;border-color:var(--line);background:var(--paper)}
+.pick.choice+.pick.choice{margin-top:11px}
+.pick.choice input{position:absolute;opacity:0;pointer-events:none}
+.pick.choice:has(input:checked){border-color:var(--pink);background:var(--soft)}
+.pick.choice:focus-within{outline:2px solid var(--pink);outline-offset:2px}
+.campaign-paused{background:var(--ink);color:#fff;text-align:center;padding:11px 16px;font-weight:600;font-size:15px}

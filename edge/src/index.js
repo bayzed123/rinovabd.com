@@ -15,7 +15,7 @@
 
 // Only what a campaign landing page actually needs. Anything else is sent to the real shop,
 // so this subdomain never becomes a second, duplicate storefront competing in search.
-const ASSET_PATHS = new Set(['/styles.css', '/campaign.js', '/lp.js', '/runtime-config.js', '/icons.js', '/analytics.js', '/favicon.ico', '/robots.txt']);
+const ASSET_PATHS = new Set(['/styles.css', '/campaign.js', '/lp.js', '/lp-order.js', '/lp.css', '/runtime-config.js', '/icons.js', '/analytics.js', '/favicon.ico', '/robots.txt']);
 const ASSET_PREFIXES = ['/assets/'];
 
 const isCampaignPath = (pathname) => pathname === '/campaign' || pathname.startsWith('/campaign/');

@@ -2259,12 +2259,13 @@ app.get('/campaign/:slug', async (c) => {
   const settings = await c.env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('tracking_gtm_id','tracking_ga4_measurement_id','tracking_meta_pixel_id')").all<{ key: string; value: string }>();
   const tracking = Object.fromEntries(settings.results.map((row) => [row.key, row.value]));
 
-  // Show the products the owner picked, in the order they picked them; fall back to the
-  // featured catalogue only when no selection was made.
+  // Show the products the owner picked, in the order they picked them; fall back to a few
+  // featured products only when no selection was made. The page ends in one order form, so the
+  // fallback is short on purpose — a landing page offering two dozen choices sells none of them.
   const chosenIds = parseCampaignProductIds(campaign.productIdsJson);
   const products = chosenIds.length
-    ? await c.env.DB.prepare(`SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl FROM products WHERE active = 1 AND id IN (${chosenIds.map(() => '?').join(',')})`).bind(...chosenIds).all()
-    : await c.env.DB.prepare('SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl FROM products WHERE active = 1 ORDER BY featured DESC, updated_at DESC LIMIT 24').all();
+    ? await c.env.DB.prepare(`SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl, short_description AS shortDescription, stock FROM products WHERE active = 1 AND id IN (${chosenIds.map(() => '?').join(',')})`).bind(...chosenIds).all()
+    : await c.env.DB.prepare('SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl, short_description AS shortDescription, stock FROM products WHERE active = 1 ORDER BY featured DESC, updated_at DESC LIMIT 6').all();
   const ordered = (chosenIds.length
     ? chosenIds.map((id) => products.results.find((product) => Number((product as { id: number }).id) === id)).filter(Boolean)
     : products.results).map((row) => withOfferPrice(row as Record<string, unknown>));
@@ -2294,10 +2295,15 @@ app.get('/campaign/:slug', async (c) => {
     `<meta name="twitter:image" content="${safe(socialImage)}">`,
   ].join('');
 
+  // The page takes the order itself, so it needs what an order needs: how to reach the shop, and
+  // what delivery would cost before any offer waives it.
+  const fees = await deliveryFeeTable(c.env);
   const payload = {
     campaign: { slug: campaign.slug, title: campaign.title, eyebrow: campaign.eyebrow, description: campaign.description, imageUrl: campaign.imageUrl, ctaLabel: campaign.ctaLabel || 'Shop now', ctaUrl: campaign.ctaUrl || '#campaign-products', url: canonical, preview: preview && !campaignIsLive(campaign) },
     products: ordered,
     tracking,
+    shop: { name: c.env.SHOP_NAME, phone: normalize(c.env.SHOP_PHONE), whatsapp: normalize(c.env.WHATSAPP_NUMBER) },
+    deliveryFee: fees.dhaka,
   };
   const output = html
     .replace('<title>Rinova BD Campaign</title>', head)
