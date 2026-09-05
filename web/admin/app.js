@@ -1,5 +1,5 @@
 const API_BASE = window.RINOVA_API_BASE || '/api';
-const state = { token: sessionStorage.getItem('rinova-admin-token') || '', storeConfig: null, products: [], catalogue: [], orders: [], categories: [], settings: {}, days: 30, posProducts: [], posCart: [], barcodeLabels: [], offlineLabels: (() => { try { const value = JSON.parse(localStorage.getItem('rinova-offline-barcode-labels') || '[]'); return Array.isArray(value) ? value : []; } catch { return []; } })(), adminChat: [], marketingBanners: [], newsletterLeads: [], analyticsSummary: null, notifications: [], adminMode: sessionStorage.getItem('rinova-admin-mode') === 'edit' ? 'edit' : 'view', editRouteHandled: false };
+const state = { token: sessionStorage.getItem('rinova-admin-token') || '', role: 'owner', storeConfig: null, products: [], catalogue: [], orders: [], categories: [], settings: {}, days: 30, posProducts: [], posCart: [], barcodeLabels: [], offlineLabels: (() => { try { const value = JSON.parse(localStorage.getItem('rinova-offline-barcode-labels') || '[]'); return Array.isArray(value) ? value : []; } catch { return []; } })(), adminChat: [], marketingBanners: [], newsletterLeads: [], analyticsSummary: null, notifications: [], adminMode: sessionStorage.getItem('rinova-admin-mode') === 'edit' ? 'edit' : 'view', editRouteHandled: false };
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
@@ -354,8 +354,34 @@ async function uploadGalleryImages() {
 }
 function showApp(username) { loadStoreConfig(); $('#login-screen').classList.add('hidden'); $('#app-shell').classList.remove('hidden'); $('#signed-in-user').textContent = username || 'Admin'; setAdminMode(state.adminMode); renderMorningChecklist(); loadNotifications(); const params = new URLSearchParams(window.location.search); const allowedViews = ['overview', 'products', 'categories', 'orders', 'inventory', 'settings', 'returns', 'reviews', 'pos', 'barcode-generator', 'cms', 'marketing', 'traffic', 'assistant', 'campaigns', 'team']; const requestedView = allowedViews.includes(params.get('view')) ? params.get('view') : 'overview'; loadView(requestedView); }
 function showLogin() { $('#login-screen').classList.remove('hidden'); $('#app-shell').classList.add('hidden'); }
-async function login(event) { event.preventDefault(); $('#login-error').textContent = ''; try { const data = await api('/admin/login', { method: 'POST', body: JSON.stringify({ username: $('#login-username').value, password: $('#login-password').value }) }); state.token = data.token; sessionStorage.setItem('rinova-admin-token', state.token); showApp(data.username); } catch (error) { $('#login-error').textContent = error.message; } }
-async function boot() { if (!state.token) return showLogin(); try { const session = await api('/admin/session'); showApp(session.username); } catch { sessionStorage.removeItem('rinova-admin-token'); state.token = ''; showLogin(); } }
+/**
+ * Hides what a staff login is not allowed to change.
+ *
+ * The server is the authority — it refuses these outright — but showing an owner-only control
+ * to staff only teaches them to expect a refusal. Anything that moves money, holds a credential
+ * or reconfigures the shop is the owner's, so staff simply do not see it.
+ */
+function applyRole(role) {
+  state.role = role === 'staff' ? 'staff' : 'owner';
+  document.body.classList.toggle('role-staff', state.role === 'staff');
+  const ownerOnly = [
+    '.nav-item[data-view="settings"]',   // delivery charges, payment methods
+    '#settings-form',
+    '#steadfast-panel',                  // courier API credentials
+    '#cms-offer-form',                   // creating a discount
+    '#cms-offer-list',
+    '#sheets-list',                      // links to the business data exports
+    '#sheets-refresh',
+  ];
+  const missing = ownerOnly.filter((selector) => !document.querySelector(selector));
+  if (missing.length) console.warn('Owner-only selectors that match nothing:', missing);
+  for (const selector of ownerOnly) {
+    document.querySelectorAll(selector).forEach((node) => { node.hidden = state.role !== 'owner'; });
+  }
+}
+
+async function login(event) { event.preventDefault(); $('#login-error').textContent = ''; try { const data = await api('/admin/login', { method: 'POST', body: JSON.stringify({ username: $('#login-username').value, password: $('#login-password').value }) }); state.token = data.token; sessionStorage.setItem('rinova-admin-token', state.token); applyRole(data.role); showApp(data.username); } catch (error) { $('#login-error').textContent = error.message; } }
+async function boot() { if (!state.token) return showLogin(); try { const session = await api('/admin/session'); applyRole(session.role); showApp(session.username); } catch { sessionStorage.removeItem('rinova-admin-token'); state.token = ''; showLogin(); } }
 function closeMobileNav() { const sidebar = $('.sidebar'); const backdrop = $('#sidebar-backdrop'); sidebar?.classList.remove('open'); backdrop?.classList.remove('open'); backdrop?.setAttribute('aria-hidden', 'true'); $('#mobile-menu')?.setAttribute('aria-expanded', 'false'); document.body.classList.remove('nav-open'); }
 function toggleMobileNav(open) { const sidebar = $('.sidebar'); const backdrop = $('#sidebar-backdrop'); if (open) toggleNotificationPanel(false); sidebar?.classList.toggle('open', open); backdrop?.classList.toggle('open', open); backdrop?.setAttribute('aria-hidden', String(!open)); $('#mobile-menu')?.setAttribute('aria-expanded', String(open)); document.body.classList.toggle('nav-open', open); }
 function openAdminPreview() { const panel = $('#admin-preview-panel'); if (!panel) return; panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false'); document.body.classList.add('preview-open'); $('#admin-preview-frame')?.contentWindow?.postMessage({ type: 'rinova-admin-preview-mode', mode: state.adminMode }, window.location.origin); panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); }

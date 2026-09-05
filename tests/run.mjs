@@ -31,7 +31,7 @@ const keepAlive = args.includes('--keep');
 const wanted = args.filter((a) => !a.startsWith('--'));
 
 // Suites that drive a browser need Chromium; the rest are plain fetch calls.
-const BROWSER_SUITES = new Set(['general', 'commerce', 'admin2', 'ux', 'origin', 'bag-copy', 'offers', 'viewer', 'icons', 'stepper']);
+const BROWSER_SUITES = new Set(['general', 'commerce', 'admin2', 'ux', 'origin', 'bag-copy', 'offers', 'viewer', 'icons', 'stepper', 'products', 'staff']);
 
 const log = (...parts) => console.log(...parts);
 const run = (command, cmdArgs, options = {}) =>
