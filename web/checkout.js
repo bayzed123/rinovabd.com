@@ -73,7 +73,7 @@ function changeQuantity(productId, direction) {
 }
 
 function renderItems() {
-  $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="checkout-item"><div><strong>${item.name}</strong>${item.options?.size || item.options?.color ? `<small>${[item.options?.size && `Size: ${item.options.size}`, item.options?.color && `Colour: ${item.options.color}`].filter(Boolean).join(' · ')}</small>` : ''}<small>${money(item.price)} each</small></div><div class="checkout-item-actions"><div class="quantity-stepper"><button type="button" data-checkout-qty="${item.id}" data-direction="-1" aria-label="Decrease ${item.name}"><span data-rinova-icon="minus"></span></button><span>${Number(item.quantity || 0)}</span><button type="button" data-checkout-qty="${item.id}" data-direction="1" aria-label="Increase ${item.name}">+</button></div><strong>${money(Number(item.price || 0) * Number(item.quantity || 0))}</strong></div></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>';
+  $('#order-items').innerHTML = bag.length ? bag.map((item) => `<div class="checkout-item"><div><strong>${item.name}</strong>${item.options?.size || item.options?.color ? `<small>${[item.options?.size && `Size: ${item.options.size}`, item.options?.color && `Colour: ${item.options.color}`].filter(Boolean).join(' · ')}</small>` : ''}<small>${money(item.price)} each</small></div><div class="checkout-item-actions"><div class="quantity-stepper"><button type="button" class="stepper-minus" data-checkout-qty="${item.id}" data-direction="-1" aria-label="Decrease ${item.name}">−</button><span>${Number(item.quantity || 0)}</span><button type="button" data-checkout-qty="${item.id}" data-direction="1" aria-label="Increase ${item.name}" class="stepper-plus">+</button></div><strong>${money(Number(item.price || 0) * Number(item.quantity || 0))}</strong></div></div>`).join('') : '<p class="muted">Your bag is empty. Return to the shop to add products.</p>';
   const subtotal = bag.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
   $('#subtotal').textContent = money(subtotal);
   // A coupon can cut the subtotal, the delivery fee, or both.
@@ -303,7 +303,11 @@ async function applyCoupon() {
     // With no code typed this is the shop's automatic offer. It used to be invisible: the order
     // came back cheaper than the total the customer had just read. Naming it here also answers
     // "which offer won", because the server sends back the one it actually chose.
-    if (!code) message.textContent = payload.offer ? `${payload.offer.title} applied automatically — you save ${money(saved)}.` : '';
+    //
+    // A free-delivery offer is worth nothing until there is a delivery fee to waive, so before
+    // the customer enters an address the saving really is zero. Say the offer is on rather than
+    // quoting them "you save ৳0", which reads like the offer is broken.
+    if (!code) message.textContent = payload.offer ? (saved > 0 ? `${payload.offer.title} applied automatically — you save ${money(saved)}.` : `${payload.offer.title} applied automatically.`) : '';
     else message.textContent = saved > 0 ? `Coupon applied — you save ${money(saved)}.` : 'Coupon applied.';
     message.className = payload.offer ? 'coupon-message ok' : 'coupon-message';
   } catch (error) {

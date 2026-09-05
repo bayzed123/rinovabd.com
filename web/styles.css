@@ -430,3 +430,29 @@ body.bag-open .global-mobile-nav{ display:none !important; }
 .media-viewer-dismissing .media-viewer-stage::before{ transition:none; }
 .media-viewer-track{ position:relative; z-index:1; }
 .media-viewer-arrow{ z-index:2; }
+
+/* Checkout quantity stepper -------------------------------------------------- */
+/* The minus used to be an icon drawn by JavaScript while the plus beside it was a plain "+",
+   so a stale or blocked script left the customer a blank button they could not use. Both are
+   characters now; these rules keep the pair identical in weight and alignment. */
+.quantity-stepper .stepper-minus,
+.quantity-stepper .stepper-plus{
+  display:grid; place-items:center; font-family:inherit; font-size:20px; font-weight:500;
+  line-height:1; padding:0; -webkit-user-select:none; user-select:none;
+}
+/* They were 30x32 — under the 44px a thumb needs, on the one page where a mis-tap costs the
+   order. The row they sit in grows to match rather than the buttons overflowing it. */
+@media(max-width:760px){
+  .checkout-item .quantity-stepper{ min-height:46px; }
+  .checkout-item .quantity-stepper .stepper-minus,
+  .checkout-item .quantity-stepper .stepper-plus{ width:44px; height:44px; font-size:22px; }
+  .checkout-item .quantity-stepper span{ min-width:40px; height:44px; }
+}
+
+/* `hidden` must actually hide -------------------------------------------------- */
+/* Any author rule setting `display` beats the browser's own [hidden] rule, so a row given
+   `display:flex` by its class stayed on screen after `node.hidden = true`. That is how the
+   checkout summary showed "Discount · Free delivery  -৳0" on orders with no discount, and how
+   the checkout grid stayed visible earlier. Settle it once, for every element, rather than
+   patching one id each time it surfaces. */
+[hidden]{ display:none !important; }
