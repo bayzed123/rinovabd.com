@@ -15,10 +15,13 @@
 
 // Only what a campaign landing page actually needs. Anything else is sent to the real shop,
 // so this subdomain never becomes a second, duplicate storefront competing in search.
-const ASSET_PATHS = new Set(['/styles.css', '/campaign.js', '/runtime-config.js', '/icons.js', '/analytics.js', '/favicon.ico', '/robots.txt']);
+const ASSET_PATHS = new Set(['/styles.css', '/campaign.js', '/lp.js', '/runtime-config.js', '/icons.js', '/analytics.js', '/favicon.ico', '/robots.txt']);
 const ASSET_PREFIXES = ['/assets/'];
 
 const isCampaignPath = (pathname) => pathname === '/campaign' || pathname.startsWith('/campaign/');
+// The ad landing pages built into the storefront Worker, served from this domain for the same
+// reason campaigns are: the ad link has to carry the brand, not a workers.dev host.
+const isLandingPath = (pathname) => pathname === '/lp' || pathname.startsWith('/lp/');
 const isAssetPath = (pathname) => ASSET_PATHS.has(pathname) || ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
 export default {
@@ -27,7 +30,7 @@ export default {
     const upstream = env.UPSTREAM_ORIGIN || 'https://rinovabd-worker.abdussalam8480.workers.dev';
     const publicSite = env.PUBLIC_SITE_ORIGIN || 'https://rinovabd.com';
 
-    if (!isCampaignPath(url.pathname) && !isAssetPath(url.pathname)) {
+    if (!isCampaignPath(url.pathname) && !isLandingPath(url.pathname) && !isAssetPath(url.pathname)) {
       return Response.redirect(`${publicSite}${url.pathname}${url.search}`, 301);
     }
 

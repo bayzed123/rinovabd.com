@@ -57,11 +57,20 @@ check('Public tracking still works without a login', tracking.status === 200 && 
 check('Public tracking exposes no name, phone or address', leaks(tracking.json).length === 0, JSON.stringify(leaks(tracking.json)));
 
 // ---- The dashboard login must not be guessable at speed -------------------------------------
-const guessUser = `audit${Math.floor(Math.random() * 1000000)}`;
+// Each part below deliberately fails sign-ins, and every one of them counts against the caller's
+// address as well as the username. Run from a single address they eat the per-IP budget the rest
+// of the run needs, and a second run inside the throttle window locks the suite out of its own
+// dashboard — so each part is given its own caller address. Cloudflare rewrites CF-Connecting-IP
+// at the edge, so this is not a header a real visitor gets to choose.
+const from = (ip) => ({ 'CF-Connecting-IP': ip });
+const stamp = Math.floor(Math.random() * 100000);
+const guessIp = `198.51.100.${(stamp % 250) + 1}`;
+
+const guessUser = `audit${stamp}`;
 let firstRefusal = 0;
 let throttledAt = 0;
 for (let attempt = 1; attempt <= 12; attempt += 1) {
-  const tried = await post('/api/admin/login', { username: guessUser, password: `guess-${attempt}` });
+  const tried = await post('/api/admin/login', { username: guessUser, password: `guess-${attempt}` }, from(guessIp));
   if (attempt === 1) firstRefusal = tried.status;
   if (tried.status === 429) { throttledAt = attempt; break; }
 }
@@ -69,19 +78,28 @@ check('A wrong password is refused', firstRefusal === 401, `status ${firstRefusa
 check('Repeated guessing gets locked out rather than running forever', throttledAt > 0 && throttledAt <= 10, throttledAt ? `locked out on attempt ${throttledAt}` : 'never locked out');
 
 // Being locked out must not tell an attacker whether the password was right.
-const rightPasswordWhileLocked = await post('/api/admin/login', { username: guessUser, password: 'guess-1' });
+const rightPasswordWhileLocked = await post('/api/admin/login', { username: guessUser, password: 'guess-1' }, from(guessIp));
 check('A locked-out account answers the same however it is probed', rightPasswordWhileLocked.status === 429, `status ${rightPasswordWhileLocked.status}`);
 
-// And the owner, who has not been guessing, must still be able to work.
-const ownerStillWorks = await post('/api/admin/login', { username: ADMIN_USERNAME, password: ADMIN_PASSWORD });
+// And the owner, who has not been guessing, must still be able to work — from their own address.
+const ownerStillWorks = await post('/api/admin/login', { username: ADMIN_USERNAME, password: ADMIN_PASSWORD }, from('203.0.113.9'));
 check('A different account is not locked out by someone else failing', ownerStillWorks.status === 200, `status ${ownerStillWorks.status}`);
 
+// Spreading the guesses over many usernames must not get round the limit either.
+const spreadIp = `192.0.2.${(stamp % 250) + 1}`;
+let spreadThrottledAt = 0;
+for (let attempt = 1; attempt <= 30; attempt += 1) {
+  const tried = await post('/api/admin/login', { username: `spread${stamp}-${attempt}`, password: 'nope' }, from(spreadIp));
+  if (tried.status === 429) { spreadThrottledAt = attempt; break; }
+}
+check('Guessing many usernames from one address is stopped too', spreadThrottledAt > 0, spreadThrottledAt ? `stopped on attempt ${spreadThrottledAt}` : 'never stopped after 30 tries');
+
 // A few typos then the right password must not leave the real owner stranded.
-const typoUser = ADMIN_USERNAME;
-for (let i = 0; i < 3; i += 1) await post('/api/admin/login', { username: typoUser, password: 'wrong-on-purpose' });
-const recovered = await post('/api/admin/login', { username: typoUser, password: ADMIN_PASSWORD });
+const typoIp = '203.0.113.77';
+for (let i = 0; i < 3; i += 1) await post('/api/admin/login', { username: ADMIN_USERNAME, password: 'wrong-on-purpose' }, from(typoIp));
+const recovered = await post('/api/admin/login', { username: ADMIN_USERNAME, password: ADMIN_PASSWORD }, from(typoIp));
 check('Getting it right after a few typos still signs you in', recovered.status === 200, `status ${recovered.status}`);
-const afterSuccess = await post('/api/admin/login', { username: typoUser, password: 'wrong-again' });
+const afterSuccess = await post('/api/admin/login', { username: ADMIN_USERNAME, password: 'wrong-again' }, from(typoIp));
 check('A success clears the earlier failures', afterSuccess.status === 401, `status ${afterSuccess.status}`);
 
 const passed = results.filter(Boolean).length;

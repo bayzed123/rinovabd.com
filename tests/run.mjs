@@ -25,13 +25,37 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN_USERNAME = process.env.RINOVA_TEST_ADMIN_USERNAME || 'Rinova';
 const ADMIN_PASSWORD = process.env.RINOVA_TEST_ADMIN_PASSWORD || 'AdminRinova';
 
+/**
+ * The Chromium the browser suites drive.
+ *
+ * CI installs a browser Playwright can find on its own. A prepared development container instead
+ * ships one under PLAYWRIGHT_BROWSERS_PATH, and Playwright looks for the exact build its own
+ * version pins — so every browser suite died at launch with "Executable doesn't exist", and the
+ * whole run reported nothing but "Error". Pointing at the browser that is actually there costs
+ * one directory read and is a no-op wherever the pinned build exists.
+ */
+function findChromium() {
+  const configured = process.env.RINOVA_TEST_CHROMIUM || process.env.CHROME_PATH;
+  if (configured) return configured;
+  const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (!root || !existsSync(root)) return '';
+  const builds = readdirSync(root).filter((name) => /^chromium-\d+$/.test(name)).sort().reverse();
+  for (const build of builds) {
+    const candidate = join(root, build, 'chrome-linux', 'chrome');
+    if (existsSync(candidate)) return candidate;
+  }
+  return '';
+}
+
 const args = process.argv.slice(2);
 const apiOnly = args.includes('--api-only');
 const keepAlive = args.includes('--keep');
 const wanted = args.filter((a) => !a.startsWith('--'));
 
 // Suites that drive a browser need Chromium; the rest are plain fetch calls.
-const BROWSER_SUITES = new Set(['general', 'commerce', 'admin2', 'ux', 'origin', 'bag-copy', 'offers', 'viewer', 'icons', 'stepper', 'products', 'staff']);
+const CHROMIUM = findChromium();
+
+const BROWSER_SUITES = new Set(['general', 'commerce', 'admin2', 'ux', 'origin', 'bag-copy', 'offers', 'viewer', 'icons', 'stepper', 'products', 'staff', 'landing']);
 
 const log = (...parts) => console.log(...parts);
 const run = (command, cmdArgs, options = {}) =>
@@ -148,6 +172,7 @@ function runSuite(name) {
       RINOVA_TEST_BASE: BASE,
       RINOVA_TEST_ADMIN_USERNAME: ADMIN_USERNAME,
       RINOVA_TEST_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      ...(CHROMIUM ? { RINOVA_TEST_CHROMIUM: CHROMIUM } : {}),
     },
   });
   const output = `${result.stdout || ''}${result.stderr || ''}`;
@@ -211,8 +236,15 @@ async function main() {
     const result = runSuite(name);
     results.push(result);
     log(result.ok ? `${result.passed}/${result.total} in ${result.seconds}s` : `FAILED (${result.passed}/${result.total}) in ${result.seconds}s`);
-    // Only the failures are worth the scrollback; a passing suite is one line.
-    if (!result.ok) log(result.output.split('\n').filter((line) => /^FAIL|Error|error:/.test(line)).slice(0, 25).map((l) => `    ${l}`).join('\n') || `    ${result.output.slice(-1200)}`);
+    // Only the failures are worth the scrollback; a passing suite is one line. A suite that got
+    // no checks out at all did not fail a check — it crashed — so show the end of its output
+    // rather than the one word of the exception, which says nothing about what went wrong.
+    if (!result.ok) {
+      const failures = result.output.split('\n').filter((line) => line.startsWith('FAIL')).slice(0, 25);
+      log(result.total === 0 || !failures.length
+        ? result.output.trim().split('\n').slice(-18).map((line) => `    ${line}`).join('\n')
+        : failures.map((line) => `    ${line}`).join('\n'));
+    }
   }
 
   const failed = results.filter((r) => !r.ok);

@@ -48,7 +48,8 @@ type App = Hono<{ Bindings: Bindings }>;
 type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'customer_cancelled' | 'refused' | 'delivery_failed' | 'returned' | 'admin_cancelled';
 
 const app: App = new Hono();
-app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'https://www.rinovabd.com', 'http://rinovabd.com', 'http://www.rinovabd.com', 'https://bayzed123.github.io', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] }));
+// ads.rinovabd.com serves the ad landing pages, whose order form posts to this API cross-origin.
+app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'https://www.rinovabd.com', 'http://rinovabd.com', 'http://www.rinovabd.com', 'https://ads.rinovabd.com', 'https://bayzed123.github.io', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] }));
 
 /**
  * What a staff login may not do.
@@ -1618,6 +1619,23 @@ async function fetchAssetHtml(env: Bindings, requestUrl: string, path: string): 
   return response;
 }
 
+/**
+ * JSON for a `<script type="application/json">` block.
+ *
+ * A script element is raw text: the browser never decodes HTML entities inside it. Escaping the
+ * payload the way the surrounding markup is escaped therefore leaves literal `&quot;` in the
+ * JSON and JSON.parse throws — which is what left campaign pages rendering with no products and
+ * no tracking at all. Escaping the angle brackets as \u sequences keeps the JSON valid while
+ * still making a `</script` sequence impossible.
+ */
+function scriptJson(payload: unknown): string {
+  return JSON.stringify(payload)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 function campaignSlug(value: unknown) {
   return normalize(value).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
 }
@@ -2285,9 +2303,88 @@ app.get('/campaign/:slug', async (c) => {
     .replace('<title>Rinova BD Campaign</title>', head)
     // An ad landing page has to be indexable for the crawler to fetch its card.
     .replace('<meta name="robots" content="noindex,nofollow">', preview ? '<meta name="robots" content="noindex,nofollow">' : '<meta name="robots" content="index,follow">')
-    .replace('<script id="campaign-data" type="application/json"></script>', '<script id="campaign-data" type="application/json">' + safe(JSON.stringify(payload)) + '</script>');
+    .replace('<script id="campaign-data" type="application/json"></script>', '<script id="campaign-data" type="application/json">' + scriptJson(payload) + '</script>');
   return new Response(output, { headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': preview ? 'no-store' : 'public, max-age=60' } });
 });
+
+/**
+ * The ad landing pages.
+ *
+ * Each entry pairs a static page in the assets directory with the SKU it sells. The page is
+ * never served straight from assets: the Worker fills in the shop's tracking ids and the live
+ * price first, so a landing page cannot advertise a price the checkout would refuse, and the
+ * owner changing the price in the dashboard changes the ad page with it.
+ */
+const LANDING_PAGES: Record<string, { file: string; sku: string; title: string; description: string; image: string }> = {
+  'silky-beauty-combo': {
+    file: '/lp-silky-combo.html',
+    sku: 'RNV-LP-COMBO-01',
+    title: 'Kingyes Silky Beauty Spray + Episoft Serum কম্বো — ফ্রি ডেলিভারিতে',
+    description: 'অবাঞ্ছিত লোম পরিষ্কার করার স্প্রে ও লোম কমানোর সিরাম, সঙ্গে ফ্রি লিপ বাম। ক্যাশ অন ডেলিভারি, সারা বাংলাদেশে ফ্রি ডেলিভারি।',
+    image: '/assets/lp-combo.jpg',
+  },
+};
+
+app.get('/lp/:slug', async (c) => {
+  const slug = normalize(c.req.param('slug')).toLowerCase();
+  const page = Object.prototype.hasOwnProperty.call(LANDING_PAGES, slug) ? LANDING_PAGES[slug] : null;
+  if (!page) return c.text('Landing page not available.', 404);
+  if (!c.env.ASSETS) return c.text('Storefront assets are unavailable.', 503);
+
+  // A page that cannot take an order must not be advertised, so a missing or withdrawn product
+  // is a 404 rather than a form that fails after the click has been paid for.
+  const row = await c.env.DB.prepare('SELECT id, name, slug, sku, price, compare_at_price AS compareAtPrice, discount_percent AS discountPercent, discount_label AS discountLabel, discount_ends_at AS discountEndsAt, image_url AS imageUrl, stock FROM products WHERE sku = ? AND active = 1 LIMIT 1').bind(page.sku).first<Record<string, unknown>>();
+  if (!row) return c.text('Landing page not available.', 404);
+
+  const asset = await fetchAssetHtml(c.env, c.req.url, page.file);
+  if (!asset.ok) return asset;
+  const html = await asset.text();
+  const safe = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' } as Record<string, string>)[char]);
+
+  const settings = await c.env.DB.prepare("SELECT setting_key AS key, setting_value AS value FROM store_settings WHERE setting_key IN ('tracking_gtm_id','tracking_ga4_measurement_id','tracking_meta_pixel_id')").all<{ key: string; value: string }>();
+  const tracking = Object.fromEntries(settings.results.map((setting) => [setting.key, setting.value]));
+
+  const product = withOfferPrice(row);
+  const origin = publicOrigin(c);
+  const canonical = `${origin}/lp/${slug}`;
+  const socialImage = `${origin}${page.image}`;
+  // Meta's ad crawler runs no JavaScript, so the card has to be in the served HTML.
+  const head = [
+    `<title>${safe(page.title)}</title>`,
+    `<meta name="description" content="${safe(page.description)}">`,
+    `<link rel="canonical" href="${safe(canonical)}">`,
+    `<meta property="og:type" content="product">`,
+    `<meta property="og:site_name" content="${safe(c.env.SHOP_NAME)}">`,
+    `<meta property="og:title" content="${safe(page.title)}">`,
+    `<meta property="og:description" content="${safe(page.description)}">`,
+    `<meta property="og:url" content="${safe(canonical)}">`,
+    `<meta property="og:image" content="${safe(socialImage)}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${safe(page.title)}">`,
+    `<meta name="twitter:description" content="${safe(page.description)}">`,
+    `<meta name="twitter:image" content="${safe(socialImage)}">`,
+  ].join('');
+
+  const payload = {
+    tracking,
+    product: { ...product, inStock: Number(row.stock) > 0 },
+    url: canonical,
+    whatsapp: normalize(c.env.WHATSAPP_NUMBER),
+    phone: normalize(c.env.SHOP_PHONE),
+  };
+  const output = html
+    .replace(/<title>[^<]*<\/title>/, head)
+    .replace('<script id="lp-data" type="application/json"></script>', '<script id="lp-data" type="application/json">' + scriptJson(payload) + '</script>');
+  return new Response(output, { headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'public, max-age=60' } });
+});
+
+// The raw asset path would serve the same page with no tracking and no confirmed price, so it
+// is sent to the route that fills those in rather than left as a quiet second copy.
+for (const [slug, page] of Object.entries(LANDING_PAGES)) {
+  const bare = page.file.replace(/\.html$/, '');
+  app.get(page.file, (c) => c.redirect(`/lp/${slug}`, 301));
+  app.get(bare, (c) => c.redirect(`/lp/${slug}`, 301));
+}
 
 app.get('/products/:slug', async (c) => {
   const slug = normalize(c.req.param('slug'));
@@ -2443,9 +2540,12 @@ async function resolveOffer(env: Bindings, lines: OfferLine[], deliveryFee: numb
     if (subtotal < Number(offer.minSubtotal || 0)) return false;
     // A limit of 0 means unlimited; anything else stops the coupon once it is used up.
     if (Number(offer.usageLimit || 0) > 0 && Number(offer.usedCount || 0) >= Number(offer.usageLimit)) return false;
-    // A product offer whose products are not in the bag is worth nothing, and free delivery is
-    // worth something even though it discounts no line.
-    if (offer.discountType !== 'free_delivery' && covered(offer) <= 0) return false;
+    // A product offer whose products are not in the bag is worth nothing. Free delivery is the
+    // exception, because it discounts no line — but only while it covers the whole shop. A free
+    // delivery offer that names products has to find one of them in the bag, or "free delivery
+    // on the combo" quietly becomes free delivery on every order the shop takes.
+    const scoped = offerProductScope(offer.productIdsJson).length > 0;
+    if ((offer.discountType !== 'free_delivery' || scoped) && covered(offer) <= 0) return false;
     return true;
   });
 
