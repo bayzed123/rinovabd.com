@@ -50,6 +50,44 @@ type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'deliver
 const app: App = new Hono();
 app.use('/api/*', cors({ origin: ['https://rinovabd.com', 'https://www.rinovabd.com', 'http://rinovabd.com', 'http://www.rinovabd.com', 'https://bayzed123.github.io', 'http://localhost:5173'], allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] }));
 
+/**
+ * What a staff login may not do.
+ *
+ * A staff account could reach 62 of the 66 dashboard endpoints — everything except managing
+ * other logins — so "limited access" was limited in name only. Anything that moves money,
+ * holds a credential, or reconfigures the shop is the owner's alone; the day-to-day work of
+ * running the shop is not.
+ *
+ * The rule lives here, in one list, rather than in sixty-odd handlers, so what staff can do can
+ * be read off in one place and cannot drift as routes are added.
+ */
+const OWNER_ONLY: Array<{ method: string; pattern: RegExp; because: string }> = [
+  { method: 'PUT', pattern: /^\/api\/admin\/settings$/, because: 'delivery charges and payment methods decide what customers are charged' },
+  { method: 'POST', pattern: /^\/api\/admin\/offers$/, because: 'a discount is money out of the till' },
+  { method: 'PATCH', pattern: /^\/api\/admin\/offers\/[^/]+$/, because: 'a discount is money out of the till' },
+  { method: 'DELETE', pattern: /^\/api\/admin\/offers\/[^/]+$/, because: 'a discount is money out of the till' },
+  { method: 'PUT', pattern: /^\/api\/admin\/tracking\/settings$/, because: 'analytics and pixel credentials' },
+  { method: 'POST', pattern: /^\/api\/admin\/tracking\/verify$/, because: 'analytics and pixel credentials' },
+  { method: 'GET', pattern: /^\/api\/admin\/steadfast\/config$/, because: 'courier API credentials' },
+  { method: 'POST', pattern: /^\/api\/admin\/steadfast\/test$/, because: 'courier API credentials' },
+  { method: 'GET', pattern: /^\/api\/admin\/integrations\/status$/, because: 'shows which credentials are configured' },
+  { method: 'GET', pattern: /^\/api\/admin\/sheets$/, because: 'links to the business data exports' },
+  { method: 'DELETE', pattern: /^\/api\/admin\/campaigns\/[^/]+$/, because: 'deleting a live ad landing page' },
+];
+
+app.use('/api/admin/*', async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  const path = new URL(c.req.url).pathname;
+  const restricted = OWNER_ONLY.find((rule) => rule.method === method && rule.pattern.test(path));
+  if (!restricted) return next();
+  const session = await adminSession(c);
+  if (!session) return json(c, { error: 'Unauthorized admin request.' }, 401);
+  if (session.role !== 'owner') {
+    return json(c, { error: 'Only the shop owner can do this. Ask the owner to make this change.' }, 403);
+  }
+  return next();
+});
+
 const json = (c: { json: (body: unknown, status?: number) => Response }, body: unknown, status = 200) => c.json(body, status);
 
 function normalize(value: unknown) {
@@ -1999,7 +2037,7 @@ app.post('/api/admin/products', async (c) => {
   const badgesJson = JSON.stringify(parseProductBadges(body.badgesJson ?? body.badges));
   const primaryImage = normalizeMediaUrl(body.imageUrl) || null;
   const { offerPercent, offerLabel, offerEndsAt } = productOfferFields(body, false);
-  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, editor_note, price, compare_at_price, cost_price, image_url, media_json, badges_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, discount_percent, discount_label, discount_ends_at, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), normalize(body.editorNote), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, badgesJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), offerPercent, offerLabel, offerEndsAt, body.featured ? 1 : 0, active).first();
+  const result = await c.env.DB.prepare("INSERT INTO products(category_id, name, slug, sku, description, short_description, editor_note, price, compare_at_price, cost_price, image_url, media_json, badges_json, barcode, weight_grams, stock, low_stock_threshold, min_order_qty, status, tags_json, specs_json, volume_tiers_json, discount_percent, discount_label, discount_ends_at, featured, active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id, name, slug").bind(categoryId, name, slug, normalize(body.sku) || `RNV-${Date.now().toString(36).toUpperCase()}`, normalize(body.description), normalize(body.shortDescription), normalize(body.editorNote), Number(body.price) || 0, numberOrNull(body.compareAtPrice), Number(body.costPrice) || 0, primaryImage, mediaJson, badgesJson, normalize(body.barcode) || null, Number(body.weightGrams) || 0, Math.max(0, Number(body.stock) || 0), Math.max(0, Number(body.lowStockThreshold) || 5), Math.max(1, Number(body.minOrderQty) || 1), status, JSON.stringify(body.tags ?? []), JSON.stringify(body.specs ?? []), JSON.stringify(volumeTiers), offerPercent, offerLabel, offerEndsAt, body.featured ? 1 : 0, active).first();
   if (!result) return json(c, { error: 'Could not create product.' }, 500);
   const createdId = Number((result as { id: number }).id);
   if (body.variants !== undefined) await saveProductVariants(c.env, createdId, body.variants);
