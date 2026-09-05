@@ -90,6 +90,15 @@ function applyMigrations() {
   }
 }
 
+/** Is the Worker still there? Asked after a failure, to tell a broken shop from a dead server. */
+const workerIsAnswering = async () => {
+  try {
+    return (await fetch(`${BASE}/api/config`, { signal: AbortSignal.timeout(5000) })).ok;
+  } catch {
+    return false;
+  }
+};
+
 async function waitForWorker(child, timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -147,6 +156,9 @@ function startWorker() {
   child.stdout.on('data', keep);
   child.stderr.on('data', keep);
   child.tail = () => tail.join('');
+  // A Worker that dies mid-run is not a suite failure, and reporting it as ten of them buries
+  // the one line that explains it. Remember that it went, so the run can say so and stop.
+  child.on('exit', (code, signal) => { child.died = { code, signal }; });
   return child;
 }
 
@@ -244,6 +256,18 @@ async function main() {
       log(result.total === 0 || !failures.length
         ? result.output.trim().split('\n').slice(-18).map((line) => `    ${line}`).join('\n')
         : failures.map((line) => `    ${line}`).join('\n'));
+    }
+    // Every suite after a dead Worker fails on a refused connection, which says nothing about the
+    // shop and hides the one thing that explains it. Asking the port is the only reliable test:
+    // workerd can die while the wrangler wrapper that spawned it stays alive, so waiting for the
+    // child to exit would report nothing — which is how a CI run once produced ten meaningless
+    // failures and no cause.
+    if (!result.ok && !(await workerIsAnswering())) {
+      const how = worker.died ? (worker.died.signal ? `signal ${worker.died.signal}` : `exit code ${worker.died.code}`) : 'it stopped answering';
+      log(`\n· the Worker is gone (${how}). ${name} and everything after it failed on that, not on the shop.`);
+      log(`\nLast Worker output:\n${worker.tail?.() || '(none)'}`);
+      results.push({ name: 'the Worker', ok: false, passed: 0, total: 0, seconds: '0.0', output: '' });
+      break;
     }
   }
 
