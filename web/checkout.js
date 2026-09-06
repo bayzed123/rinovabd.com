@@ -1,7 +1,10 @@
 const API_BASE = window.RINOVA_API_BASE || (window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api');
 const bag = JSON.parse(localStorage.getItem('rinova-bag') || '[]');
 const $ = (selector) => document.querySelector(selector);
-const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
+// Rounded to whole taka, the way the Worker rounds every price and total it stores. Without
+// this a computed figure — the dashboard's average order value, say — printed three decimals
+// beside eight whole-taka cards.
+const money = (value) => `৳${Math.round(Number(value) || 0).toLocaleString('en-BD')}`;
 const track = (name, params = {}) => window.rinovaAnalytics?.track ? window.rinovaAnalytics.track(name, params) : (window.dataLayer = window.dataLayer || [], window.dataLayer.push({ event: name, ...params }));
 const itemPayload = (item) => window.rinovaAnalytics?.item ? window.rinovaAnalytics.item(item, item.quantity) : { item_id: item.sku || item.id, item_name: item.name, price: Number(item.price || 0), quantity: Number(item.quantity || 1) };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));

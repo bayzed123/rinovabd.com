@@ -1,7 +1,10 @@
 const API_BASE = window.RINOVA_API_BASE || (window.location.hostname.includes('localhost') ? 'http://localhost:8787/api' : '/api');
 const state = { bag: JSON.parse(localStorage.getItem('rinova-bag') || '[]'), media: [], mediaIndex: 0, rating: 0, variants: [], activePrice: null, delivery: null, offerPercent: 0 };
 const $ = (selector) => document.querySelector(selector);
-const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
+// Rounded to whole taka, the way the Worker rounds every price and total it stores. Without
+// this a computed figure — the dashboard's average order value, say — printed three decimals
+// beside eight whole-taka cards.
+const money = (value) => `৳${Math.round(Number(value) || 0).toLocaleString('en-BD')}`;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
 const icon = (name, className = '') => window.RinovaIcons?.svg(name, className) || '';
 function safeMediaUrl(value) { const url = String(value ?? '').trim(); return /^(https:\/\/|\/assets\/|\/media\/)/i.test(url) ? url : ''; }
