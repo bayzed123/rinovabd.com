@@ -1,7 +1,10 @@
 const API_BASE = window.RINOVA_API_BASE || '/api';
 const state = { token: sessionStorage.getItem('rinova-admin-token') || '', role: 'owner', storeConfig: null, products: [], catalogue: [], orders: [], categories: [], settings: {}, days: 30, posProducts: [], posCart: [], barcodeLabels: [], offlineLabels: (() => { try { const value = JSON.parse(localStorage.getItem('rinova-offline-barcode-labels') || '[]'); return Array.isArray(value) ? value : []; } catch { return []; } })(), adminChat: [], marketingBanners: [], newsletterLeads: [], analyticsSummary: null, notifications: [], adminMode: sessionStorage.getItem('rinova-admin-mode') === 'edit' ? 'edit' : 'view', editRouteHandled: false };
 const $ = (selector) => document.querySelector(selector);
-const money = (value) => `৳${Number(value || 0).toLocaleString('en-BD')}`;
+// Rounded to whole taka, the way the Worker rounds every price and total it stores. Without
+// this a computed figure — the dashboard's average order value, say — printed three decimals
+// beside eight whole-taka cards.
+const money = (value) => `৳${Math.round(Number(value) || 0).toLocaleString('en-BD')}`;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
 const optionalNumber = (value) => value === '' ? null : Number(value);
 /** Public store config (courier partner, delivery amounts) so panels can name what the customer sees. */

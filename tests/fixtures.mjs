@@ -42,21 +42,40 @@ export async function seedSizedProduct(token, { price = 390, stock = 500 } = {})
 }
 
 /**
- * Creates an offer unless one with that code already exists, so a second run does not collide
- * with the first. Returns nothing useful — the suites look offers up by code.
+ * Makes the offer exist, configured the way the caller asked, whatever the database held first.
+ *
+ * Creating it only when absent is not enough. A "Free delivery" offer set to a ৳1,500 threshold
+ * by something else — the demo seeder, a previous experiment, the shop owner — satisfied a
+ * create-if-absent check, and the commerce suite then asserted ৳500 behaviour against it and
+ * failed on data rather than on code. So a matching row is *reconciled* to what was asked for
+ * rather than accepted as-is.
+ *
+ * Matching is by code for a coupon. An auto-apply offer carries no code at all, so its title is
+ * the only thing identifying "the same fixture" between runs — without that, an empty code
+ * matched every other empty code and a fresh duplicate stacked up on every repeat run.
  */
 export async function seedOffer(token, offer) {
+  const wanted = { minSubtotal: 0, usageLimit: 0, autoApply: false, productIds: [], ...offer };
   const existing = await api.get('/api/admin/content', authHeaders(token));
-  // A coded coupon is matched by its code. An auto-apply offer carries no code at all, so the
-  // only thing that identifies "the same fixture" between runs is its title — without this, an
-  // empty code matched every other empty code and the dedup never fired, silently stacking a
-  // fresh duplicate free-delivery offer into the local database on every repeat run.
-  const already = (existing.json.offers || []).some((row) => (
+  const match = (existing.json.offers || []).find((row) => (
     offer.code ? String(row.code || '').toUpperCase() === String(offer.code).toUpperCase() : String(row.title || '') === String(offer.title || '')
   ));
-  if (already) return false;
-  await api.post('/api/admin/offers', { minSubtotal: 0, usageLimit: 0, autoApply: false, productIds: [], ...offer }, authHeaders(token));
-  return true;
+  if (!match) {
+    await api.post('/api/admin/offers', wanted, authHeaders(token));
+    return true;
+  }
+  await api.send(`/api/admin/offers/${match.id}`, 'PATCH', {
+    active: true,
+    autoApply: Boolean(wanted.autoApply),
+    minSubtotal: Number(wanted.minSubtotal) || 0,
+    usageLimit: Number(wanted.usageLimit) || 0,
+    productIds: wanted.productIds || [],
+    resetUsage: true,
+    // A free-delivery offer has no discount value to set, and the route rejects zero on a
+    // percentage offer, so only send it when it is a number worth sending.
+    ...(Number(wanted.discountValue) > 0 ? { discountValue: Number(wanted.discountValue) } : {}),
+  }, authHeaders(token));
+  return false;
 }
 
 /** The coupon the commerce and dashboard suites both name: 10% off, shop-wide. */

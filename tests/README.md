@@ -29,6 +29,11 @@ worth keeping, because both caught real bugs that a looser check waved through:
   months with a data block that was HTML-escaped inside a `<script>` tag, so no browser could
   read it and every campaign rendered empty. A check that the block is *present* would have
   passed; the landing suite parses it instead.
+- **A 200 is not proof the thing is there.** `/assets/beauty-flatlay.jpg` — the picture a product
+  with no photo of its own falls back to — had never been committed, so four categories and every
+  image-less product drew a broken-image glyph on the live shop. The Assets binding answers a
+  miss with the SPA shell: HTTP 200, HTML body, undecodable as an image. The assets suite checks
+  the file is on disk and that what comes back has an image content type.
 
 ## Fixtures
 
